@@ -1,0 +1,11 @@
+// Реэкспорт доменного слоя: один код подсчёта для Edge Functions (Deno) и фронта (Vite).
+export * from './types.ts';
+export * from './format.ts';
+export * from './replay.ts';
+export * from './money.ts';
+export * from './scoring.ts';
+export * from './summary.ts';
+export * from './season.ts';
+export * from './predictions.ts';
+export * from './votes.ts';
+export * from './achievements.ts';

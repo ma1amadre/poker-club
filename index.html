@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Приложение закрытого клуба: поисковикам здесь делать нечего. -->
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Покерный клуб</title>
+    <!--
+      SDK Telegram подключается синхронно и ДО бандла: он разбирает launch-параметры из location.hash
+      (tgWebAppData и др.) при загрузке, а main.tsx затем чистит hash под HashRouter.
+    -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>Для работы приложения нужен JavaScript.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
