@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allTimeStandings,
+  bestNForSeason,
   compareSeasonKeys,
   hallOfFame,
   moneyStandings,
@@ -158,6 +159,81 @@ describe('таблица сезона', () => {
       ['A', 4, 1, 2],
       ['B', 4, 1, 0],
       ['C', 1, 0, 0],
+    ]);
+  });
+});
+
+describe('«лучшие N» закрытых сезонов (season_rules)', () => {
+  const Q3 = (d: number) => `2026-09-${String(d).padStart(2, '0')}T16:00:00.000Z`;
+  const Q4 = (d: number) => `2026-10-${String(d).padStart(2, '0')}T16:00:00.000Z`;
+  // В 2026-Q3 у A один крупный вечер (5), у B два по 3: при N = 10 чемпион B (6 > 5), при N = 1 — A.
+  const q3 = [
+    mk('a', Q3(3), { A: 5, B: 0 }),
+    mk('b', Q3(10), { B: 3, A: 0 }),
+    mk('c', Q3(17), { B: 3, A: 0 }),
+  ];
+  const q4 = [mk('d', Q4(1), { A: 2, B: 0 }), mk('e', Q4(8), { B: 1, A: 0 })];
+  const frozen = { '2026-Q3': 10 };
+  const none = new Set<string>();
+
+  it('замороженное значение закрытого сезона, иначе текущее', () => {
+    expect(bestNForSeason('2026-Q3', 1, frozen)).toBe(10);
+    expect(bestNForSeason('2026-Q4', 1, frozen)).toBe(1);
+    expect(bestNForSeason('2026-Q3', 1)).toBe(1);
+    // Мусор в таблице не ломает подсчёт: БД такого не пропустит, но домен не доверяет на слово.
+    expect(bestNForSeason('2026-Q3', 4, { '2026-Q3': 0 })).toBe(4);
+    expect(bestNForSeason('2026-Q3', 4, { '2026-Q3': 2.5 })).toBe(4);
+  });
+
+  it('смена best_n не меняет таблицу закрытого сезона, текущий живёт по настройке', () => {
+    const before = seasonStandings([...q3, ...q4], {
+      bestN: 10,
+      excluded: none,
+      seasonKey: '2026-Q3',
+    });
+    // Админ сменил «лучшие N» на 1 уже в 2026-Q4; 2026-Q3 заморожен прежним значением 10.
+    const after = seasonStandings([...q3, ...q4], {
+      bestN: 1,
+      excluded: none,
+      seasonKey: '2026-Q3',
+      bestNBySeason: frozen,
+    });
+    expect(after).toEqual(before);
+    expect(after.map((r) => [r.playerId, r.total])).toEqual([
+      ['B', 6],
+      ['A', 5],
+    ]);
+    const current = seasonStandings([...q3, ...q4], {
+      bestN: 1,
+      excluded: none,
+      seasonKey: '2026-Q4',
+      bestNBySeason: frozen,
+    });
+    expect(current.map((r) => [r.playerId, r.counted])).toEqual([
+      ['A', [2]],
+      ['B', [1]],
+    ]);
+  });
+
+  it('без seasonKey: сезон берётся из итогов, если он один; смешанный список — текущее значение', () => {
+    const single = seasonStandings(q3, { bestN: 1, excluded: none, bestNBySeason: frozen });
+    expect(single.map((r) => r.total)).toEqual([6, 5]);
+    const mixed = seasonStandings([...q3, ...q4], {
+      bestN: 1,
+      excluded: none,
+      bestNBySeason: frozen,
+    });
+    expect(mixed.map((r) => r.counted.length)).toEqual([1, 1]);
+  });
+
+  it('Зал славы стабилен при смене best_n', () => {
+    const opts = { excluded: none, currentSeasonKey: '2026-Q4' };
+    const was = hallOfFame([...q3, ...q4], { ...opts, bestN: 10 });
+    expect(was).toEqual([{ seasonKey: '2026-Q3', champions: ['B'], total: 6 }]);
+    expect(hallOfFame([...q3, ...q4], { ...opts, bestN: 1, bestNBySeason: frozen })).toEqual(was);
+    // Без заморозки (как до миграции 013) чемпион прошлого сезона сменился бы.
+    expect(hallOfFame([...q3, ...q4], { ...opts, bestN: 1 })).toEqual([
+      { seasonKey: '2026-Q3', champions: ['A'], total: 5 },
     ]);
   });
 });

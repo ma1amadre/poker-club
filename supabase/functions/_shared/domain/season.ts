@@ -53,10 +53,33 @@ export interface StandingRow {
   netRub: number; // денежный профит за все сыгранные вечера, не только засчитанные
 }
 
+/**
+ * «Лучшие N» закрытых сезонов: ключ сезона → значение, замороженное при его закрытии
+ * (таблица season_rules, миграция 013). Сезона нет в списке — действует текущее settings.season_best_n.
+ */
+export type SeasonBestN = Readonly<Record<string, number>>;
+
+/** «Лучшие N» сезона: замороженное значение закрытого сезона, иначе текущее bestN. */
+export function bestNForSeason(key: string, bestN: number, bySeason?: SeasonBestN): number {
+  const frozen = bySeason?.[key];
+  return frozen !== undefined && Number.isInteger(frozen) && frozen >= 1 ? frozen : bestN;
+}
+
 export interface StandingsOptions {
-  bestN: number; // settings.season_best_n
+  bestN: number; // settings.season_best_n — для сезонов без замороженного значения
   excluded: ReadonlySet<PlayerId>; // гости
   seasonKey?: string; // если задан — берутся только вечера этого сезона
+  /**
+   * Замороженные «лучшие N» закрытых сезонов. Применяются к сезону seasonKey, а без него — к сезону
+   * итогов, если все они из одного сезона (вызовы с заранее отфильтрованным списком).
+   */
+  bestNBySeason?: SeasonBestN;
+}
+
+/** Ключ сезона, если все итоги из одного сезона; иначе (или пусто) undefined. */
+function singleSeason(summaries: readonly EveningSummary[]): string | undefined {
+  const key = summaries[0]?.seasonKey;
+  return key !== undefined && summaries.every((s) => s.seasonKey === key) ? key : undefined;
 }
 
 /** Порядок таблицы: очки, потом победы, потом нокауты; playerId — только для стабильности. */
@@ -107,7 +130,10 @@ function buildStandings(
   return rows.sort(compareRows);
 }
 
-/** Таблица сезона: сумма лучших bestN вечеров, гости исключены. */
+/**
+ * Таблица сезона: сумма лучших N вечеров, гости исключены. N — замороженное значение сезона
+ * из bestNBySeason, если оно есть, иначе bestN.
+ */
 export function seasonStandings(
   summaries: readonly EveningSummary[],
   opts: StandingsOptions,
@@ -116,7 +142,10 @@ export function seasonStandings(
     opts.seasonKey === undefined
       ? summaries
       : summaries.filter((s) => s.seasonKey === opts.seasonKey);
-  return buildStandings(list, opts.bestN, opts.excluded);
+  const key = opts.seasonKey ?? singleSeason(list);
+  const bestN =
+    key === undefined ? opts.bestN : bestNForSeason(key, opts.bestN, opts.bestNBySeason);
+  return buildStandings(list, bestN, opts.excluded);
 }
 
 /** Зачёт за всё время: все вечера без ограничения лучших N. */
@@ -182,10 +211,18 @@ export function seasonChampions(rows: readonly StandingRow[]): PlayerId[] {
   return rows.filter((r) => sameRank(r, top)).map((r) => r.playerId);
 }
 
-/** Зал славы: чемпионы завершённых сезонов (ключ меньше текущего), новые сверху. */
+/**
+ * Зал славы: чемпионы завершённых сезонов (ключ меньше текущего), новые сверху. «Лучшие N» каждого
+ * сезона — замороженные из bestNBySeason, если есть: смена настройки не переписывает прошлых чемпионов.
+ */
 export function hallOfFame(
   summaries: readonly EveningSummary[],
-  opts: { bestN: number; excluded: ReadonlySet<PlayerId>; currentSeasonKey: string },
+  opts: {
+    bestN: number;
+    excluded: ReadonlySet<PlayerId>;
+    currentSeasonKey: string;
+    bestNBySeason?: SeasonBestN;
+  },
 ): HallOfFameEntry[] {
   const keys = [...new Set(summaries.map((s) => s.seasonKey))]
     .filter((k) => compareSeasonKeys(k, opts.currentSeasonKey) < 0)
@@ -196,6 +233,7 @@ export function hallOfFame(
       bestN: opts.bestN,
       excluded: opts.excluded,
       seasonKey: key,
+      bestNBySeason: opts.bestNBySeason,
     });
     const champions = seasonChampions(rows);
     if (champions.length > 0)

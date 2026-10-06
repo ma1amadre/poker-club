@@ -12,7 +12,10 @@
 //      в группе, если админский вызов после сохранения не дошёл (миграция 008, notify/changes.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
 // Без settings.group_chat_id ничего не постит, но вечер создаёт.
+// Сбой шага или всего вызова — сообщение админу в личку (_shared/alerts.ts, не чаще раза в 6 ч на
+// один и тот же сбой); ответ функции и строки errors от этого не меняются.
 import { adminClient, describeError, errorResponse, json } from '../_shared/admin.ts';
+import { alertAdmin, type AlertKind } from '../_shared/alerts.ts';
 import {
   DEFAULT_FORMAT,
   validateFormat,
@@ -20,7 +23,7 @@ import {
   type TournamentFormat,
 } from '../_shared/domain/index.ts';
 import { announceSnapshot } from '../_shared/announce.ts';
-import { announcePost, votingPost } from '../_shared/messages.ts';
+import { announcePost, formatClubDate, votingPost } from '../_shared/messages.ts';
 import { postAnnounceChange } from '../notify/changes.ts';
 import {
   EVENING_COLUMNS,
@@ -59,6 +62,42 @@ interface TickReport {
   voting: Record<string, PostOutcome | 'no_votes'>;
   changes: Record<string, string>;
   errors: string[];
+}
+
+/** Сбой для алерта админу: в ответ функции (его хранит pg_net) не попадает. */
+interface Failure {
+  kind: AlertKind;
+  /** Для человека: какой вечер (без uuid). Пусто — сбой шага целиком. */
+  detail: string;
+  err: unknown;
+}
+
+interface TickState extends TickReport {
+  failures: Failure[];
+}
+
+/** Записать сбой: строка в errors (как раньше, с id для логов) и запись для алерта. */
+function fail(t: TickState, kind: AlertKind, label: string, err: unknown, detail = ''): void {
+  t.errors.push(`${label}: ${describeError(err)}`);
+  t.failures.push({ kind, detail, err });
+}
+
+const eveningDetail = (e: EveningRow): string => `вечер ${formatClubDate(e.scheduled_at)}`;
+
+/**
+ * Алерты по итогам тика: один вызов alertAdmin на вид сбоя (первая ошибка + сколько ещё было в том
+ * же шаге). Троттлинг и дедупликация — внутри alertAdmin; он не бросает.
+ */
+async function alertFailures(db: Db | null, failures: readonly Failure[]): Promise<void> {
+  const byKind = new Map<AlertKind, Failure[]>();
+  for (const f of failures) byKind.set(f.kind, [...(byKind.get(f.kind) ?? []), f]);
+  for (const [kind, list] of byKind) {
+    const first = list[0];
+    if (!first) continue;
+    const more = list.length > 1 ? `ещё ${list.length - 1} в этом же шаге` : '';
+    const detail = [first.detail, more].filter(Boolean).join('; ');
+    await alertAdmin(db, kind, detail, first.err);
+  }
 }
 
 /**
@@ -101,7 +140,7 @@ async function ensureUpcomingEvening(
   db: Db,
   s: SettingsRow,
   nowMs: number,
-  report: TickReport,
+  report: TickState,
 ): Promise<void> {
   const gameMs = nextGameAt(nowMs, s.game_weekday, s.game_time);
   report.nextGameAt = new Date(gameMs).toISOString();
@@ -136,7 +175,7 @@ async function postAnnouncements(
   db: Db,
   s: SettingsRow & { group_chat_id: number | string },
   nowMs: number,
-  report: TickReport,
+  report: TickState,
 ): Promise<void> {
   const { data, error } = await db
     .from('evenings')
@@ -169,13 +208,13 @@ async function postAnnouncements(
         { announce_snapshot: announceSnapshot(e) },
       );
     } catch (err) {
-      report.errors.push(`анонс ${e.id}: ${describeError(err)}`);
+      fail(report, 'cron_announce', `анонс ${e.id}`, err, eveningDetail(e));
     }
   }
 }
 
 /** Шаг 2: итоги вечеров, которые не ушли через notify. */
-async function backfillResults(db: Db, nowMs: number, report: TickReport): Promise<void> {
+async function backfillResults(db: Db, nowMs: number, report: TickState): Promise<void> {
   const { data, error } = await db
     .from('evenings')
     .select(EVENING_COLUMNS)
@@ -190,7 +229,7 @@ async function backfillResults(db: Db, nowMs: number, report: TickReport): Promi
     try {
       report.results[e.id] = await postEveningResults(db, e, nowMs);
     } catch (err) {
-      report.errors.push(`итоги ${e.id}: ${describeError(err)}`);
+      fail(report, 'cron_results', `итоги ${e.id}`, err, eveningDetail(e));
     }
   }
 }
@@ -200,7 +239,7 @@ async function postVotingResults(
   db: Db,
   s: SettingsRow & { group_chat_id: number | string },
   nowMs: number,
-  report: TickReport,
+  report: TickState,
 ): Promise<void> {
   const { data, error } = await db
     .from('evenings')
@@ -244,7 +283,7 @@ async function postVotingResults(
         report.voting[e.id] = 'no_votes';
       }
     } catch (err) {
-      report.errors.push(`голосование ${e.id}: ${describeError(err)}`);
+      fail(report, 'cron_voting', `голосование ${e.id}`, err, eveningDetail(e));
     }
   }
 }
@@ -257,7 +296,7 @@ async function postAnnounceChanges(
   db: Db,
   s: SettingsRow & { group_chat_id: number | string },
   nowMs: number,
-  report: TickReport,
+  report: TickState,
 ): Promise<void> {
   const { data, error } = await db
     .from('evenings')
@@ -276,7 +315,7 @@ async function postAnnounceChanges(
           : result.outcome;
       }
     } catch (err) {
-      report.errors.push(`правка вечера ${e.id}: ${describeError(err)}`);
+      fail(report, 'cron_changes', `правка вечера ${e.id}`, err, eveningDetail(e));
     }
   }
 }
@@ -288,12 +327,23 @@ Deno.serve(async (req: Request): Promise<Response> => {
     authorized = await secretMatches(adminClient(), req.headers.get('x-cron-secret') ?? '');
   } catch (err) {
     console.error(`cron-tick: ${describeError(err)}`);
+    // Секрет не проверить — значит, база или окружение функции сломаны и тик не идёт вовсе.
+    // Алерт уходит до проверки секрета: клиента или журнала может не быть (база лежит), и тогда
+    // повторы сдерживает только запасной троттлинг в памяти (alerts.ts, FALLBACK_WINDOW_MS) —
+    // посторонние запросы с любым x-cron-secret не превратятся в поток сообщений админу.
+    let db: Db | null = null;
+    try {
+      db = adminClient();
+    } catch {
+      db = null;
+    }
+    await alertAdmin(db, 'cron_crash', 'не удалось проверить x-cron-secret', err);
     return errorResponse(500, 'not_configured', 'Не удалось проверить x-cron-secret');
   }
   if (!authorized) return errorResponse(401, 'bad_secret', 'Неверный x-cron-secret');
 
   const nowMs = Date.now();
-  const report: TickReport = {
+  const report: TickState = {
     now: new Date(nowMs).toISOString(),
     group: false,
     nextGameAt: null,
@@ -303,34 +353,47 @@ Deno.serve(async (req: Request): Promise<Response> => {
     voting: {},
     changes: {},
     errors: [],
+    failures: [],
   };
 
+  let db: Db | null = null;
   try {
-    const db = adminClient();
-    const s = await loadSettings(db);
+    const client = adminClient();
+    db = client;
+    const s = await loadSettings(client);
     report.group = hasGroup(s);
 
     // Шаги независимы: сбой одного (например, Telegram недоступен) не отменяет остальные.
-    const step = async (name: string, fn: () => Promise<void>): Promise<void> => {
+    const step = async (name: string, kind: AlertKind, fn: () => Promise<void>): Promise<void> => {
       try {
         await fn();
       } catch (err) {
-        report.errors.push(`${name}: ${describeError(err)}`);
+        fail(report, kind, name, err);
       }
     };
-    await step('вечер по расписанию', () => ensureUpcomingEvening(db, s, nowMs, report));
+    await step('вечер по расписанию', 'cron_schedule', () =>
+      ensureUpcomingEvening(client, s, nowMs, report),
+    );
     if (hasGroup(s)) {
       // Сначала правки уже объявленных вечеров, потом новые анонсы: свежий анонс и так несёт
       // актуальные данные, а его снимок пишется вместе с отметкой.
-      await step('правки вечеров', () => postAnnounceChanges(db, s, nowMs, report));
-      await step('анонсы', () => postAnnouncements(db, s, nowMs, report));
-      await step('итоги вечеров', () => backfillResults(db, nowMs, report));
-      await step('итоги голосования', () => postVotingResults(db, s, nowMs, report));
+      await step('правки вечеров', 'cron_changes', () =>
+        postAnnounceChanges(client, s, nowMs, report),
+      );
+      await step('анонсы', 'cron_announce', () => postAnnouncements(client, s, nowMs, report));
+      await step('итоги вечеров', 'cron_results', () => backfillResults(client, nowMs, report));
+      await step('итоги голосования', 'cron_voting', () =>
+        postVotingResults(client, s, nowMs, report),
+      );
     }
   } catch (err) {
     report.errors.push(describeError(err));
+    report.failures.push({ kind: 'cron_crash', detail: '', err });
   }
 
-  if (report.errors.length > 0) console.error(`cron-tick: ${report.errors.join(' | ')}`);
-  return json(report);
+  const { failures, ...body } = report;
+  if (body.errors.length > 0) console.error(`cron-tick: ${body.errors.join(' | ')}`);
+  await alertFailures(db, failures);
+  const response: TickReport = body;
+  return json(response);
 });

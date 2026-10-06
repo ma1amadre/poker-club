@@ -56,6 +56,21 @@ export function scoringRule(cfg: ScoringConfig): string {
   );
 }
 
+/**
+ * Правило очков для набора вечеров (таблица сезона, всё время). У каждого вечера свой снимок правил
+ * (evenings.scoring): если он у всех один — точная формулировка по нему, если разные — общая.
+ * Вечеров нет — по текущим настройкам `current`: по ним посчитают следующие вечера.
+ */
+export function scoringRuleOf(rules: readonly ScoringConfig[], current: ScoringConfig): string {
+  const [first] = rules;
+  if (!first) return scoringRule(current);
+  const same = rules.every((r) => r.koPoints === first.koPoints && r.winBonus === first.winBonus);
+  return same
+    ? scoringRule(first)
+    : 'Очки за вечер: +1 за каждого, кто вылетел раньше, плюс очки за нокауты и победу — ' +
+        'по правилам, которые действовали, когда вечер завершился';
+}
+
 /** «В зачёт сезона идут лучшие 10 вечеров игрока». */
 export function bestNRule(bestN: number): string {
   return `В зачёт сезона идут лучшие ${bestN} ${plural(bestN, ['вечер', 'вечера', 'вечеров'])} игрока`;

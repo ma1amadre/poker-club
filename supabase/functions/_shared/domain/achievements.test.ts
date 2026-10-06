@@ -284,6 +284,21 @@ describe('ачивки', () => {
     it('текущий сезон чемпиона не даёт', () => {
       expect(only(run([simpleEvening('c', q4(1), ['A', 'B'])]), 'champion')).toEqual([]);
     });
+    it('по «лучшим N» сезона: смена best_n после конца сезона чемпиона не меняет', () => {
+      // 2026-Q3: A 4 очка за один вечер, B — 1 + 3 + 3. При N = 10 чемпион B (7), при N = 1 — A (4 > 3).
+      const list = [
+        simpleEvening('c1', q3(2), ['A', 'B', 'C'], 'winner'),
+        simpleEvening('c2', q3(9), ['B', 'C', 'A']),
+        simpleEvening('c3', q3(16), ['B', 'C', 'A']),
+      ];
+      expect(only(run(list), 'champion')).toEqual([['B', '2026-Q3', 1]]);
+      // Сейчас настройка — 1, но 2026-Q3 заморожен значением 10.
+      expect(only(run(list, { bestN: 1, bestNBySeason: { '2026-Q3': 10 } }), 'champion')).toEqual([
+        ['B', '2026-Q3', 1],
+      ]);
+      // Без заморозки (как до миграции 013) чемпион сменился бы.
+      expect(only(run(list, { bestN: 1 }), 'champion')).toEqual([['A', '2026-Q3', 1]]);
+    });
   });
 
   it('гости не получают ничего', () => {

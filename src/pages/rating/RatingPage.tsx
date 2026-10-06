@@ -59,6 +59,7 @@ function Rating({ history }: { history: ClubHistory }) {
       bestN: history.bestN,
       excluded: history.excluded,
       currentSeasonKey: history.currentSeasonKey,
+      bestNBySeason: history.bestNBySeason,
     });
     const reigning = reigningChampions(hall, history.currentSeasonKey);
     return {

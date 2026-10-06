@@ -1,4 +1,4 @@
-import { seasonStandings, type StandingRow } from '@domain/season.ts';
+import { bestNForSeason, seasonStandings, type StandingRow } from '@domain/season.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -12,7 +12,7 @@ import {
   formatSeason,
   paths,
   placeLabel,
-  scoringRule,
+  scoringRuleOf,
   standingMeta,
 } from '../../shared/lib';
 import { ButtonLink, Empty, Icon, List } from '../../shared/ui';
@@ -38,12 +38,25 @@ export function SeasonTab({ ctx, seasons, season, onSeason }: SeasonTabProps) {
     [history.summaries, season],
   );
   const rows = useMemo(
-    () => seasonStandings(seasonSummaries, { bestN: history.bestN, excluded: history.excluded }),
-    [seasonSummaries, history.bestN, history.excluded],
+    () =>
+      seasonStandings(seasonSummaries, {
+        bestN: history.bestN,
+        excluded: history.excluded,
+        seasonKey: season,
+        bestNBySeason: history.bestNBySeason,
+      }),
+    [seasonSummaries, season, history.bestN, history.excluded, history.bestNBySeason],
   );
   const places = useMemo(() => standingPlaces(rows), [rows]);
   const [openId, setOpenId] = useState<string | null>(null);
+  // Правила — те, по которым посчитана эта таблица: снимки вечеров сезона и «лучшие N» сезона
+  // (у закрытого — замороженное значение), а не обязательно текущие настройки.
   const scoring = scoringFromSettings(history.settings);
+  const rule = scoringRuleOf(
+    seasonSummaries.map((s) => s.scoring ?? scoring),
+    scoring,
+  );
+  const bestN = bestNForSeason(season, history.bestN, history.bestNBySeason);
 
   return (
     <div className="rt-panel">
@@ -84,8 +97,7 @@ export function SeasonTab({ ctx, seasons, season, onSeason }: SeasonTabProps) {
       )}
 
       <p className="m-small">
-        {scoringRule(scoring)}. {bestNRule(history.bestN)}. При равенстве выше тот, у кого больше
-        побед, потом — нокаутов.
+        {rule}. {bestNRule(bestN)}. При равенстве выше тот, у кого больше побед, потом — нокаутов.
       </p>
     </div>
   );

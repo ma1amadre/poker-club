@@ -4,9 +4,10 @@
 // заново, и плавающая @2 подтянула бы любую свежую 2.x из npm в код с service_role и токеном бота.
 // Обновлять вместе с фронтом, во всех трёх импортах (admin.ts, notify/changes.ts, notify/results.ts).
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.117.2';
+import { describeError } from './errors.ts';
 import { readEnv } from './telegram.ts';
 
-export { readEnv };
+export { describeError, readEnv };
 
 /** Обязательная переменная окружения; её отсутствие — ошибка конфигурации, а не запроса. */
 export function requireEnv(name: string): string {
@@ -147,13 +148,3 @@ export async function resolveCaller(
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-/** Сообщение ошибки для логов: у PostgrestError/AuthError нет stack, но есть message и code. */
-export function describeError(error: unknown): string {
-  if (error instanceof Error) return `${error.name}: ${error.message}`;
-  if (typeof error === 'object' && error !== null) {
-    const e = error as { message?: unknown; code?: unknown };
-    return `${String(e.code ?? '')} ${String(e.message ?? JSON.stringify(error))}`.trim();
-  }
-  return String(error);
-}

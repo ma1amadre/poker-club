@@ -1,7 +1,7 @@
 import { allTimeStandings } from '@domain/season.ts';
 import { useMemo } from 'react';
 import { scoringFromSettings } from '../../shared/api';
-import { formatDate, paths, scoringRule, standingMeta } from '../../shared/lib';
+import { formatDate, paths, scoringRuleOf, standingMeta } from '../../shared/lib';
 import { List, ListItem } from '../../shared/ui';
 import type { RatingContext } from './context';
 import { PlayerName, Rank, Score } from './parts';
@@ -23,6 +23,14 @@ export function AllTimeTab({ ctx }: { ctx: RatingContext }) {
       ),
     [history.summaries],
   );
+  // У каждого вечера свои правила очков (снимок при завершении) — подпись по ним, а не по настройкам.
+  const rule = useMemo(() => {
+    const current = scoringFromSettings(history.settings);
+    return scoringRuleOf(
+      history.summaries.map((s) => s.scoring ?? current),
+      current,
+    );
+  }, [history.summaries, history.settings]);
 
   return (
     <div className="rt-panel">
@@ -42,7 +50,7 @@ export function AllTimeTab({ ctx }: { ctx: RatingContext }) {
       </List>
       <p className="m-small">
         Все вечера клуба{firstDate ? ` с ${formatDate(firstDate)}` : ''}, без ограничения лучших
-        вечеров. {scoringRule(scoringFromSettings(history.settings))}.
+        вечеров. {rule}.
       </p>
     </div>
   );

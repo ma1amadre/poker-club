@@ -272,6 +272,20 @@ export class TelegramApiError extends Error {
   }
 }
 
+/**
+ * Telegram не ответил вовсе: DNS, TCP, TLS, таймаут. Отдельный класс — чтобы отличать от ответа
+ * Telegram с ошибкой (TelegramApiError) при разборе сбоя (_shared/alerts.ts). Сообщение без токена.
+ */
+export class TelegramNetworkError extends Error {
+  readonly method: string;
+
+  constructor(method: string, detail: string) {
+    super(`Telegram ${method}: сеть: ${detail}`);
+    this.name = 'TelegramNetworkError';
+    this.method = method;
+  }
+}
+
 interface BotApiResponse<T> {
   ok: boolean;
   result?: T;
@@ -315,7 +329,7 @@ async function callBotApi<T>(method: string, body: Record<string, unknown>): Pro
     // Новая ошибка без cause: исходная (с URL и токеном) дальше не идёт.
     const e = err as { name?: unknown; message?: unknown } | null;
     const text = `${String(e?.name ?? 'Error')}: ${String(e?.message ?? err)}`;
-    throw new Error(`Telegram ${method}: сеть: ${redactBotToken(text, token)}`);
+    throw new TelegramNetworkError(method, redactBotToken(text, token));
   }
   let data: BotApiResponse<T> | null = null;
   try {

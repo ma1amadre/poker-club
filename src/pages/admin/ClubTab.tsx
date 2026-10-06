@@ -36,6 +36,7 @@ import {
   ANNOUNCE_HOURS_MAX,
   draftFromSettings,
   parseSettingsDraft,
+  scoringChangeNote,
   settingsDirty,
   type SettingsDraft,
   type SettingsField,
@@ -108,12 +109,8 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
   const dirty = settingsDirty(draft, settings);
   // Закрыть Mini App с несохранёнными настройками — только через вопрос Telegram.
   useClosingConfirmation(dirty);
-  // Очки и «лучших N» не снимаются на вечер или сезон: всё считается по текущим настройкам.
-  const initial = draftFromSettings(settings);
-  const scoringChanged =
-    draft.koPoints !== initial.koPoints ||
-    draft.winBonus !== initial.winBonus ||
-    draft.bestN !== initial.bestN;
+  // Правила подсчёта не переписывают прошлое (миграция 013) — пометка говорит, на что они повлияют.
+  const scoringNote = scoringChangeNote(draft, settings);
   const errorOf = (field: SettingsField) =>
     submitted || touched.has(field) ? errors[field] : undefined;
 
@@ -266,10 +263,9 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
           autoComplete="off"
           {...bind('bestN')}
         />
-        {scoringChanged && (
-          <Notice tone="caution" title="Пересчитаются и прошлые сезоны">
-            Очки и число лучших вечеров не запоминаются на сезон: после сохранения по новым правилам
-            пересчитаются все прошлые сезоны, Зал славы и чемпионы — в том числе уже объявленные.
+        {scoringNote && (
+          <Notice tone="info" title="Прошлое не пересчитается">
+            {scoringNote}
           </Notice>
         )}
         <div className="adm-grid-2">

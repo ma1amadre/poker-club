@@ -143,6 +143,7 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
           bestN: history.bestN,
           excluded: history.excluded,
           currentSeasonKey: history.currentSeasonKey,
+          bestNBySeason: history.bestNBySeason,
         }),
         history.currentSeasonKey,
       ),

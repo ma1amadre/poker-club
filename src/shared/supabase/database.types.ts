@@ -25,6 +25,27 @@ export type Database = {
   };
   public: {
     Tables: {
+      admin_alerts: {
+        Row: {
+          key: string;
+          last_sent_at: string;
+          suppressed_count: number;
+          updated_at: string;
+        };
+        Insert: {
+          key: string;
+          last_sent_at: string;
+          suppressed_count?: number;
+          updated_at?: string;
+        };
+        Update: {
+          key?: string;
+          last_sent_at?: string;
+          suppressed_count?: number;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       evening_events: {
         Row: {
           at: string;
@@ -100,6 +121,7 @@ export type Database = {
           results_posted_at: string | null;
           results_revision: number;
           scheduled_at: string;
+          scoring: Json | null;
           settle_reopened_at: string | null;
           settled_at: string | null;
           slot_date: string | null;
@@ -124,6 +146,7 @@ export type Database = {
           results_posted_at?: string | null;
           results_revision?: number;
           scheduled_at: string;
+          scoring?: Json | null;
           settle_reopened_at?: string | null;
           settled_at?: string | null;
           slot_date?: string | null;
@@ -148,6 +171,7 @@ export type Database = {
           results_posted_at?: string | null;
           results_revision?: number;
           scheduled_at?: string;
+          scoring?: Json | null;
           settle_reopened_at?: string | null;
           settled_at?: string | null;
           slot_date?: string | null;
@@ -325,6 +349,24 @@ export type Database = {
           },
         ];
       };
+      season_rules: {
+        Row: {
+          best_n: number;
+          frozen_at: string;
+          season_key: string;
+        };
+        Insert: {
+          best_n: number;
+          frozen_at?: string;
+          season_key: string;
+        };
+        Update: {
+          best_n?: number;
+          frozen_at?: string;
+          season_key?: string;
+        };
+        Relationships: [];
+      };
       settings: {
         Row: {
           announce_hours_before: number;
@@ -491,6 +533,7 @@ export type Database = {
       };
       set_rsvp: { Args: { p_evening: string; p_status: string }; Returns: undefined };
       unmark_settled: { Args: { p_evening: string }; Returns: undefined };
+      verify_cron_secret: { Args: { p_secret: string }; Returns: boolean };
       void_event: { Args: { p_event: number }; Returns: undefined };
     };
     Enums: {

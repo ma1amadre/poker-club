@@ -18,6 +18,7 @@ import {
   type PlayerId,
   type ScoredPrediction,
   type ScoringConfig,
+  type SeasonBestN,
   type StarAward,
   type TournamentFormat,
   type Vote,
@@ -63,11 +64,13 @@ export interface EveningRow {
   announce_snapshot: unknown;
   /** Причина отмены для поста в группу (миграция 010); заметка вечера ей больше не служит. */
   cancel_reason: string | null;
+  /** Снимок правил очков {koPoints, winBonus} — есть у finished/settled (миграция 013). */
+  scoring: unknown;
 }
 
 // Одной строкой-литералом: из конкатенации supabase-js не выводит тип строк select.
 export const EVENING_COLUMNS =
-  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, results_posted_at, voting_posted_at, results_revision, announce_snapshot, cancel_reason';
+  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, results_posted_at, voting_posted_at, results_revision, announce_snapshot, cancel_reason, scoring';
 
 interface PlayerRow {
   id: string;
@@ -121,6 +124,7 @@ export async function loadSettings(db: Db): Promise<SettingsRow> {
   return data as SettingsRow;
 }
 
+/** Текущие правила очков клуба — для вечеров без снимка evenings.scoring (до миграции 013). */
 export function scoringConfig(s: SettingsRow): ScoringConfig {
   return { koPoints: Number(s.ko_points), winBonus: Number(s.win_bonus) };
 }
@@ -161,9 +165,14 @@ export interface ClubHistory {
   summaries: EveningSummary[];
   predictions: PredictionRow[];
   votes: VoteRow[];
+  /** Замороженные «лучшие N» закрытых сезонов (season_rules, миграция 013). */
+  bestNBySeason: SeasonBestN;
 }
 
-/** Все завершённые вечера с журналами и итогами. Вечер, чей журнал не завершён, пропускаем. */
+/**
+ * Все завершённые вечера с журналами и итогами. Вечер, чей журнал не завершён, пропускаем.
+ * Очки вечера — по его снимку правил (evenings.scoring), cfg — только для вечеров без снимка.
+ */
 export async function loadHistory(db: Db, cfg: ScoringConfig): Promise<ClubHistory> {
   const eveningRows = await fetchAll<EveningRow>((from, to) =>
     db
@@ -196,7 +205,9 @@ export async function loadHistory(db: Db, cfg: ScoringConfig): Promise<ClubHisto
   const summaries: EveningSummary[] = [];
   for (const e of eveningRows) {
     try {
-      summaries.push(summarize(e.id, e.scheduled_at, e.format, events.get(e.id) ?? [], cfg));
+      summaries.push(
+        summarize(e.id, e.scheduled_at, e.format, events.get(e.id) ?? [], cfg, e.scoring),
+      );
     } catch (error) {
       // Статус finished при незавершённом журнале — рассинхрон, его чинит админ; статистика
       // остальных вечеров от этого страдать не должна.
@@ -228,7 +239,16 @@ export async function loadHistory(db: Db, cfg: ScoringConfig): Promise<ClubHisto
     )
   ).filter((v) => ids.has(v.evening_id));
 
-  return { evenings, events, summaries, predictions, votes };
+  const { data: rules, error: rulesError } = await db
+    .from('season_rules')
+    .select('season_key, best_n');
+  if (rulesError) throw new Error(`season_rules: ${describeError(rulesError)}`);
+  const bestNBySeason: Record<string, number> = {};
+  for (const r of (rules ?? []) as { season_key: string; best_n: number }[]) {
+    bestNBySeason[r.season_key] = r.best_n;
+  }
+
+  return { evenings, events, summaries, predictions, votes, bestNBySeason };
 }
 
 function scoredPredictions(
@@ -298,6 +318,7 @@ export function newAchievementsFor(
     predictions: scoredPredictions(history, notThis),
     stars: starAwards(history, nowMs, notThis),
     bestN,
+    bestNBySeason: history.bestNBySeason,
     currentSeasonKey:
       lastOther && lastOther.seasonKey < nowSeason ? lastOther.seasonKey : nowSeason,
   });
@@ -308,6 +329,7 @@ export function newAchievementsFor(
     // Звёзды самого вечера не берём ни «до», ни «после»: их объявляет пост итогов голосования.
     stars: starAwards(history, nowMs, notThis),
     bestN,
+    bestNBySeason: history.bestNBySeason,
     currentSeasonKey: nowSeason,
   });
   return diffAchievements(before, after);

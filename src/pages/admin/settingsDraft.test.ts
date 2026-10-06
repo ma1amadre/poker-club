@@ -4,6 +4,7 @@ import {
   draftFromSettings,
   normalizeBotUsername,
   parseSettingsDraft,
+  scoringChangeNote,
   settingsDirty,
   type SettingsDraft,
 } from './settingsDraft';
@@ -144,5 +145,29 @@ describe('settingsDirty', () => {
     expect(settingsDirty(draft({ weekday: '5' }), SAVED)).toBe(true);
     expect(settingsDirty(draft({ location: 'У Саши' }), SAVED)).toBe(true);
     expect(settingsDirty(draft({ groupChatId: '-100123' }), SAVED)).toBe(true);
+  });
+});
+
+describe('scoringChangeNote', () => {
+  const PAST =
+    'Прошедшие вечера и закрытые сезоны не пересчитываются: Зал славы и чемпионы остаются прежними.';
+
+  it('правила не тронуты — пометки нет (и «0.5» = «0,5»)', () => {
+    expect(scoringChangeNote(draft(), SAVED)).toBeNull();
+    expect(scoringChangeNote(draft({ koPoints: '0.5', location: 'У Саши' }), SAVED)).toBeNull();
+  });
+
+  it('очки — для следующих вечеров, «лучшие N» — для текущего сезона, прошлое не трогается', () => {
+    expect(scoringChangeNote(draft({ koPoints: '1' }), SAVED)).toBe(
+      `Очки за нокаут и победу — для вечеров, которые завершатся после сохранения. ${PAST}`,
+    );
+    expect(scoringChangeNote(draft({ bestN: '8' }), SAVED)).toBe(
+      `Число лучших вечеров — для текущего сезона, в том числе уже сыгранных в нём вечеров. ${PAST}`,
+    );
+    expect(scoringChangeNote(draft({ winBonus: '2', bestN: '8' }), SAVED)).toBe(
+      'Очки за нокаут и победу — для вечеров, которые завершатся после сохранения. ' +
+        'Число лучших вечеров — для текущего сезона, в том числе уже сыгранных в нём вечеров. ' +
+        PAST,
+    );
   });
 });

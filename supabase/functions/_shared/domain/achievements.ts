@@ -2,7 +2,7 @@
 // поэтому правка закрытого вечера админом автоматически пересчитывает и ачивки.
 import type { ScoredPrediction } from './predictions.ts';
 import { roundPoints } from './scoring.ts';
-import { compareSeasonKeys, seasonChampions, seasonStandings } from './season.ts';
+import { compareSeasonKeys, seasonChampions, seasonStandings, type SeasonBestN } from './season.ts';
 import type { EveningSummary } from './summary.ts';
 import type { PlayerId } from './types.ts';
 import type { VoteCategory } from './votes.ts';
@@ -72,8 +72,10 @@ export interface AchievementInput {
   excluded: ReadonlySet<PlayerId>; // гости: ачивок и званий не получают
   predictions: readonly ScoredPrediction[];
   stars: readonly StarAward[];
-  bestN: number; // settings.season_best_n — для чемпиона
+  bestN: number; // settings.season_best_n — для чемпиона сезона без замороженного значения
   currentSeasonKey: string; // сезоны с ключом меньше — завершены
+  /** Замороженные «лучшие N» закрытых сезонов (season_rules, миграция 013) — для чемпиона. */
+  bestNBySeason?: SeasonBestN;
 }
 
 /** Хронология: по дате вечера, при равенстве — по id, чтобы порядок был детерминирован. */
@@ -185,7 +187,12 @@ export function computeAchievements(input: AchievementInput): Achievement[] {
       for (const [id, n] of rebuys) if (n === maxRebuys) add(id, 'rebuy_king', null, key);
     for (const [id, n] of played) if (n === inSeason.length) add(id, 'iron_chair', null, key);
 
-    const rows = seasonStandings(inSeason, { bestN: input.bestN, excluded });
+    const rows = seasonStandings(inSeason, {
+      bestN: input.bestN,
+      excluded,
+      seasonKey: key,
+      bestNBySeason: input.bestNBySeason,
+    });
     for (const id of seasonChampions(rows)) add(id, 'champion', null, key);
   }
 

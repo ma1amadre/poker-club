@@ -1,4 +1,4 @@
-/* Материя 2.0.0 — вендорено scripts/sync-materia.mjs из D:/dev/materia. Руками не править. Шрифты подключает index.html (метки materia-fonts). */
+/* Материя 2.0.0 — вендорено scripts/sync-materia.mjs из D:/dev/materia. Руками не править. Шрифты — свои: src/styles/fonts.css (scripts/fetch-fonts.mjs). */
 
 
 /* Материя — токены. Сгенерировано tools/build-css.js из tokens.json; руками не править. */

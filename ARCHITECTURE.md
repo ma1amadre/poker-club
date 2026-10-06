@@ -35,7 +35,10 @@ supabase/
 src/
   main.tsx, app/*, pages/*, shared/{supabase,telegram,auth,api,ui,lib}/*
   vendor/materia/*               # вендоренная «Материя» (scripts/sync-materia.mjs)
-scripts/                         # node-скрипты разработки (check-merge-replay.mjs — слияние на seed)
+  styles/fonts.css               # @font-face своих шрифтов (пишет scripts/fetch-fonts.mjs)
+public/fonts/                    # woff2 шрифтов «Материи» + OFL.txt (scripts/fetch-fonts.mjs)
+scripts/                         # node-скрипты разработки (check-merge-replay.mjs — слияние на seed;
+                                 # sync-materia.mjs — вендоринг «Материи»; fetch-fonts.mjs — шрифты)
 ```
 
 Правило импорта домена: во фронте `import { replay } from '@domain/replay.ts'` (alias в vite и
@@ -153,14 +156,21 @@ export interface EveningState {
   (`dueRub = owesRub - prizeRub - bountyRub`, >0 — игрок платит банкиру; `paid` — сумма payment;
   `remaining = due - paid`; settled при 0). `isSettled(...)`.
 - `scoring.ts`: очки вечера = (N − место) + `koPoints`·KO + (1-е ? `winBonus` : 0), N = число
-  участников вечера (гости тоже). Конфиг `{koPoints: 0.5, winBonus: 1}` из settings.
-- `summary.ts`: `summarize(eveningId, dateIso, format, events, cfg) → EveningSummary` —
-  компактный итог завершённого вечера для статистики:
-  `{eveningId, date, seasonKey, entrants, places, points, netRub, kos, koPairs: [killer, victim][], rebuys, bustLevel,
-  firstBustPlayerId, busts: {victim, by}[]}` (последние два — для прогнозов и `first_blood` при дележе).
-- `season.ts`: `seasonKey(dateIso, tz='Europe/Moscow') → '2026-Q4'`; `seasonStandings(summaries, {bestN, excluded: Set<PlayerId>})`
-  → строки `{playerId, total, counted: number[], played, wins, kos, netRub}` отсортированы; `allTimeStandings(...)`;
-  `oracleStandings(predictionScores)`; `hallOfFame(summaries, ...)` → чемпионы завершённых кварталов.
+  участников вечера (гости тоже). Конфиг `{koPoints: 0.5, winBonus: 1}`: у завершённого вечера — его снимок
+  `evenings.scoring` (миграция 013), без снимка — текущие settings. `parseScoringSnapshot(jsonb) → ScoringConfig|null`
+  (строго: два числа ≥ 0), `eveningScoring(snapshot, current)` — снимок или текущие.
+- `summary.ts`: `summarize(eveningId, dateIso, format, events, cfg, snapshot?) → EveningSummary` —
+  компактный итог завершённого вечера для статистики; очки — по `eveningScoring(snapshot, cfg)`:
+  `{eveningId, date, seasonKey, entrants, places, points, scoring?, netRub, kos, koPairs: [killer, victim][], rebuys, bustLevel,
+  firstBustPlayerId, busts: {victim, by}[]}` (`scoring` — правила, по которым посчитаны `points`, summarize ставит
+  всегда; `firstBustPlayerId`, `busts` — для прогнозов и `first_blood` при дележе).
+- `season.ts`: `seasonKey(dateIso, tz='Europe/Moscow') → '2026-Q4'`; `seasonStandings(summaries, {bestN, excluded: Set<PlayerId>,
+  seasonKey?, bestNBySeason?})` → строки `{playerId, total, counted: number[], played, wins, kos, netRub}` отсортированы;
+  `allTimeStandings(...)`; `oracleStandings(predictionScores)`; `hallOfFame(summaries, {bestN, excluded, currentSeasonKey,
+  bestNBySeason?})` → чемпионы завершённых кварталов. **«Лучшие N» по сезону** (миграция 013): `SeasonBestN` =
+  `Record<seasonKey, number>` из `season_rules`; `bestNForSeason(key, bestN, bySeason?)` — замороженное значение
+  закрытого сезона (целое ≥ 1), иначе текущее `settings.season_best_n`. `seasonStandings` применяет его к `seasonKey`,
+  а без него — к сезону итогов, если все они из одного сезона (смешанный список — текущее `bestN`).
 - `predictions.ts`: `scorePrediction({winnerId, firstOutId}, state) → {winner: 0|3, firstOut: 0|2, total}`.
 - `votes.ts`: категории `'hand' | 'bluff' | 'badbeat'` (Рука / Блеф / Бэд-бит вечера);
   `voteResults(votes) → Record<category, {winners: PlayerId[], counts: Record<PlayerId, number>}>` (ничья — несколько победителей).
@@ -171,7 +181,8 @@ export interface EveningState {
   `oracle` (угадал победителя в 3 вечерах подряд, где делал прогноз), `star` (победа в номинации голосования),
   `champion` (1-е место завершённого сезона). Переходящие звания: `titles(input) → {nemesis: Record<PlayerId, PlayerId|null>, form: PlayerId|null}`
   (немезида — кто чаще всех выбивал игрока, минимум 2 раза; форма — лучшая сумма очков за последние 5 вечеров клуба).
-  Гости ачивки не получают. `diffAchievements(before, after)` — новые для поста бота.
+  Гости ачивки не получают. `diffAchievements(before, after)` — новые для поста бота. `AchievementInput.bestNBySeason?`
+  — замороженные «лучшие N» для `champion` (`rebuy_king` и `iron_chair` от N не зависят).
   Названия/описания по-русски в `ACHIEVEMENT_META`.
 - `format.ts`: `DEFAULT_FORMAT` (клубный: 500 ₽/500 фишек, баунти 100, ребаи до конца 5-го уровня без лимита,
   70/30, уровни по 40 мин: 5/10, 10/20, 15/30, 20/40, 25/50, 50/100, 75/150, 100/200), `validateFormat`.
@@ -184,11 +195,37 @@ export interface EveningState {
 | `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at` |
 | `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at` |
 | `formats` | `id uuid pk`, `name text`, `config jsonb` (TournamentFormat), `is_archived bool default false`, `created_at` |
-| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `created_by`, `created_at` |
+| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `scoring jsonb` (снимок правил очков `{koPoints, winBonus}` из settings в момент завершения; есть ровно у `finished`/`settled` — constraint `evenings_scoring_when_closed`, форма — `evenings_scoring_shape`; ставит и снимает триггер `evenings_scoring_snapshot`, снаружи не пишется; миграция 013), `created_by`, `created_at` |
 | `evening_events` | `id bigserial pk`, `evening_id uuid → evenings on delete cascade`, `type text check (EventType)`, `payload jsonb default '{}'`, `at timestamptz default now()`, `created_by uuid → players`, `voided_at timestamptz`, `voided_by uuid → players`, `client_id uuid` (ключ повтора, unique `(evening_id, client_id)`, миграция 007) |
 | `rsvps` | pk `(evening_id, player_id)`, `status text check in ('yes','no','maybe')`, `updated_at` |
 | `predictions` | pk `(evening_id, player_id)`, `winner_id uuid → players`, `first_out_id uuid → players`, `updated_at` |
 | `votes` | pk `(evening_id, voter_id, category)`, `category text check in ('hand','bluff','badbeat')`, `nominee_id uuid → players`, `caption text check (char_length <= 200)`, `photo_path text`, `created_at`; `check (voter_id <> nominee_id)` |
+| `season_rules` | `season_key text pk` (`'2026-Q3'`, квартал по Москве, как `seasonKey` домена), `best_n int ≥ 1`, `frozen_at timestamptz default now()` — «лучшие N» закрытых сезонов; пишет только триггер `settings_freeze_season_best_n` (и backfill 013); `authenticated` — select (RLS: участник клуба), `service_role` — select/insert/update/delete. Миграция 013 |
+| `admin_alerts` | `key text pk` (1–200 символов: вид сбоя или `telegram:<код>`), `last_sent_at timestamptz not null`, `suppressed_count int ≥ 0 default 0`, `updated_at timestamptz default now()` — журнал троттлинга оповещений админа о сбоях (`_shared/alerts.ts`, раздел Edge Functions). RLS без политик, права только у `service_role` (select/insert/update/delete); клиенту не виден. Миграция 012 |
+
+**Правила подсчёта не переписывают прошлое** (миграция 013):
+- Очки вечера. Триггер `evenings_scoring_snapshot` (before insert/update на `evenings`, security definer): вечер
+  становится `finished`/`settled` из другого статуса (finish в `add_event`, вставка уже завершённого) — `scoring` =
+  текущие `settings.ko_points`/`win_bonus`; был и остался завершённым (finished ↔ settled, открытие расчёта правкой
+  журнала, форма админки, upsert) — прежний снимок, присланное значение игнорируется; любой другой статус (отмена
+  finish в `void_event`, отмена вечера) — null. Повторный finish берёт правила на свой момент.
+- «Лучшие N». Значение закрытого сезона расходится с настройкой, только если её поменяли после конца сезона, —
+  поэтому заморозка в этот момент: триггер `settings_freeze_season_best_n` (before update of `season_best_n`, при
+  реальной смене) вызывает `private.freeze_past_seasons(old.season_best_n)` — строки всем прошедшим кварталам без
+  записи, от квартала самого раннего вечера клуба (любой статус) до предыдущего. Пока правки не было, домен берёт
+  текущее значение — оно и есть значение на конец сезона. Текущий сезон живёт по `settings.season_best_n`. Cron для
+  этого не нужен. Вечер, созданный задним числом в квартале раньше первого вечера клуба после заморозки, —
+  единственный случай, когда закрытый сезон пойдёт по текущей настройке.
+- Backfill 013: завершённым вечерам — снимок текущих настроек, прошедшим кварталам — текущее `season_best_n`
+  (прежних значений история не хранила).
+- Клиент: `fetchClubHistory` читает `season_rules` (`ClubHistory.bestNBySeason`, он же в `achievementInput`) и передаёт
+  снимок вечера в `summarize`; экраны закрытых сезонов, Зал славы, значок чемпиона и ачивки — с `bestNBySeason`;
+  подписи правил (`scoringRuleOf` в `shared/lib/text`) — по снимкам вечеров. Таблицы ещё нет (фронт выложен раньше,
+  чем докатилась миграция; PostgREST `PGRST205`) — пустой список, как до 013. `FinishedView` — очки по снимку вечера.
+  Функции: `loadHistory` (`notify/results.ts`) — то же, `season_rules` под service_role, `EVENING_COLUMNS` с `scoring`.
+- Админка «Клуб»: при правке очков или «лучших N» — пометка `scoringChangeNote` (`pages/admin/settingsDraft.ts`):
+  очки — для вечеров, которые завершатся после сохранения; «лучшие N» — для текущего сезона; прошедшие вечера и
+  закрытые сезоны не пересчитываются.
 
 Стартовые данные облака (seed туда не идёт) — миграция 011: строка `settings` (id=1; дефолты из 001:
 четверг 19:00 МСК, анонс за 48 ч, `group_chat_id`/`bot_username` пусты) и, если форматов ещё нет и
@@ -291,7 +328,8 @@ export interface EveningState {
 ### RLS
 - Все таблицы: `select` для `current_player_id() is not null` (активный участник клуба), кроме:
   `predictions` — свои всегда, чужие только когда вечер уже не `announced`;
-  `votes` — свои всегда, чужие только после `voting_closes_at`.
+  `votes` — свои всегда, чужие только после `voting_closes_at`;
+  `admin_alerts` — RLS включён без политик: клиенту не видна вовсе (только `service_role`, миграция 012).
 - `evening_events`, `rsvps`, `predictions`, `votes` — запись только через RPC.
 - `players`, `settings`, `formats`, `evenings` — insert/update только `is_admin()`; игрок может менять
   у себя только `display_name` (через RPC `set_my_name(p_name text)`).
@@ -307,7 +345,8 @@ export interface EveningState {
 `anon`/`authenticated`/`service_role` права на новые объекты `public` (changelog «Tables not exposed to Data
 and GraphQL API automatically»); локально так же — `[api] auto_expose_new_tables = false` в `config.toml`.
 - `authenticated` — ровно нужное, миграция 002 (select на все таблицы, insert/update на `players`, `settings`,
-  `formats`, `evenings`); `anon` — только RPC `board_state`, `server_now`.
+  `formats`, `evenings`; `season_rules` — select, миграция 013); `anon` — только RPC `board_state`, `server_now`.
+  Исключение — `admin_alerts` (012): у `anon`/`authenticated` прав нет вовсе (`revoke all`), только `service_role`.
 - `service_role` (Edge Functions через `adminClient`) — select/insert/update/delete на все таблицы и
   usage/select на sequences `public`, миграция 011; execute на RPC — поимённо в миграциях.
 - **Правило:** новая таблица (sequence) в миграции — сразу с явным `grant` для `service_role` и, если нужна
@@ -335,7 +374,39 @@ and GraphQL API automatically»); локально так же — `[api] auto_e
 Права вызывающего по JWT — `resolveCaller` в `_shared/admin.ts` (getUser + активный игрок `{id, is_admin, tg_id}`;
 notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-js@2.117.2`, версия точная (как у фронта
 в package-lock), обновлять в трёх импортах сразу. Сетевые ошибки Bot API (`callBotApi`) выходят без токена:
-сообщение fetch в Deno содержит URL с токеном, его вырезает `redactBotToken`.
+сообщение fetch в Deno содержит URL с токеном, его вырезает `redactBotToken`; это `TelegramNetworkError`
+(ответ Telegram с ошибкой — `TelegramApiError`). `describeError` живёт в `_shared/errors.ts` (без зависимостей,
+`admin.ts` его реэкспортирует) — его импортирует и то, что гоняет vitest под Node.
+
+**Оповещение админа о сбоях** (`_shared/alerts.ts`, миграция 012): `alertAdmin(db, kind, detail, err)` пишет в
+личный чат `ADMIN_TG_ID` (id личного чата = tg id) от бота клуба, parse_mode HTML. Вызывают: `cron-tick` — по
+каждому виду сбоя за тик (`cron_schedule`, `cron_changes`, `cron_announce`, `cron_results`, `cron_voting`; первая
+ошибка вида + «ещё N в этом же шаге»), `cron_crash` — тик упал целиком (`loadSettings` и т. п.) или не проверить
+`x-cron-secret` (500 `not_configured`; 401 `bad_secret` не алертится); `notify` — `notify_post`, когда Telegram не
+принял пост (`TelegramApiError`, `TelegramNetworkError`); `bot-setup` и `tg-auth` не алертят. Ответы функций и
+`report.errors` от алертов не меняются.
+- Ключ сбоя: ошибки Telegram — `telegram:<код>` / `telegram:network` (общий для всех шагов и функций: бот,
+  выкинутый из группы, — одно сообщение), кроме 400: потеря группы — `telegram:400:upgraded` /
+  `telegram:400:chat_not_found`, прочие 400 (разметка, длина поста) — `telegram:400:<kind>`, чтобы мелкая ошибка
+  одного поста не глушила сообщение о том, что встала вся автоматика; остальное — `kind`. Троттлинг: по ключу не чаще раза в 6 ч
+  (`ALERT_WINDOW_MS`); подавленные повторы копятся в `suppressed_count`, следующее сообщение — «Ещё N раз с прошлого
+  сообщения», счётчик обнуляется. Решение — чистая `decideAlert`, запись — compare-and-set по
+  (`last_sent_at`, `suppressed_count`) с перечитыванием (до 5 попыток): одновременные `notify` и `cron-tick`
+  шлют одно сообщение. Не дошло до админа — журнал откатывается (по `last_sent_at`, накопленные параллельными
+  вызовами повторы сохраняются), следующий сбой пробует снова.
+- Таблица `public.admin_alerts` (`key text pk`, `last_sent_at timestamptz`, `suppressed_count int ≥ 0`,
+  `updated_at`): RLS включён без политик, права — только `service_role` (select/insert/update/delete).
+- Текст (`alertText`): что не случилось, подробности (вечер по дате, без uuid), причина — первая строка ошибки
+  до 300 символов без стектрейса, токен бота, ключи `sb_…`, JWT и строки подключения вырезаются (`redactSecrets`),
+  время МСК, подсказка (для ошибок Telegram — по коду: 403 — бот выкинут, 400 chat not found, супергруппа,
+  401/404 — токен, 429, 5xx/сеть), ссылка `https://supabase.com/dashboard/project/<ref>/functions/<функция>/logs`
+  (`ref` из `SUPABASE_URL`; локально — путь словами). Обращение на «ты» (личка админа, не группа).
+- Никогда не бросает: свои сбои — `console.error`. Нет/кривой `ADMIN_TG_ID` — только лог. Журнал недоступен
+  (база лежит) — запасной троттлинг в памяти экземпляра: по ключу не чаще раза в час (`FALLBACK_WINDOW_MS`),
+  с пометкой об этом в тексте. Он важен для `cron-tick`: алерт `cron_crash` при сбое проверки секрета уходит
+  до авторизации, и без него любой запрос с непустым `x-cron-secret` при лежащей базе был бы сообщением админу. `TELEGRAM_DRY_RUN=1` — троттлинг как в проде,
+  текст только в лог (`[admin-alert dry-run]`). Бот не может писать первым — админ однажды жмёт Start в личке с
+  ботом (`DEPLOY.md`, «Оповещения о сбоях»); иначе Telegram отвечает 403 и алерт остаётся в логах.
 
 - `tg-auth` (`verify_jwt = false`): POST `{initData}` → проверка подписи по алгоритму Telegram
   (`secret = HMAC_SHA256(key="WebAppData", msg=bot_token)`, `hash = hex(HMAC_SHA256(secret, data_check_string))`,
@@ -406,12 +477,27 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
 - Дизайн-система — «Материя» (собственная система пользователя, исходник вне репо: `D:/dev/materia`).
   Её сборка **вендорится** в `src/vendor/materia/` (`materia.mjs` + `materia.d.mts`, `materia.css` —
   токены всех регистров и стили компонентов одним листом; `tokens.css` — справочно, уже вшит в
-  `materia.css`). Шрифты Google Fonts — не `@import` в листе (он блокировал запуск при зависшем
-  fonts.googleapis.com), а неблокирующая ссылка в `index.html` между метками `materia-fonts`; её пишет
-  sync-скрипт. Обновление — `node scripts/sync-materia.mjs [путь]`, руками не править.
-  Порядок стилей в `main.tsx`: `materia.css` → `styles/base.css` (safe-area Telegram `--pc-safe-*`,
-  `--pc-app-height`, на тач-экранах `--m-control-h` = 48 px) → `styles/app.css`; стили кита —
-  `src/shared/ui/ui.css`, только на переменных «Материи».
+  `materia.css`). Обновление — `node scripts/sync-materia.mjs [путь]`, руками не править.
+  Порядок стилей в `main.tsx`: `materia.css` → `styles/base.css` (`@import` своих шрифтов `fonts.css`,
+  safe-area Telegram `--pc-safe-*`, `--pc-app-height`, на тач-экранах `--m-control-h` = 48 px) →
+  `styles/app.css`; стили кита — `src/shared/ui/ui.css`, только на переменных «Материи».
+- Шрифты «Материи» — **свои файлы**, Google Fonts не используется (из РФ он открывается не всегда, а
+  `@import` шрифтов в листе блокировал запуск). Sync-скрипт вырезает `@import` Google из `materia.css` и
+  сверяет: каждое семейство «Материи» есть у нас или явно не нужно (`UNUSED_FAMILIES`), новых осей в
+  `font-variation-settings` нет (`KNOWN_VARIATION_AXES`). Файлы скачивает `node scripts/fetch-fonts.mjs`
+  (Google Fonts CSS API, только для разработки; сборка и CI в сеть не ходят): woff2 в `public/fonts/`
+  (Vite копирует как есть, к путям `/fonts/…` в CSS сам дописывает `BASE_PATH`), `@font-face` с
+  `font-display: swap` и `unicode-range` — в `src/styles/fonts.css` (его `@import` — в `styles/base.css`),
+  лицензии (SIL OFL 1.1) — `public/fonts/OFL.txt`. Руками эти файлы не править.
+  Набор: Кобальт — Geologica (оси `wght` + `SHRP`: «Материя» пишет заголовкам `"SHRP"`) и Martian Mono
+  (`wght`); Янтарь — Sofia Sans Condensed, Sofia Sans, JetBrains Mono (`wght`); Фарфор (Literata,
+  Commissioner) не скачивается. Неиспользуемые оси зафиксированы на значениях, которые браузер и так
+  выбирал: Geologica `slnt` 0 и `CRSV` 0 (курсива нет), Martian Mono `wdth` 100 (`font-stretch: normal`).
+  Подмножества — `latin` и `cyrillic` плюс `extra` из символов интерфейса вне них (`EXTRA_CHARS`: ₽, →;
+  в `unicode-range` — только те, что есть в шрифте; в Sofia Sans ₽ нет — на табло он из фолбэка). Новый
+  такой символ в UI — дописать в `EXTRA_CHARS` и перезапустить. Браузер качает файл, только когда на
+  экране есть текст этим семейством и символом из его диапазона: шрифты Янтаря грузятся только на табло.
+  Пока файл не пришёл, текст рисуется системным фолбэком из токенов `--font-*`.
 - Тема — регистр «Материи» на `<html data-theme>` (`src/app/useTheme.ts`): всё приложение — Кобальт,
   `kobalt` / `kobalt-dark` по `Telegram.WebApp.colorScheme` (вне Telegram — по `prefers-color-scheme`),
   подписка на `themeChanged`; табло `/board/:token` — `yantar` (`ThemeScope` в `routes.tsx`, при уходе
@@ -475,6 +561,9 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   `docker exec -i supabase_db_poker-club psql -U postgres -v ON_ERROR_STOP=1 -q < supabase/tests/008_reopen_merge.sql`.
 - `supabase/tests/010_slot_reason_settle_merge.sql` — то же для 010 (`slot_date` при вставке и переносе,
   `cancel_reason`, `mark_settled` по устаревшему журналу, текст препятствия, забытая ссылка на гостя).
+- `supabase/tests/013_scoring_snapshot.sql` — то же для 013 (снимок у завершённых, смена очков не трогает прошлые
+  вечера, снимок не пишется снаружи, отмена и повторный finish, заморозка «лучших N» при правке настройки, права
+  на `season_rules`, ограничения при выключенном триггере). Требует «сейчас» не раньше 2026-Q4 (seed — 2026-Q3/Q4).
 - `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed с новым Telegram-профилем в транзакции
   с rollback: replay, settlement, голоса и прогнозы каждого вечера после слияния совпадают с исходными
   с подменой id.
@@ -495,7 +584,9 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
 `cron_secret` и `project_url` в Vault, активное задание pg_cron; `private.invoke_cron_tick()` → ответ в
 `net._http_response` 200 без `errors`. Переменные репозитория: `SUPABASE_PROJECT_REF`, `APP_URL`; секреты —
 `SUPABASE_ACCESS_TOKEN` (scoped), `SUPABASE_DB_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `ADMIN_TG_ID`. Actions закреплены SHA,
-обновления — Dependabot (`.github/dependabot.yml`). Резервные копии и keepalive — отдельный приватный репозиторий `poker-club-ops`.
+обновления — Dependabot (`.github/dependabot.yml`). Резервные копии и keepalive — отдельный приватный репозиторий `poker-club-ops`: там же ежемесячная
+проверка восстановления копии (`restore-check.yml`) и напоминание о сроке токена Supabase (`reminders.yml`,
+переменная `TOKEN_EXPIRES` — дата окончания `SUPABASE_ACCESS_TOKEN`; при замене токена обновлять).
 
 Auth в облаке: `supabase config push` не используется (`[auth]` в `config.toml` — локальные адреса);
 регистрация выключена руками. Провайдер Email не выключать: вход `tg-auth` → `verifyOtp(token_hash)` с

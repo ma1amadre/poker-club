@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FORMAT } from './format.ts';
 import { replay } from './replay.ts';
-import { DEFAULT_SCORING, eveningPoints, placePoints, roundPoints } from './scoring.ts';
+import {
+  DEFAULT_SCORING,
+  eveningPoints,
+  eveningScoring,
+  parseScoringSnapshot,
+  placePoints,
+  roundPoints,
+} from './scoring.ts';
 import { summarize } from './summary.ts';
 import { journal } from './test-utils.ts';
 
@@ -75,6 +82,7 @@ describe('summarize', () => {
       entrants: ['A', 'B', 'C', 'D'],
       places: ['A', 'B', 'C', 'D'],
       points: { A: 3 + 1 + 1, B: 2 + 0.5, C: 1 + 0.5, D: 0 },
+      scoring: DEFAULT_SCORING, // снимка нет — правила из cfg
       // фонд 5·400 = 2000 → 1400/600; головы A: 100 + 50 + своя 100 + сиротская B 100 = 350
       netRub: { A: 1400 + 350 - 500, B: 600 + 100 - 1000, C: 50 - 500, D: -500 },
       kos: { A: 2, B: 1, C: 1, D: 0 },
@@ -101,5 +109,65 @@ describe('summarize', () => {
     expect(() =>
       summarize('ev2', '2026-10-08T16:00:00.000Z', F, j.events, DEFAULT_SCORING),
     ).toThrow(/не завершён/);
+  });
+});
+
+describe('снимок правил очков вечера (evenings.scoring)', () => {
+  // A выбивает B и C, побеждает; 3 участника.
+  function evening() {
+    const j = journal('2026-10-08T16:00:00.000Z').join('A', 'B', 'C');
+    j.start();
+    j.wait(10).bust('C', ['A']);
+    j.wait(10).bust('B', ['A']);
+    j.finish();
+    return j.events;
+  }
+  const at = '2026-10-08T16:00:00.000Z';
+  const snapshot = { koPoints: 0.5, winBonus: 1 };
+
+  it('смена ko_points / win_bonus после вечера не меняет его очки', () => {
+    const before = summarize('ev', at, F, evening(), DEFAULT_SCORING, snapshot);
+    // Админ поменял настройки: за нокаут 2, за победу 5. Вечер считается по своему снимку.
+    const changed = { koPoints: 2, winBonus: 5 };
+    const after = summarize('ev', at, F, evening(), changed, snapshot);
+    expect(after.points).toEqual(before.points);
+    expect(after.points).toEqual({ A: 2 + 2 * 0.5 + 1, B: 1, C: 0 });
+    expect(after.scoring).toEqual(snapshot);
+  });
+
+  it('без снимка (вечер до миграции) — по текущим настройкам', () => {
+    const changed = { koPoints: 2, winBonus: 5 };
+    const s = summarize('ev', at, F, evening(), changed, null);
+    expect(s.points).toEqual({ A: 2 + 2 * 2 + 5, B: 1, C: 0 });
+    expect(s.scoring).toEqual(changed);
+  });
+
+  it('снимок разбирается строго; кривой — как отсутствующий', () => {
+    expect(parseScoringSnapshot({ koPoints: 0, winBonus: 0 })).toEqual({
+      koPoints: 0,
+      winBonus: 0,
+    });
+    expect(parseScoringSnapshot({ koPoints: 1, winBonus: 2, extra: 3 })).toEqual({
+      koPoints: 1,
+      winBonus: 2,
+    });
+    for (const bad of [
+      null,
+      undefined,
+      'x',
+      [0.5, 1],
+      {},
+      { koPoints: 0.5 },
+      { koPoints: '0.5', winBonus: 1 },
+      { koPoints: -1, winBonus: 1 },
+      { koPoints: Number.NaN, winBonus: 1 },
+    ]) {
+      expect(parseScoringSnapshot(bad)).toBeNull();
+      expect(eveningScoring(bad, DEFAULT_SCORING)).toBe(DEFAULT_SCORING);
+    }
+    expect(eveningScoring({ koPoints: 1, winBonus: 3 }, DEFAULT_SCORING)).toEqual({
+      koPoints: 1,
+      winBonus: 3,
+    });
   });
 });

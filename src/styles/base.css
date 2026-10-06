@@ -5,6 +5,12 @@
  * (--tg-theme-*) не используется.
  */
 
+/*
+ * Файлы шрифтов «Материи» — свои, из public/fonts (Google Fonts не используется). @font-face
+ * генерирует scripts/fetch-fonts.mjs; Vite встраивает этот @import в общий лист при сборке.
+ */
+@import './fonts.css';
+
 :root {
   /*
    * Безопасные зоны: env() — браузер и вырезы iOS; --tg-safe-area-inset-* — устройство в Telegram;

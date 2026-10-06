@@ -3,13 +3,13 @@
 // (supabase/functions/_shared/domain) — поэтому числа в приложении и в постах бота совпадают.
 import type { AchievementInput, StarAward } from '@domain/achievements.ts';
 import { scorePrediction, type ScoredPrediction } from '@domain/predictions.ts';
-import { seasonKey } from '@domain/season.ts';
+import { seasonKey, type SeasonBestN } from '@domain/season.ts';
 import { summarize, type EveningSummary } from '@domain/summary.ts';
 import type { PlayerId } from '@domain/types.ts';
 import { VOTE_CATEGORIES, voteResults } from '@domain/votes.ts';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../supabase';
-import { errorMessage } from './errors';
+import { errorMessage, toError } from './errors';
 import { chunk, fetchAll, type RangeQuery } from './fetchAll';
 import { queryKeys } from './keys';
 import { fetchEvenings, fetchPlayers, fetchSettings } from './queries';
@@ -44,7 +44,13 @@ export interface ClubHistory {
   settings: Settings | null;
   /** Гости: в рейтинг, ачивки и звания не попадают. */
   excluded: Set<PlayerId>;
+  /** «Лучшие N» текущего сезона (и закрытых, если их значение не заморожено) — settings.season_best_n. */
   bestN: number;
+  /**
+   * Замороженные «лучшие N» закрытых сезонов (season_rules, миграция 013): передавать в
+   * seasonStandings / hallOfFame вместе с bestN, чтобы смена настройки не переписывала прошлое.
+   */
+  bestNBySeason: SeasonBestN;
   currentSeasonKey: string;
   /** Готовый вход для computeAchievements / titles. */
   achievementInput: AchievementInput;
@@ -76,11 +82,26 @@ function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[
   return out;
 }
 
+/**
+ * «Лучшие N» закрытых сезонов. Таблицы нет (фронт уже выложен, а миграция 013 ещё катится — деплой
+ * параллельный) — замороженных значений тоже нет: все сезоны по текущей настройке, как до 013.
+ * Остальные ошибки (права, сеть) — как у прочих запросов истории.
+ */
+async function fetchSeasonBestN(): Promise<SeasonBestN> {
+  const { data, error } = await supabase.from('season_rules').select('season_key, best_n');
+  if (error) {
+    if (error.code === 'PGRST205') return {};
+    throw toError(error);
+  }
+  return Object.fromEntries((data ?? []).map((r) => [r.season_key, r.best_n]));
+}
+
 export async function fetchClubHistory(nowMs: number = Date.now()): Promise<ClubHistory> {
-  const [evenings, players, settings] = await Promise.all([
+  const [evenings, players, settings, bestNBySeason] = await Promise.all([
     fetchEvenings({ status: ['finished', 'settled'] }),
     fetchPlayers(),
     fetchSettings(),
+    fetchSeasonBestN(),
   ]);
   const ids = evenings.map((e) => e.id);
 
@@ -117,6 +138,7 @@ export async function fetchClubHistory(nowMs: number = Date.now()): Promise<Club
   const predictionsByEvening = groupBy(predictionRows, (p) => p.evening_id);
   const votesByEvening = groupBy(voteRows.map(toVote), (v) => v.evening_id);
 
+  // Текущие правила очков — только для вечеров без снимка (до миграции 013); у остальных свой.
   const scoring = scoringFromSettings(settings);
   const summaries: EveningSummary[] = [];
   const summaryById = new Map<string, EveningSummary>();
@@ -129,6 +151,7 @@ export async function fetchClubHistory(nowMs: number = Date.now()): Promise<Club
         evening.format,
         eventsByEvening.get(evening.id) ?? [],
         scoring,
+        evening.scoring,
       );
       summaries.push(summary);
       summaryById.set(evening.id, summary);
@@ -179,6 +202,7 @@ export async function fetchClubHistory(nowMs: number = Date.now()): Promise<Club
     settings,
     excluded,
     bestN,
+    bestNBySeason,
     currentSeasonKey,
     achievementInput: {
       summaries,
@@ -186,6 +210,7 @@ export async function fetchClubHistory(nowMs: number = Date.now()): Promise<Club
       predictions: predictionScores,
       stars,
       bestN,
+      bestNBySeason,
       currentSeasonKey,
     },
     failed,

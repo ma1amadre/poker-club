@@ -7,6 +7,7 @@ import {
   placeLabel,
   pointsWord,
   scoringRule,
+  scoringRuleOf,
   standingMeta,
 } from './text';
 
@@ -39,6 +40,17 @@ describe('правило подсчёта', () => {
     );
     expect(bestNRule(10)).toBe('В зачёт сезона идут лучшие 10 вечеров игрока');
     expect(bestNRule(4)).toBe('В зачёт сезона идут лучшие 4 вечера игрока');
+  });
+
+  it('правило набора вечеров: общий снимок, разные снимки, пусто', () => {
+    const old = { koPoints: 0.5, winBonus: 1 };
+    const now = { koPoints: 1, winBonus: 2 };
+    expect(scoringRuleOf([old, { ...old }], now)).toBe(scoringRule(old));
+    expect(scoringRuleOf([], now)).toBe(scoringRule(now));
+    expect(scoringRuleOf([old, now], now)).toBe(
+      'Очки за вечер: +1 за каждого, кто вылетел раньше, плюс очки за нокауты и победу — ' +
+        'по правилам, которые действовали, когда вечер завершился',
+    );
   });
 
   it('что из сыгранного в зачёте', () => {

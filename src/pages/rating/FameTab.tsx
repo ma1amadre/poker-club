@@ -17,8 +17,15 @@ export function FameTab({ ctx }: { ctx: RatingContext }) {
         bestN: history.bestN,
         excluded: history.excluded,
         currentSeasonKey: history.currentSeasonKey,
+        bestNBySeason: history.bestNBySeason,
       }),
-    [history.summaries, history.bestN, history.excluded, history.currentSeasonKey],
+    [
+      history.summaries,
+      history.bestN,
+      history.excluded,
+      history.currentSeasonKey,
+      history.bestNBySeason,
+    ],
   );
 
   if (hall.length === 0) {

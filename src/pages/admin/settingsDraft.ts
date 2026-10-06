@@ -150,3 +150,25 @@ export function settingsDirty(draft: SettingsDraft, saved: Settings): boolean {
     return x !== y;
   });
 }
+
+/**
+ * Пометка под «Очками рейтинга», если черновик меняет правила подсчёта (по смыслу, как settingsDirty):
+ * что начнёт считаться по-новому, а что нет. Очки за нокаут и победу у вечера — снимок на момент
+ * завершения, «лучшие N» закрытого сезона заморожены (миграция 013). null — правила не тронуты.
+ */
+export function scoringChangeNote(draft: SettingsDraft, saved: Settings): string | null {
+  const a = parseSettingsDraft(draft).patch;
+  const b = parseSettingsDraft(draftFromSettings(saved)).patch;
+  const differs = (x: number | undefined, y: number | undefined) =>
+    !(x === y || (Number.isNaN(x) && Number.isNaN(y)));
+  const points = differs(a.ko_points, b.ko_points) || differs(a.win_bonus, b.win_bonus);
+  const bestN = differs(a.season_best_n, b.season_best_n);
+  if (!points && !bestN) return null;
+  return [
+    points && 'Очки за нокаут и победу — для вечеров, которые завершатся после сохранения.',
+    bestN && 'Число лучших вечеров — для текущего сезона, в том числе уже сыгранных в нём вечеров.',
+    'Прошедшие вечера и закрытые сезоны не пересчитываются: Зал славы и чемпионы остаются прежними.',
+  ]
+    .filter(Boolean)
+    .join(' ');
+}

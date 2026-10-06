@@ -1,7 +1,7 @@
 // Итог вечера: победитель, места, очки, призы, баунти, нетто, лучший охотник; ссылки на расчёт и
 // голосование. Админу — правка закрытого вечера (отмена записей, возврат вечера в игру).
 import { computeMoney } from '@domain/money.ts';
-import { eveningPoints } from '@domain/scoring.ts';
+import { eveningPoints, eveningScoring } from '@domain/scoring.ts';
 import { useState } from 'react';
 import { notifyEveningFinished, scoringFromSettings, useSettings } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
@@ -47,7 +47,11 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
   const { player } = useAuth();
   const settings = useSettings().data;
   const money = computeMoney(format, state);
-  const points = eveningPoints(state, scoringFromSettings(settings));
+  // Очки — по правилам, зафиксированным при завершении вечера (evenings.scoring), а не текущим.
+  const points = eveningPoints(
+    state,
+    eveningScoring(evening.scoring, scoringFromSettings(settings)),
+  );
   const rows = orderedPlayers(state);
   const winnerId = state.finished ? state.places[0] : undefined;
   const hunters = bestHunters(state);

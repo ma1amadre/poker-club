@@ -73,8 +73,9 @@ jobs:
             echo "::error::В бандле нет адреса облачного Supabase — .env.production не подхватился"
             exit 1
           }
-      # HashRouter: 404.html — страховка для прямых ссылок без #, .nojekyll — на случай Pages из ветки.
-      - run: cp dist/index.html dist/404.html && touch dist/.nojekyll
+      # HashRouter: 404.html — страховка для прямых ссылок без #. .nojekyll не нужен: при публикации
+      # через Actions Jekyll не запускается, а upload-pages-artifact (v4+) скрытые файлы и не берёт.
+      - run: cp dist/index.html dist/404.html
       # enablement сработает только с токеном администратора; с GITHUB_TOKEN Pages включают руками
       # один раз (Settings → Pages → Source: GitHub Actions, см. DEPLOY.md).
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
