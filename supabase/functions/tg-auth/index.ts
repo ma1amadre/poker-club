@@ -32,7 +32,7 @@ const INIT_DATA_ERRORS: Record<InitDataError, string> = {
   missing_hash: 'Нет подписи Telegram',
   bad_hash: 'Подпись Telegram не сошлась',
   bad_auth_date: 'Некорректное время входа',
-  expired: 'Данные входа устарели, откройте приложение заново',
+  expired: 'Данные входа устарели, открой приложение заново',
   bad_user: 'В данных входа нет пользователя Telegram',
 };
 
@@ -120,7 +120,7 @@ async function upsertPlayer(user: TelegramUser, isAdminTg: boolean): Promise<Pla
 
   if (found) {
     if (!found.is_active) {
-      throw new HttpError(403, 'inactive', 'Ваш профиль в клубе отключён. Обратитесь к админу');
+      throw new HttpError(403, 'inactive', 'Твой профиль в клубе отключён. Обратись к админу');
     }
     const patch: Partial<PlayerRow> = { username: user.username ?? null };
     if (user.photo_url) patch.photo_url = user.photo_url;
@@ -204,7 +204,7 @@ async function issueLoginToken(
     throw new HttpError(
       409,
       'auth_conflict',
-      'Учётная запись для этого Telegram уже занята — напишите админу клуба',
+      'Учётная запись для этого Telegram уже занята — напиши админу клуба',
     );
   }
 
@@ -272,10 +272,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return errorResponse(
         502,
         'telegram',
-        'Telegram не ответил на проверку участия в группе, попробуйте ещё раз',
+        'Telegram не ответил на проверку участия в группе, попробуй ещё раз',
       );
     }
     console.error(`tg-auth: ${describeError(error)}`);
-    return errorResponse(500, 'internal', 'Не удалось войти, попробуйте ещё раз');
+    return errorResponse(500, 'internal', 'Не удалось войти, попробуй ещё раз');
   }
 });

@@ -2,8 +2,19 @@
 // тексты ошибок записи. Деньги, очки и места здесь не считаются — это делает домен.
 import { errorMessage } from '../../shared/api/errors';
 import type { EveningStatus } from '../../shared/api/types';
-import { moscowDateKey } from '../../shared/lib/clubTime';
+import { clubWeekday, moscowDateKey, parseClubDate } from '../../shared/lib/clubTime';
+import { pluralWithNumber } from '../../shared/lib/format';
 import { NAME_MAX, normalizeName } from '../../shared/lib/text';
+
+// --- Вкладки --------------------------------------------------------------------------------
+
+export type AdminTabId = 'club' | 'formats' | 'players' | 'evenings';
+const ADMIN_TABS: readonly AdminTabId[] = ['club', 'formats', 'players', 'evenings'];
+
+/** Вкладка из ?tab=…; без параметра или с неизвестной — «Вечера»: с ними админ работает чаще всего. */
+export function adminTab(param: string | null): AdminTabId {
+  return ADMIN_TABS.includes(param as AdminTabId) ? (param as AdminTabId) : 'evenings';
+}
 
 // --- Числа в полях ввода ---------------------------------------------------------------------
 // Поля — type="text" с inputMode: у type="number" нет десятичной запятой, а колесо мыши и
@@ -52,8 +63,8 @@ export function intToInput(value: number | null | undefined): string {
 /** Ошибка имени игрока или null: 1–40 символов, как у set_my_name. */
 export function nameError(value: string): string | null {
   const name = normalizeName(value);
-  if (name.length === 0) return 'Введите имя — его видят все участники клуба.';
-  if (Array.from(name).length > NAME_MAX) return `Имя длиннее ${NAME_MAX} символов. Сократите его.`;
+  if (name.length === 0) return 'Введи имя — его видят все участники клуба.';
+  if (Array.from(name).length > NAME_MAX) return `Имя длиннее ${NAME_MAX} символов. Сократи его.`;
   return null;
 }
 
@@ -97,6 +108,57 @@ export function bankerCandidates<T extends PlayerLike>(
   return current && !members.some((m) => m.id === current.id) ? [...members, current] : members;
 }
 
+// --- Привязка игрока без Telegram к Telegram-профилю (merge_players, миграция 008) -----------
+
+/**
+ * Куда можно привязать игрока без Telegram: профили с tg_id, кроме него самого. Активные сверху,
+ * внутри — по имени (отключённого тоже можно выбрать: вдруг человек сначала вошёл, а потом его
+ * отключили по ошибке).
+ */
+export function mergeTargets<T extends PlayerLike>(players: readonly T[], guestId: string): T[] {
+  return players
+    .filter((p) => p.id !== guestId && p.tg_id !== null && p.tg_id !== undefined)
+    .sort(
+      (a, b) =>
+        Number(b.is_active) - Number(a.is_active) ||
+        a.display_name.localeCompare(b.display_name, 'ru') ||
+        a.id.localeCompare(b.id),
+    );
+}
+
+export interface MergeCounts {
+  evenings: number;
+  events: number;
+  votesReceived: number;
+  votesCast: number;
+  predictionsAbout: number;
+  predictionsMade: number;
+  rsvps: number;
+  bankerOf: number;
+}
+
+type Forms = readonly [string, string, string];
+const MERGE_LINES: readonly [keyof MergeCounts, Forms][] = [
+  ['evenings', ['сыгранный вечер', 'сыгранных вечера', 'сыгранных вечеров']],
+  ['events', ['запись журнала', 'записи журнала', 'записей журнала']],
+  ['votesReceived', ['полученный голос', 'полученных голоса', 'полученных голосов']],
+  ['votesCast', ['отданный голос', 'отданных голоса', 'отданных голосов']],
+  [
+    'predictionsAbout',
+    ['прогноз других игроков', 'прогноза других игроков', 'прогнозов других игроков'],
+  ],
+  ['predictionsMade', ['свой прогноз', 'своих прогноза', 'своих прогнозов']],
+  ['rsvps', ['ответ на анонс', 'ответа на анонс', 'ответов на анонс']],
+  ['bankerOf', ['вечер в роли банкира', 'вечера в роли банкира', 'вечеров в роли банкира']],
+];
+
+/** «2 сыгранных вечера», «4 прогноза других игроков» — только ненулевые, в порядке важности. */
+export function mergeSummary(counts: MergeCounts): string[] {
+  return MERGE_LINES.filter(([key]) => counts[key] > 0).map(([key, forms]) =>
+    pluralWithNumber(counts[key], forms),
+  );
+}
+
 // --- Вечера ----------------------------------------------------------------------------------
 
 export interface EveningLike {
@@ -138,6 +200,85 @@ export function takenDates(evenings: readonly EveningLike[], exceptId?: string):
   );
 }
 
+// --- Посты о правке вечера (notify evening_changed, миграция 008) ---------------------------
+
+export type AnnounceChangeKind = 'moved' | 'cancelled' | 'restored';
+
+/** Вторая строка тоста после сохранения: что бот написал в группу. */
+export function announceChangeText(change: AnnounceChangeKind): string {
+  if (change === 'cancelled') return 'Бот написал в группу, что вечер отменён.';
+  if (change === 'restored') return 'Бот написал в группу, что вечер всё-таки состоится.';
+  return 'Бот написал в группу о переносе.';
+}
+
+/**
+ * Узнает ли группа об отмене или возврате вечера: 'group' — анонс в группе и вечер ещё впереди
+ * (бот напишет), 'past' — анонс был, но время вечера прошло (сервер правку запомнит молча,
+ * decideAnnounceChange), 'none' — анонса не было.
+ */
+export type AnnounceReach = 'group' | 'past' | 'none';
+
+export function announceReach(
+  evening: { announce_posted_at: string | null; scheduled_at: string },
+  nowMs: number,
+): AnnounceReach {
+  if (!evening.announce_posted_at) return 'none';
+  return Date.parse(evening.scheduled_at) > nowMs ? 'group' : 'past';
+}
+
+/** Подпись раздела «Отмена» в форме вечера. */
+export function cancelFooter(reach: AnnounceReach): string {
+  if (reach === 'group')
+    return 'Бот напишет в группу, что вечер отменён, и добавит причину, если она указана. Вернуть вечер можно здесь же.';
+  if (reach === 'past')
+    return 'Время вечера уже прошло — в группу ничего не уйдёт. Вернуть вечер можно здесь же.';
+  return 'Вечер пропадёт из ближайших, бот не создаст новый на этот день. Вернуть его можно здесь же.';
+}
+
+/** Текст подтверждения отмены вечера, о которой бот напишет в группу. */
+export function cancelConfirmMessage(reason: string): string {
+  const head = reason
+    ? `Бот напишет в группу, что вечер отменён, с причиной «${reason}».`
+    : 'Бот напишет в группу, что вечер отменён, без причины.';
+  return `${head} Пост не отзовёшь: если вернёшь вечер до начала, бот напишет, что он всё-таки состоится.`;
+}
+
+/** Пометка «Вечер отменён» в форме: причина и что будет, если вернуть. */
+export function cancelledNoticeText(reason: string | null, reach: AnnounceReach): string {
+  const parts = [reason?.trim() ? `Причина: «${reason.trim()}».` : null];
+  parts.push('Его нет среди ближайших, бот не создаст новый вечер на этот день.');
+  if (reach === 'group')
+    parts.push('Если вернёшь вечер, бот напишет в группу, что он всё-таки состоится.');
+  return parts.filter(Boolean).join(' ');
+}
+
+/** Подсказка поля «Заметка»: куда она попадёт. Причина отмены — отдельное поле. */
+export function noteHint(status: EveningStatus, posted: boolean): string | undefined {
+  if (status !== 'announced') return undefined;
+  return posted
+    ? 'Анонс уже в группе — правка заметки туда не попадёт, её увидят в приложении.'
+    : 'Попадёт в анонс в группе.';
+}
+
+/**
+ * День по расписанию, который останется без вечера после переноса на newDate: за ним закреплён
+ * этот вечер (evenings.slot_date, миграция 010), и cron-tick новый на него не создаст. null —
+ * предупреждать не о чем: день тот же, не день игры по расписанию или уже прошёл.
+ */
+export function vacatedSlot(
+  evening: { slot_date: string | null },
+  newDate: string,
+  gameWeekday: number | null | undefined,
+  nowMs: number,
+): string | null {
+  const slot = evening.slot_date;
+  if (!slot || !parseClubDate(newDate) || newDate === slot) return null;
+  if (gameWeekday == null || clubWeekday(slot) !== gameWeekday) return null;
+  // Даты «2026-10-08» сравниваются строкой.
+  if (slot < moscowDateKey(nowMs)) return null;
+  return slot;
+}
+
 // --- Ошибки записи ---------------------------------------------------------------------------
 
 interface CodeLike {
@@ -163,10 +304,10 @@ function pgCode(error: unknown): { code: string; message: string } | null {
 export function adminErrorText(error: unknown): string {
   const pg = pgCode(error);
   if (pg?.code === '23505' && pg.message.includes('evenings_one_per_club_day')) {
-    return 'На этот день уже есть вечер. Выберите другую дату или сначала отмените тот вечер.';
+    return 'На этот день уже есть вечер. Выбери другую дату или сначала отмени тот вечер.';
   }
   if (pg?.code === '23514') {
-    return 'Значение вне допустимых пределов. Проверьте числа в форме.';
+    return 'Значение вне допустимых пределов. Проверь числа в форме.';
   }
   return errorMessage(error);
 }

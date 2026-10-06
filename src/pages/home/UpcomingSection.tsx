@@ -166,7 +166,7 @@ export function AnnouncedEvening({
             }
           >
             {`Игра была назначена на ${formatDateTime(evening.scheduled_at, nowMs)}. `}
-            {isAdmin ? 'Отмените вечер или запустите таймер.' : 'Вечер должен отменить админ.'}
+            {isAdmin ? 'Отмени вечер или запусти таймер.' : 'Вечер должен отменить админ.'}
           </Notice>
         )}
         <Card>
@@ -213,13 +213,13 @@ export function AnnouncedEvening({
           </ButtonLink>
         )}
         <FieldGroup
-          label="Ваш ответ"
+          label="Твой ответ"
           hint={myRsvp ? undefined : 'Ответ нужен банкиру, чтобы собрать список игроков.'}
         >
           <Segmented
             block
             className="home-rsvp"
-            label="Ваш ответ на анонс"
+            label="Твой ответ на анонс"
             value={myRsvp ?? ''}
             options={RSVP_OPTIONS}
             onChange={(value) => value && answer(value)}
@@ -239,7 +239,7 @@ export function AnnouncedEvening({
 
 function Going({ groups, meId }: { groups: RsvpGroups<Player>; meId: string }) {
   const names = (list: readonly Player[]) =>
-    list.map((p) => (p.id === meId ? `${p.display_name} (вы)` : p.display_name)).join(', ');
+    list.map((p) => (p.id === meId ? `${p.display_name} (ты)` : p.display_name)).join(', ');
   const going = groups.yes;
   const rest = [
     groups.maybe.length > 0 && `Под вопросом: ${names(groups.maybe)}`,
@@ -595,7 +595,7 @@ export function NextGame({ settings, isAdmin, nowMs }: NextGameProps) {
   const description = at
     ? `Анонс появится за ${pluralWithNumber(hours, ['час', 'часа', 'часов'])} до игры.`
     : isAdmin
-      ? 'Укажите день и время игры в настройках клуба или создайте вечер вручную.'
+      ? 'Укажи день и время игры в настройках клуба или создай вечер вручную.'
       : 'Ближайший вечер назначит админ.';
 
   return (

@@ -68,7 +68,7 @@ export interface DevInitDataOptions {
 /** initData в том виде, в каком её отдаёт Telegram.WebApp.initData (URL-encoded query). */
 export async function buildDevInitData(options: DevInitDataOptions): Promise<string> {
   if (!crypto?.subtle) {
-    throw new Error('WebCrypto недоступен: откройте dev-сервер по http://127.0.0.1 или https');
+    throw new Error('WebCrypto недоступен: открой dev-сервер по http://127.0.0.1 или https');
   }
   const { user, botToken, authDate = Math.floor(Date.now() / 1000), startParam } = options;
   // Поля перечислены явно: в user не должно попасть ничего лишнего (например, note из DEV_PLAYERS).

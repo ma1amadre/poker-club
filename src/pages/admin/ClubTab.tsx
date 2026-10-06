@@ -75,7 +75,7 @@ export function ClubTab({ draft, onDraftChange }: ClubTabProps) {
       <Empty
         kind="error"
         title="Настроек клуба нет в базе"
-        description="Строку настроек создаёт миграция 001_schema.sql. Примените миграции и обновите страницу."
+        description="Строку настроек создаёт миграция 001_schema.sql. Примени миграции и обнови страницу."
       />
     );
 
@@ -189,26 +189,26 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
               content: (
                 <ol className="m-small adm-steps">
                   <li>
-                    Добавьте бота клуба в группу и сделайте его администратором: иначе Telegram
-                    может не отвечать боту, кто состоит в группе.
+                    Добавь бота клуба в группу и сделай его администратором: иначе Telegram может не
+                    отвечать боту, кто состоит в группе.
                   </li>
                   <li>
-                    Откройте в браузере{' '}
+                    Открой в браузере{' '}
                     <span className="m-mono adm-code">
                       api.telegram.org/bot&lt;токен&gt;/getUpdates
                     </span>
-                    {' — токен выдал BotFather. Сюда его не вставляйте.'}
+                    {' — токен выдал BotFather. Сюда его не вставляй.'}
                   </li>
                   <li>
-                    Найдите в ответе{' '}
+                    Найди в ответе{' '}
                     <span className="m-mono adm-code">
                       &quot;chat&quot;:{'{'}&quot;id&quot;:-100…
                     </span>{' '}
-                    с названием вашей группы — это число и есть ID.
+                    с названием твоей группы — это число и есть ID.
                   </li>
                   <li>
-                    Ответ пустой — напишите в группе{' '}
-                    <span className="m-mono adm-code">/start@{bot || 'имя_бота'}</span> и обновите
+                    Ответ пустой — напиши в группе{' '}
+                    <span className="m-mono adm-code">/start@{bot || 'имя_бота'}</span> и обнови
                     страницу.
                   </li>
                 </ol>

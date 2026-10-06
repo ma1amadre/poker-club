@@ -23,13 +23,15 @@ supabase/
     _shared/telegram.ts          # initData, Bot API
     _shared/admin.ts             # service-клиент supabase-js для функций
     _shared/messages.ts          # тексты постов бота
+    _shared/announce.ts          # снимок анонса и решение «писать ли о правке вечера» (чистое, vitest)
     tg-auth/index.ts
-    notify/index.ts
+    notify/index.ts              # + results.ts (итоги), changes.ts (перенос/отмена/возврат вечера)
     cron-tick/index.ts
+  tests/NNN_*.sql                # SQL-проверки в транзакции с rollback (запуск — в шапке файла)
 src/
   main.tsx, app/*, pages/*, shared/{supabase,telegram,auth,api,ui,lib}/*
   vendor/materia/*               # вендоренная «Материя» (scripts/sync-materia.mjs)
-scripts/                         # node-скрипты разработки
+scripts/                         # node-скрипты разработки (check-merge-replay.mjs — слияние на seed)
 ```
 
 Правило импорта домена: во фронте `import { replay } from '@domain/replay.ts'` (alias в vite и
@@ -178,7 +180,7 @@ export interface EveningState {
 | `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at` |
 | `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at` |
 | `formats` | `id uuid pk`, `name text`, `config jsonb` (TournamentFormat), `is_archived bool default false`, `created_at` |
-| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `created_by`, `created_at` |
+| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `created_by`, `created_at` |
 | `evening_events` | `id bigserial pk`, `evening_id uuid → evenings on delete cascade`, `type text check (EventType)`, `payload jsonb default '{}'`, `at timestamptz default now()`, `created_by uuid → players`, `voided_at timestamptz`, `voided_by uuid → players`, `client_id uuid` (ключ повтора, unique `(evening_id, client_id)`, миграция 007) |
 | `rsvps` | pk `(evening_id, player_id)`, `status text check in ('yes','no','maybe')`, `updated_at` |
 | `predictions` | pk `(evening_id, player_id)`, `winner_id uuid → players`, `first_out_id uuid → players`, `updated_at` |
@@ -204,6 +206,17 @@ export interface EveningState {
   создаёт игрока `is_guest = true` (имя 1–40 символов, пробелы схлопываются) и сразу добавляет его `join`
   в этот вечер (через `add_event`). Возвращает id гостя. Миграция 006. Клиент — `addGuest` / `useAddGuest`
   в `src/shared/api/rpc.ts`.
+- **Правка журнала открывает закрытый расчёт** (миграция 008): любой новый `evening_events` (add_event любого
+  типа, в том числе платёж банкира и join из `add_guest`) или отмена события (`voided_at` null → не null) у вечера
+  в `settled` в той же транзакции возвращает его в `finished`: `settled_at = null`, `settle_reopened_at = now()`.
+  Сделано триггерами `evening_events_reopen_settlement_on_insert/_on_void` (функция
+  `private.reopen_settlement_on_journal_change`) — одна точка на все пути записи; правка payload/created_by
+  (как в `merge_players`) его не трогает. В `seed.sql` на время заливки журналов триггеры выключены.
+  Фронт: `reopenedNotice` (`pages/evening/lib.ts`) — пометка «Расчёт снова открыт» на экранах вечера и расчёта
+  (банкиру и админу — закрыть заново, игроку вечера — проверить свой остаток, не игравшим — нейтрально; на экране
+  вечера без своей кнопки: «Открыть расчёт» там уже есть); закрытый расчёт с ненулевыми остатками на экране —
+  предупреждение вместо «сошёлся в ноль» (`settledNotice`);
+  на главной — пометка в долгах и напоминании банкиру (`openSettlements(...).reopened`).
 - `void_event(p_event bigint) → void` — те же права; отмена последнего неотменённого `finish` возвращает
   `status='live'` (или `announced`, если `started_at` пуст), обнуляет finished_at/settled_at/voting_closes_at,
   снимает `results_posted_at` и `voting_posted_at` (если итог уже публиковался — `results_revision += 1`):
@@ -211,9 +224,44 @@ export interface EveningState {
 - `set_payout(p_evening uuid, p_pct numeric[])` — банкир вечера или админ, только пока `announced`:
   `format.payoutPct` вечера (1–10 долей > 0, сумма 100 — как `validateFormat`). Миграция 007.
 - `server_now() → timestamptz` — время сервера (clock_timestamp) для сверки часов клиента; доступна anon.
-- `mark_settled(p_evening uuid)` / `unmark_settled` — банкир или админ; `status='settled'`.
+- `mark_settled(p_evening uuid, p_last_event_id bigint, p_voided_count int)` / `unmark_settled(p_evening uuid)` —
+  банкир или админ; `status='settled'` / обратно в `finished`; оба снимают `settle_reopened_at` (миграция 008).
+  `mark_settled` получает журнал, который видел экран расчёта (`journalVersion` в `pages/evening/lib.ts`: последний
+  id и число отменённых записей); если на сервере журнал другой (платёж записали или отменили с другого устройства,
+  пока Realtime не обновил экран) — P0001 «Журнал вечера изменился…», клиент перечитывает журнал (миграция 010).
+  Сам баланс по-прежнему считает домен на клиенте (`isSettled`).
 - `set_rsvp(p_evening uuid, p_status text)` — любой участник клуба, пока `status='announced'`.
-- `set_prediction(p_evening uuid, p_winner uuid, p_first_out uuid)` — пока `status='announced'`.
+- `set_prediction(p_evening uuid, p_winner uuid, p_first_out uuid)` — пока `status='announced'`; победителем
+  и первым вылетом можно назвать любого существующего игрока, гостя тоже (проверено в миграции 008, правка
+  не понадобилась). Фронт предлагает всех активных: постоянных по ответу на анонс, за ними гостей по имени
+  (`predictionCandidates` в `pages/home/lib.ts`; гость на анонс не отвечает — войти он не может).
+- `merge_players(p_guest uuid, p_target uuid) → jsonb` — только админ (миграция 008). `p_guest` — игрок без
+  `tg_id` и без входа (гость или сделанный постоянным), `p_target` — игрок с `tg_id`. Атомарно, под блокировкой
+  всех вечеров (тот же порядок, что у add_event): в `evening_events` — `payload.playerId` и элементы `payload.by`
+  точной заменой значения (порядок `by` сохраняется, `private.payload_replace_player`), `created_by`/`voided_by`;
+  `rsvps`, `predictions` (свои строки и `winner_id`/`first_out_id`), `votes` (`voter_id`, `nominee_id`) —
+  удалить и вставить заново с прежними `updated_at`/`created_at`; `evenings.banker_id`/`created_by`;
+  `p_target.is_guest = false`; гость удаляется. Все внешние ключи на `players` — `on delete cascade`/`set null`,
+  удаление само не упало бы, поэтому перед ним `private.player_references` обходит `pg_constraint` (каждый внешний
+  ключ на `players`, новые таблицы — автоматически) и payload журнала: осталась ссылка — отказ XX000, слияние
+  откатывается целиком (миграция 010).
+  Отказ P0001 «Привязать профиль «…» к профилю «…» нельзя: …» с перечнем причин, если: оба в действующих
+  записях журнала одного вечера (совет — сначала выбрать другой профиль, правка журнала — если гостя вписали по
+  ошибке; миграция 010); разные
+  ответы на один анонс; разные прогнозы на один вечер; разные голоса в одной номинации; один голосовал за
+  другого (после слияния — голос за себя); у гостя фото к голосу, а голосование вечера ещё открыто.
+  Совпадающие строки (тот же ответ/прогноз/голос) схлопываются в строку профиля. Ошибки аргументов — 22023
+  (гость с Telegram, профиль без Telegram, один и тот же игрок), не админ — 42501. Ответ — отчёт
+  `{guest:{id,name}, target:{id,name}, evenings, events, votesReceived, votesCast, predictionsAbout,
+  predictionsMade, rsvps, bankerOf, photosKept, blockers: text[]}`.
+  **Фото голосов** при слиянии не переносятся: объекты Storage SQL переименовать нельзя (файл в хранилище
+  привязан к имени), `votes.photo_path` остаётся `{вечер}/{гость}/…`. Политики продолжают работать: после
+  закрытия голосования фото видят все участники (как и раньше), админ — всегда и может удалить; поэтому
+  слияние, пока у гостя есть фото в ещё открытом голосовании, запрещено (профиль не смог бы переголосовать
+  с этим фото — `cast_vote` принимает только свою папку). Гость без Telegram войти не может, так что на
+  практике фото у него нет.
+- `merge_players_preview(p_guest uuid, p_target uuid) → jsonb` — то же без записи: отчёт и `blockers`
+  (подтверждение в админке). Клиент — `mergePlayersPreview`/`useMergePreview`, `mergePlayers`/`useMergePlayers`.
 - `cast_vote(p_evening uuid, p_category text, p_nominee uuid, p_caption text, p_photo_path text)` —
   голосующий и номинант — участники вечера, `now() < voting_closes_at`, не за себя; upsert.
 - `delete_vote(p_evening uuid, p_voter uuid, p_category text)` — свой голос, пока голосование открыто;
@@ -270,12 +318,28 @@ export interface EveningState {
   `results_revision > 0` заголовок «Исправленные итоги». `kind: 'evening_corrected'` — только админ:
   исправленный итог закрытого вечера, если после `results_posted_at` журнал менялся (кроме платежей),
   иначе `no_changes`; защита от дублей — перестановка `results_posted_at` по старому значению.
-  Ответ `{ok: true, outcome: 'posted'|'already_posted'|'no_group'|'no_changes'}`; клиент —
-  `notifyEveningFinished(eveningId, kind)` в `src/shared/api/rpc.ts`.
+  `kind: 'evening_changed'` — только админ, сразу после сохранения вечера в админке (миграция 008,
+  `notify/changes.ts`): если анонс уже в группе (`announce_posted_at` не null) и вечер в `announced`/`cancelled`,
+  сервер сравнивает `announce_snapshot` с текущим вечером (`decideAnnounceChange` в `_shared/announce.ts`):
+  новое время или место будущего вечера → «Вечер перенесён» (новые и прежние данные, кнопка `e_<id>`);
+  отмена будущего → «Вечер <дата> отменён» с причиной из `cancel_reason`, если есть (миграция 010); возврат отменённого → «Вечер <дата>
+  всё-таки состоится» (дополнение: иначе группа осталась бы с постом об отмене). Сохранение без изменения
+  времени и места — без поста; правка прошедшего или отменённого вечера и вечер без снимка — снимок
+  обновляется молча. Защита от дублей — снимок переставляется по старому значению (`eq` jsonb), при ошибке
+  Telegram возвращается; каждый пост несёт актуальные данные. Анонс ещё не уходил → `not_announced`.
+  Ответ `{ok: true, outcome: 'posted'|'already_posted'|'no_group'|'no_changes'|'not_announced', change?:
+  'moved'|'cancelled'|'restored'}`; клиент — `notifyEveningFinished(eveningId, kind)` и
+  `notifyEveningChanged(eveningId)` в `src/shared/api/rpc.ts`.
 - `cron-tick` (`verify_jwt = false`, проверка `x-cron-secret`): (1) если до ближайшей игры по
-  расписанию осталось ≤ `announce_hours_before` и вечера на эту дату нет — создаёт `evenings`
-  (формат по умолчанию, банкир не назначен) и постит анонс; (2) постит итоги голосования для вечеров
-  с прошедшим `voting_closes_at` и пустым `voting_posted_at`; (3) добивает неотправленные итоги вечеров.
+  расписанию осталось ≤ `announce_hours_before` и слот свободен — нет вечера (в любом статусе) ни в этот
+  московский день по `scheduled_at`, ни закреплённого за ним по `slot_date` (перенесённый на другой день вечер
+  держит свой слот: второго вечера и свежего анонса на опустевший день нет; `holdsSlot`/`slotFilter` в
+  `cron-tick/schedule.ts`, миграция 010) — создаёт `evenings`
+  (формат по умолчанию, банкир не назначен) и постит анонс — вместе с `announce_posted_at` пишет
+  `announce_snapshot` того, что ушло в пост; (2) постит итоги голосования для вечеров
+  с прошедшим `voting_closes_at` и пустым `voting_posted_at`; (3) добивает неотправленные итоги вечеров;
+  (4) подстраховка `evening_changed`: для объявленных вечеров (`announced`/`cancelled`, не старше недели) тот же
+  `postAnnounceChange` — если вызов из админки не дошёл, пост уйдёт с ближайшим тиком.
 - Кнопки в постах группы — URL-кнопки на прямую ссылку Mini App
   `https://t.me/<bot_username>?startapp=<param>` (web_app-кнопки в группах недоступны).
   `startapp`: `e_<eveningId>` → вечер, `v_<eveningId>` → голосование, `r` → рейтинг.
@@ -308,7 +372,7 @@ export interface EveningState {
   Card, Stat/Stats, Tabs, Segmented, Avatar/AvatarGroup, Icon, Empty/ErrorView, Confirm, Toast-провайдер,
   Amount) и своё из её токенов (Page, Section, List/ListItem, Sheet, BottomNav, PlayerPicker, FieldGroup).
   Текст — роли `m-*`; голос: «ёлочки», ё, неразрывные пробелы в числах, кнопка = глагол + объект, одна
-  primary на экран. Витрина кита в dev: `/#/dev/kit` (переключатель kobalt/kobalt-dark) и
+  primary на экран, обращение — на «ты» (см. ниже). Витрина кита в dev: `/#/dev/kit` (переключатель kobalt/kobalt-dark) и
   `/#/dev/kit-yantar` (табло-цифры), в прод-сборку не попадает.
 - Общие помощники экранов — `src/shared/lib` (импорт из `index.ts`; чистые модули тесты берут напрямую):
   `format` (деньги, числа, даты, `NBSP`), `text` (склонения, места, правило очков, `capitalize`, `joinNames`,
@@ -324,6 +388,22 @@ export interface EveningState {
   `/evening/:id/settle` расчёт; `/evening/:id/vote` голосование; `/board/:token` табло (публичное,
   вне AuthProvider); `/rating` (сезон / деньги / всё время / оракул / зал славы); `/player/:id`;
   `/history`; `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
+  `/admin` без `?tab` (и с неизвестной вкладкой) открывает «Вечера» (`adminTab` в `pages/admin/lib.ts`).
+- Админка «Игроки»: у игрока без `tg_id` — «Привязать к Telegram» (`pages/admin/MergeSheet.tsx`): выбор профиля
+  с Telegram, предпросмотр `merge_players_preview` (что перенесётся, что мешает), подтверждение с перечнем,
+  результат тостом. «Вечер»: после сохранения вечера с уже ушедшим анонсом — `notifyEveningChanged`; отмена
+  такого вечера, пока он впереди, — через подтверждение (пост не отзовёшь), причина — отдельное поле «Причина для
+  группы» (`cancel_reason`), заметка анонса не меняется; возврат снимает причину, а пометка «Вечер отменён»
+  заранее говорит, что бот напишет «всё-таки состоится». О прошедшем вечере сервер молчит — форма поста не
+  обещает (`announceReach` в `pages/admin/lib.ts`). Перенос на другой день: пометка, что день по расписанию
+  останется без вечера (`vacatedSlot`, по `slot_date`).
+- Mini App обращается на «ты» (со строчной) — осознанное отступление от голоса «Материи» (решение пользователя),
+  остальные правила голоса в силе: без эмодзи и восклицаний, «ёлочки», ё, кнопка = глагол + объект, ошибка =
+  что случилось и как исправить. Формы, где «ты» требует рода (прошедшее время, краткие прилагательные),
+  перестраиваем: «В этот вечер тебя не было за столом», а не «Ты не играл». На «ты» и тексты ошибок, которые
+  интерфейс показывает как есть: RPC (миграция 009 — `add_event`, `set_my_name`, `cast_vote`) и ответы
+  Edge Functions `tg-auth`/`notify`. Посты бота обращаются к группе во множественном числе — как и заметка
+  вечера, которая уходит в анонс (отсюда пример «Возьмите наличку на ребаи» в форме вечера).
 - Время вечера: `useNow(1000)` + `replay(format, events, now)`; `now` — по часам сервера
   (`src/shared/lib/serverClock.ts`: смещение по замерам `server_now` при старте и возврате на экран,
   `board_state.server_now` на каждом опросе табло и `at` из ответов `add_event`; берётся замер с
@@ -331,6 +411,16 @@ export interface EveningState {
   её не принял (например, ребай пришёл после закрытия), вместо «записан» — предупреждение.
   События вечера — запрос + Realtime-подписка на `evening_events` с фильтром `evening_id=eq.<id>`;
   табло без авторизации опрашивает `board_state` раз в 3 с.
+
+## Проверки вне vitest
+- `supabase/tests/008_reopen_merge.sql` — SQL-проверки миграции 008 (открытие расчёта правкой, `merge_players`,
+  `set_prediction` с гостем) в одной транзакции с rollback:
+  `docker exec -i supabase_db_poker-club psql -U postgres -v ON_ERROR_STOP=1 -q < supabase/tests/008_reopen_merge.sql`.
+- `supabase/tests/010_slot_reason_settle_merge.sql` — то же для 010 (`slot_date` при вставке и переносе,
+  `cancel_reason`, `mark_settled` по устаревшему журналу, текст препятствия, забытая ссылка на гостя).
+- `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed с новым Telegram-профилем в транзакции
+  с rollback: replay, settlement, голоса и прогнозы каждого вечера после слияния совпадают с исходными
+  с подменой id.
 
 ## Тестовые данные (seed.sql, только локально)
 Игроки с `tg_id` 1001–1006 (1001 — админ), один гость, формат по умолчанию, settings

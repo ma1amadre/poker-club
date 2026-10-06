@@ -147,7 +147,7 @@ export default function VotePage() {
             />
           ) : (
             <Notice tone="info" title="Голосуют только игравшие">
-              {`Вы не играли в этот вечер. Итоги откроются всем ${formatDateTime(closesAt, now)}.`}
+              {`В этот вечер тебя не было за столом. Итоги откроются всем ${formatDateTime(closesAt, now)}.`}
             </Notice>
           )}
         </>
@@ -248,7 +248,7 @@ function MyVotes({
 
   return (
     <Section
-      title="Ваши голоса"
+      title="Твои голоса"
       aside={
         <span className="m-mono">
           {done} из {VOTE_CATEGORIES.length}

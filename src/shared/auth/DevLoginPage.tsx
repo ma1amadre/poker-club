@@ -44,8 +44,8 @@ export default function DevLoginPage() {
       )}
       {!token ? (
         <Notice tone="caution" title="Не задан VITE_DEV_BOT_TOKEN">
-          Скопируйте .env.example в .env.development.local и укажите тот же фейковый токен, что и
-          TELEGRAM_BOT_TOKEN в supabase/functions/.env. Затем перезапустите dev-сервер.
+          Скопируй .env.example в .env.development.local и укажи тот же фейковый токен, что и
+          TELEGRAM_BOT_TOKEN в supabase/functions/.env. Затем перезапусти dev-сервер.
         </Notice>
       ) : (
         <Section

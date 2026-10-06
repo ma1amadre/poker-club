@@ -35,7 +35,7 @@ export function RenameSheet({ open, currentName, onClose }: RenameSheetProps) {
     const name = normalizeName(value);
     mutation.mutate(name, {
       onSuccess: () => {
-        toast.success('Имя изменено', { detail: `Теперь в клубе вы — ${name}` });
+        toast.success('Имя изменено', { detail: `Теперь в клубе ты — ${name}` });
         setError(null);
         onClose();
       },

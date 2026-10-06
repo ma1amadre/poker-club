@@ -122,7 +122,7 @@ export function VoteSheet({
     if (chosen.type && !chosen.type.startsWith('image/')) {
       toast.show('Это не изображение', {
         tone: 'caution',
-        detail: 'Выберите фото: JPEG, PNG или WebP.',
+        detail: 'Выбери фото: JPEG, PNG или WebP.',
       });
       return;
     }
@@ -215,7 +215,7 @@ export function VoteSheet({
         }
       >
         {candidates.length === 0 ? (
-          <p className="m-small">Голосовать не за кого: кроме вас, в этот вечер никто не играл.</p>
+          <p className="m-small">Голосовать не за кого: кроме тебя, в этот вечер никто не играл.</p>
         ) : (
           <>
             <FieldGroup label="Номинант" error={nomineeError}>

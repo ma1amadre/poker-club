@@ -1,10 +1,13 @@
 // cron-tick — будильник клуба, его раз в 15 минут дёргает pg_cron (миграция 005).
 // verify_jwt = false (config.toml): pg_net шлёт не JWT, а заголовок x-cron-secret.
 // За один вызов:
-//   1) до ближайшей игры по расписанию ≤ announce_hours_before и вечера на эту дату нет —
+//   1) до ближайшей игры по расписанию ≤ announce_hours_before и слот свободен (нет вечера ни
+//      на эту дату, ни перенесённого с неё — evenings.slot_date) —
 //      создаёт вечер (формат по умолчанию, банкир не назначен); постит неотправленные анонсы;
 //   2) добивает неотправленные итоги вечеров (если notify банкира не дошёл);
-//   3) постит итоги голосования, когда оно закрылось.
+//   3) постит итоги голосования, когда оно закрылось;
+//   4) подстраховка notify evening_changed: о переносе, отмене или возврате вечера, чей анонс уже
+//      в группе, если админский вызов после сохранения не дошёл (миграция 008, notify/changes.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
 // Без settings.group_chat_id ничего не постит, но вечер создаёт.
 import { adminClient, describeError, errorResponse, json, readEnv } from '../_shared/admin.ts';
@@ -14,7 +17,9 @@ import {
   voteResults,
   type TournamentFormat,
 } from '../_shared/domain/index.ts';
+import { announceSnapshot } from '../_shared/announce.ts';
 import { announcePost, votingPost } from '../_shared/messages.ts';
+import { postAnnounceChange } from '../notify/changes.ts';
 import { timingSafeEqual } from '../_shared/telegram.ts';
 import {
   EVENING_COLUMNS,
@@ -29,7 +34,7 @@ import {
   type SettingsRow,
   type VoteRow,
 } from '../notify/results.ts';
-import { clubDayRange, nextGameAt } from './schedule.ts';
+import { holdsSlot, nextGameAt, slotFilter, type SlotEvening } from './schedule.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
 /** Итоги старше — уже не новость: при подключении группы не вываливаем в неё всю историю. */
@@ -51,6 +56,7 @@ interface TickReport {
   announced: Record<string, PostOutcome>;
   results: Record<string, PostOutcome>;
   voting: Record<string, PostOutcome | 'no_votes'>;
+  changes: Record<string, string>;
   errors: string[];
 }
 
@@ -99,17 +105,15 @@ async function ensureUpcomingEvening(
   report.nextGameAt = new Date(gameMs).toISOString();
   if (gameMs - nowMs > s.announce_hours_before * HOUR_MS) return;
 
-  // «Вечера на эту дату нет» — по московскому дню и в любом статусе: отменённый админом вечер
-  // не воскрешаем, перенесённый на другое время того же дня не дублируем.
-  const { startMs, endMs } = clubDayRange(gameMs);
+  // «Слот свободен» — в любом статусе нет вечера ни в этот московский день, ни закреплённого за
+  // ним (slot_date, миграция 010): отменённый админом вечер не воскрешаем, перенесённый на другое
+  // время того же дня или на другой день не дублируем (см. holdsSlot).
   const { data: existing, error } = await db
     .from('evenings')
-    .select('id')
-    .gte('scheduled_at', new Date(startMs).toISOString())
-    .lt('scheduled_at', new Date(endMs).toISOString())
-    .limit(1);
+    .select('scheduled_at, slot_date')
+    .or(slotFilter(gameMs));
   if (error) throw new Error(`evenings: ${describeError(error)}`);
-  if ((existing ?? []).length > 0) return;
+  if (((existing ?? []) as SlotEvening[]).some((e) => holdsSlot(e, gameMs))) return;
 
   const { data: created, error: insError } = await db
     .from('evenings')
@@ -151,6 +155,7 @@ async function postAnnouncements(
         format: e.format,
         botUsername: s.bot_username,
       });
+      // Вместе с отметкой — снимок того, что ушло в пост: с ним сравнивает notify evening_changed.
       report.announced[e.id] = await publishOnce(
         db,
         e.id,
@@ -159,6 +164,7 @@ async function postAnnouncements(
         post,
         nowMs,
         ['announced'],
+        { announce_snapshot: announceSnapshot(e) },
       );
     } catch (err) {
       report.errors.push(`анонс ${e.id}: ${describeError(err)}`);
@@ -241,6 +247,38 @@ async function postVotingResults(
   }
 }
 
+/**
+ * Шаг 4: правки объявленных вечеров, о которых группа ещё не знает. Окно — неделя назад: о вечерах,
+ * которые давно прошли, писать нечего (decideAnnounceChange их и так пропустит).
+ */
+async function postAnnounceChanges(
+  db: Db,
+  s: SettingsRow & { group_chat_id: number | string },
+  nowMs: number,
+  report: TickReport,
+): Promise<void> {
+  const { data, error } = await db
+    .from('evenings')
+    .select(EVENING_COLUMNS)
+    .in('status', ['announced', 'cancelled'])
+    .not('announce_posted_at', 'is', null)
+    .gte('scheduled_at', new Date(nowMs - 7 * 24 * HOUR_MS).toISOString())
+    .order('scheduled_at');
+  if (error) throw new Error(`evenings: ${describeError(error)}`);
+  for (const e of (data ?? []) as unknown as EveningRow[]) {
+    try {
+      const result = await postAnnounceChange(db, e, nowMs, s);
+      if (result.outcome !== 'no_changes') {
+        report.changes[e.id] = result.change
+          ? `${result.outcome}:${result.change}`
+          : result.outcome;
+      }
+    } catch (err) {
+      report.errors.push(`правка вечера ${e.id}: ${describeError(err)}`);
+    }
+  }
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== 'POST') return errorResponse(405, 'method_not_allowed', 'Только POST');
   const expected = readEnv('CRON_SECRET');
@@ -261,6 +299,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     announced: {},
     results: {},
     voting: {},
+    changes: {},
     errors: [],
   };
 
@@ -279,6 +318,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     };
     await step('вечер по расписанию', () => ensureUpcomingEvening(db, s, nowMs, report));
     if (hasGroup(s)) {
+      // Сначала правки уже объявленных вечеров, потом новые анонсы: свежий анонс и так несёт
+      // актуальные данные, а его снимок пишется вместе с отметкой.
+      await step('правки вечеров', () => postAnnounceChanges(db, s, nowMs, report));
       await step('анонсы', () => postAnnouncements(db, s, nowMs, report));
       await step('итоги вечеров', () => backfillResults(db, nowMs, report));
       await step('итоги голосования', () => postVotingResults(db, s, nowMs, report));

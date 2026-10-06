@@ -94,7 +94,7 @@ where id = 1;
 insert into public.evenings (id, scheduled_at, location, note, status, banker_id, format, created_by) values
   ('e0000000-0000-4000-8000-000000000001', '2026-08-27 16:00:00+00', 'У Жени', null,
    'settled',   'a0000000-0000-4000-8000-000000001001', '{}', 'a0000000-0000-4000-8000-000000001001'),
-  ('e0000000-0000-4000-8000-000000000007', '2026-09-03 16:00:00+00', 'У Жени', 'Не собрали состав',
+  ('e0000000-0000-4000-8000-000000000007', '2026-09-03 16:00:00+00', 'У Жени', null,
    'cancelled', null,                                    '{}', 'a0000000-0000-4000-8000-000000001001'),
   ('e0000000-0000-4000-8000-000000000002', '2026-09-10 16:00:00+00', 'У Саши', 'Саша привёл друга',
    'settled',   'a0000000-0000-4000-8000-000000001002', '{}', 'a0000000-0000-4000-8000-000000001001'),
@@ -112,6 +112,10 @@ insert into public.evenings (id, scheduled_at, location, note, status, banker_id
 -- Снимок формата — тот же клубный.
 update public.evenings
 set format = (select f.config from public.formats f where f.id = 'f0000000-0000-4000-8000-000000000001');
+
+-- Причина отмены — отдельно от заметки (миграция 010).
+update public.evenings set cancel_reason = 'Не собрали состав'
+where id = 'e0000000-0000-4000-8000-000000000007';
 
 -- ---------------------------------------------------------------------------
 -- Журналы вечеров
@@ -264,6 +268,11 @@ insert into seed_ev (ev, n, m, type, pid, by, amount, void_after) values
   (5, 20, 327, 'payment',     'S', null, 500, null),
   (5, 21, 330, 'payment',     'D', null, -1000, null);
 
+-- Журналы пишутся задним числом в уже рассчитанные вечера: триггер миграции 008 («правка журнала
+-- открывает закрытый расчёт») на время заливки выключен.
+alter table public.evening_events disable trigger evening_events_reopen_settlement_on_insert;
+alter table public.evening_events disable trigger evening_events_reopen_settlement_on_void;
+
 insert into public.evening_events (evening_id, type, payload, at, created_by)
 select
   e.id,
@@ -305,6 +314,9 @@ where v.void_after is not null
   and ee.type = v.type
   and ee.payload ->> 'playerId' = p.id::text;
 
+alter table public.evening_events enable trigger evening_events_reopen_settlement_on_insert;
+alter table public.evening_events enable trigger evening_events_reopen_settlement_on_void;
+
 -- Отметки времени вечеров — из журнала, как их выставили бы add_event и mark_settled.
 update public.evenings e
 set started_at = t.started_at,
@@ -327,6 +339,15 @@ where t.evening_id = e.id;
 update public.evenings
 set announce_posted_at = scheduled_at - interval '48 hours'
 where status in ('announced', 'cancelled');
+
+-- Что группа знает из анонса (миграция 008): время, место, отменён ли — как announceSnapshot в
+-- supabase/functions/_shared/announce.ts.
+update public.evenings
+set announce_snapshot = jsonb_build_object(
+      'scheduledAt', to_char(scheduled_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'location', nullif(btrim(location), ''),
+      'cancelled', status = 'cancelled')
+where announce_posted_at is not null;
 
 -- ---------------------------------------------------------------------------
 -- RSVP

@@ -74,7 +74,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
   const submitGuest = async () => {
     const name = normalizeGuestName(guestName);
     if (!name) {
-      setGuestError('Имя гостя — от 1 до 40 символов. Впишите, как его зовут за столом.');
+      setGuestError('Имя гостя — от 1 до 40 символов. Впиши, как его зовут за столом.');
       return;
     }
     setGuestError(null);
@@ -98,7 +98,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
       description={
         closedReason ??
         (mode === 'start'
-          ? 'Ответившие «иду» уже отмечены. Снимите отметку с тех, кто не пришёл.'
+          ? 'Ответившие «иду» уже отмечены. Сними отметку с тех, кто не пришёл.'
           : 'Опоздавший входит с полным стеком, пока открыта регистрация.')
       }
       actions={
@@ -110,7 +110,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
           disabled={selected.length === 0 || Boolean(closedReason) || addGuest.isPending}
           onClick={() => void seat()}
         >
-          {selected.length > 0 ? `Посадить за стол: ${selected.length}` : 'Выберите, кого посадить'}
+          {selected.length > 0 ? `Посадить за стол: ${selected.length}` : 'Выбери, кого посадить'}
         </Button>
       }
     >

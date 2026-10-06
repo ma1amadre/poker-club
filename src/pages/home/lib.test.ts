@@ -11,6 +11,7 @@ import {
   pickUpcoming,
   type PlayerLike,
   playerName,
+  candidateHint,
   predictionCandidates,
   rsvpHint,
   seasonPosition,
@@ -146,10 +147,32 @@ describe('состав и кандидаты в прогноз', () => {
     expect(g.silent.map((p) => p.id)).toEqual(['k']);
   });
 
-  it('кандидаты: активные постоянные + гости «иду»; идущие сверху, отказавшиеся внизу', () => {
+  it('кандидаты: все активные; постоянные по ответу на анонс, за ними гости по имени', () => {
     const list = predictionCandidates(players, rsvps);
-    expect(list.map((c) => c.player.id)).toEqual(['g1', 'j', 's', 'd', 'k', 'm']);
+    expect(list.map((c) => c.player.id)).toEqual(['j', 's', 'd', 'k', 'm', 'g1', 'g2']);
     expect(list.find((c) => c.player.id === 'k')?.rsvp).toBeNull();
+  });
+
+  it('гость в прогнозе без ответа на анонс; отключённый — нет', () => {
+    const list = predictionCandidates(players, []);
+    expect(list.map((c) => c.player.id)).toEqual(['d', 'j', 'k', 'm', 's', 'g1', 'g2']);
+    const off = predictionCandidates(
+      [...players, player('g3', 'Ушедший гость', { is_guest: true, is_active: false })],
+      [],
+    );
+    expect(off.map((c) => c.player.id)).not.toContain('g3');
+  });
+
+  it('подпись кандидата: гость — «гость», постоянный — ответ на анонс', () => {
+    const list = predictionCandidates(players, rsvps);
+    const hint = (id: string) => {
+      const c = list.find((x) => x.player.id === id);
+      return c ? candidateHint(c) : null;
+    };
+    expect(hint('g1')).toBe('гость');
+    expect(hint('g2')).toBe('гость');
+    expect(hint('j')).toBe('идёт');
+    expect(hint('k')).toBe('без ответа');
   });
 
   it('подпись к кандидату по ответу на анонс', () => {
@@ -172,10 +195,10 @@ describe('состав и кандидаты в прогноз', () => {
     expect(rows).toHaveLength(2);
   });
 
-  it('игрок из сохранённого прогноза остаётся в списке', () => {
-    const list = predictionCandidates(players, rsvps, ['g2', null]);
-    expect(list.map((c) => c.player.id)).toContain('g2');
-    expect(list.map((c) => c.player.id)).not.toContain('old');
+  it('игрок из сохранённого прогноза остаётся в списке, даже отключённый', () => {
+    expect(predictionCandidates(players, rsvps).map((c) => c.player.id)).not.toContain('old');
+    const list = predictionCandidates(players, rsvps, ['old', null]);
+    expect(list.map((c) => c.player.id)).toContain('old');
   });
 });
 
@@ -288,6 +311,18 @@ describe('незакрытые расчёты', () => {
     ).toEqual([]);
   });
 
+  it('расчёт открылся сам после правки журнала — долг снова виден с пометкой', () => {
+    const map = new Map([['e1', log]]);
+    const reopened = evening({ settle_reopened_at: '2026-10-03T10:00:00Z' });
+    expect(openSettlements([reopened], map, 'B').debts).toEqual([
+      expect.objectContaining({ kind: 'owe', amountRub: 260, reopened: true }),
+    ]);
+    expect(openSettlements([evening()], map, 'B').debts[0]?.reopened).toBe(false);
+    expect(openSettlements([{ ...reopened, banker_id: 'A' }], map, 'A').banker[0]?.reopened).toBe(
+      true,
+    );
+  });
+
   it('рассчитанные и незавершённые по журналу вечера пропускаются', () => {
     const unfinished = log.filter((e) => e.type !== 'finish');
     expect(
@@ -353,7 +388,7 @@ describe('имена', () => {
   });
 
   it('себя видно сразу', () => {
-    expect(nameWithMe(byId, 'a', 'a')).toBe('Саша (вы)');
+    expect(nameWithMe(byId, 'a', 'a')).toBe('Саша (ты)');
     expect(nameWithMe(byId, 'a', 'b')).toBe('Саша');
   });
 });

@@ -32,7 +32,7 @@ type PlayersById = ReadonlyMap<string, Player>;
 
 function nameOf(playersById: PlayersById, id: string, meId: string): string {
   const name = playersById.get(id)?.display_name ?? 'Игрок без имени';
-  return id === meId ? `${name} (вы)` : name;
+  return id === meId ? `${name} (ты)` : name;
 }
 
 export interface VoteResultsProps {

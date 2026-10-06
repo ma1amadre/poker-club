@@ -1,6 +1,7 @@
 // Админка клуба (/admin): вкладки «Клуб», «Форматы», «Игроки», «Вечера». Вкладка и открытый
 // формат живут в адресе (?tab=…, ?format=<id>|new): «Назад» с экрана вечера возвращает на ту же
-// вкладку, а редактор формата закрывается кнопкой «Назад» Telegram.
+// вкладку, а редактор формата закрывается кнопкой «Назад» Telegram. Без ?tab (и с неизвестной
+// вкладкой) открываются «Вечера» — с ними админ работает каждую неделю.
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Page, Tabs } from '../../shared/ui';
@@ -9,13 +10,10 @@ import { ClubTab } from './ClubTab';
 import { EveningsTab } from './EveningsTab';
 import { FormatEditor } from './FormatEditor';
 import { FormatsTab } from './FormatsTab';
+import { adminTab, type AdminTabId as TabId } from './lib';
 import { AdminGuard } from './parts';
 import { PlayersTab } from './PlayersTab';
 import type { SettingsDraft } from './settingsDraft';
-
-type TabId = 'club' | 'formats' | 'players' | 'evenings';
-const TAB_IDS: readonly TabId[] = ['club', 'formats', 'players', 'evenings'];
-const isTab = (value: string | null): value is TabId => TAB_IDS.includes(value as TabId);
 
 export default function AdminPage() {
   return (
@@ -28,7 +26,7 @@ export default function AdminPage() {
 function AdminScreen() {
   const [params, setParams] = useSearchParams();
   const tabParam = params.get('tab');
-  const tab: TabId = isTab(tabParam) ? tabParam : 'club';
+  const tab = adminTab(tabParam);
   const formatParam = params.get('format');
   // Черновик настроек — здесь, а не во вкладке: Tabs монтирует только открытую панель.
   const [clubDraft, setClubDraft] = useState<SettingsDraft | null>(null);

@@ -151,7 +151,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
           tone="caution"
           title={`Журнал не принял ${pluralWithNumber(state.errors.length, ['запись', 'записи', 'записей'])}`}
         >
-          Они помечены в ленте «Не принято» и на игру не влияют. Если запись лишняя — отмените её.
+          Они помечены в ленте «Не принято» и на игру не влияют. Если запись лишняя — отмени её.
         </Notice>
       )}
 
@@ -358,7 +358,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
       <Section
         title="Игроки"
         aside={`${state.aliveCount} в игре`}
-        footer={canControl ? 'Нажмите на игрока, чтобы отметить вылет или ребай.' : undefined}
+        footer={canControl ? 'Нажми на игрока, чтобы отметить вылет или ребай.' : undefined}
       >
         {state.joinOrder.length > 0 ? (
           <PlayersList

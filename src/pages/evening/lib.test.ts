@@ -26,6 +26,9 @@ import {
   paymentEvents,
   playerLine,
   rebuyText,
+  journalVersion,
+  reopenedNotice,
+  settledNotice,
   rebuyWindow,
   seatCandidates,
   settleDirection,
@@ -420,5 +423,65 @@ describe('parsePayouts', () => {
     expect(payoutTextSum(['33,3', '33,3', '33,4'])).toBe(100);
     expect(payoutTextSum(['50', '30'])).toBe(80);
     expect(payoutTextSum(['50', ''])).toBeNull();
+  });
+});
+
+describe('reopenedNotice', () => {
+  const at = '2026-10-06T12:00:00Z';
+  const plain = (text: string | undefined) => text?.replace(/ /g, ' ');
+
+  it('только у вечера «Игра окончена» с меткой «открылся сам»', () => {
+    expect(reopenedNotice({ status: 'finished', settle_reopened_at: null }, true, true)).toBeNull();
+    expect(reopenedNotice({ status: 'settled', settle_reopened_at: at }, true, true)).toBeNull();
+    expect(reopenedNotice({ status: 'live', settle_reopened_at: at }, true, true)).toBeNull();
+  });
+
+  it('банкиру и админу — закрыть заново, игроку вечера — проверить долг', () => {
+    const mine = reopenedNotice({ status: 'finished', settle_reopened_at: at }, true, false);
+    expect(mine?.title).toBe('Расчёт снова открыт');
+    expect(plain(mine?.text)).toBe(
+      'Журнал изменился после закрытия расчёта — проверь остатки и закрой его заново.',
+    );
+    expect(
+      reopenedNotice({ status: 'finished', settle_reopened_at: at }, false, true)?.text,
+    ).toMatch(/сколько осталось перевести/);
+  });
+
+  it('тому, кто в вечере не играл, переводить нечего — без «проверь»', () => {
+    const text = reopenedNotice({ status: 'finished', settle_reopened_at: at }, false, false)?.text;
+    expect(plain(text)).toBe(
+      'Журнал изменился после закрытия расчёта — банкир сверит остатки и закроет его заново.',
+    );
+  });
+});
+
+describe('settledNotice', () => {
+  it('остатки нулевые — баланс сошёлся, с датой закрытия', () => {
+    const n = settledNotice(true, true, '6 октября в 21:00');
+    expect(n.tone).toBe('positive');
+    expect(n.title).toBe('Расчёт закрыт');
+    expect(n.text.replace(/ /g, ' ')).toBe('Баланс банкира сошёлся в ноль — 6 октября в 21:00.');
+    expect(settledNotice(true, false, null).text).toBe('Баланс банкира сошёлся в ноль.');
+  });
+
+  it('закрыт с ненулевыми остатками — предупреждение, а не «сошёлся»', () => {
+    const control = settledNotice(false, true, '6 октября в 21:00');
+    expect(control.tone).toBe('caution');
+    expect(control.text).not.toMatch(/сошёлся/);
+    expect(control.text).toMatch(/проверь остатки ниже и открой расчёт заново/);
+    expect(settledNotice(false, false, null).text).toMatch(/проверь остатки ниже\.$/);
+  });
+});
+
+describe('journalVersion', () => {
+  it('последний id и число отменённых записей', () => {
+    expect(journalVersion([])).toEqual({ lastEventId: 0, voidedCount: 0 });
+    expect(
+      journalVersion([
+        { id: 5, voided: false },
+        { id: 12, voided: true },
+        { id: 9, voided: true },
+      ]),
+    ).toEqual({ lastEventId: 12, voidedCount: 2 });
   });
 });

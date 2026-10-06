@@ -38,7 +38,7 @@ export function SeasonSection({ history, me }: SeasonSectionProps) {
           </Stats>
         ) : (
           <div className="home-season-empty">
-            <p className="m-h3">В этом сезоне вы ещё не играли</p>
+            <p className="m-h3">В этом сезоне у тебя ещё нет игр</p>
             <p className="m-small">
               {rows.length > 0
                 ? `В таблице ${pluralWithNumber(rows.length, ['игрок', 'игрока', 'игроков'])}. Место появится после первого вечера.`

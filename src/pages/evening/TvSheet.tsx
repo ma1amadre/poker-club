@@ -68,7 +68,7 @@ function TvSheetInner({ onClose, boardToken }: Omit<TvSheetProps, 'open'>) {
     } catch {
       toast.show('Ссылку не скопировать из этого окна', {
         tone: 'caution',
-        detail: 'Выделите её в поле выше и скопируйте вручную.',
+        detail: 'Выдели её в поле выше и скопируй вручную.',
       });
     }
   };
@@ -78,7 +78,7 @@ function TvSheetInner({ onClose, boardToken }: Omit<TvSheetProps, 'open'>) {
       open
       onClose={onClose}
       title="Табло на ТВ"
-      description="Наведите камеру телефона или ноутбука у телевизора на код. Табло открывается без входа и обновляется само."
+      description="Наведи камеру телефона или ноутбука у телевизора на код. Табло открывается без входа и обновляется само."
       actions={
         <div className="ev-sheet-actions">
           <Button variant="primary" block icon="copy" onClick={() => void copy()}>
@@ -94,7 +94,7 @@ function TvSheetInner({ onClose, boardToken }: Omit<TvSheetProps, 'open'>) {
         {qr && qr.url === url ? (
           <img className="ev-qr__image" src={qr.data} alt="QR-код ссылки на табло вечера" />
         ) : failed ? (
-          <p className="m-small">Код не построился. Откройте табло по ссылке ниже.</p>
+          <p className="m-small">Код не построился. Открой табло по ссылке ниже.</p>
         ) : (
           <Skeleton width={240} height={240} />
         )}

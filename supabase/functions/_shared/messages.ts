@@ -14,6 +14,7 @@ import {
   type VoteCategory,
   type VoteResult,
 } from './domain/index.ts';
+import { samePlace, sameTime, type AnnounceChange, type AnnounceSnapshot } from './announce.ts';
 import { escapeHtml, miniAppLink, type UrlButton } from './telegram.ts';
 
 export const CLUB_TZ = 'Europe/Moscow';
@@ -202,6 +203,88 @@ export function announcePost(input: AnnouncePostInput): Post {
     text: lines.join('\n'),
     buttons: appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Перенос, отмена и возврат вечера после анонса (миграция 008, notify kind evening_changed)
+// ---------------------------------------------------------------------------
+// Обращение к группе — на «вы» во множественном числе; из эмодзи — только масти.
+
+export interface AnnounceChangePostInput {
+  eveningId: string;
+  /** Что группа знала из прошлых постов. */
+  before: AnnounceSnapshot;
+  /** Вечер сейчас. */
+  after: AnnounceSnapshot;
+  /** Причина отмены (evenings.cancel_reason, миграция 010); в других постах не нужна. */
+  reason: string | null;
+  botUsername: string | null;
+}
+
+/** «19:00, 8 октября» → для «вместо …». */
+function shortWhen(iso: string): string {
+  return `${formatClubDate(iso)}, ${formatClubTime(iso)}`;
+}
+
+function placeLine(location: string | null): string {
+  return location ? `Место: ${escapeHtml(location)}.` : 'Место уточним позже.';
+}
+
+/** «Вечер перенесён»: новое время и/или место, прежние — для сверки. */
+export function eveningMovedPost(input: AnnounceChangePostInput): Post {
+  const { before, after } = input;
+  const lines = ['♠️ <b>Вечер перенесён</b>'];
+  if (!sameTime(before, after)) {
+    lines.push(
+      `Новое время: ${formatWhen(after.scheduledAt)} (было ${shortWhen(before.scheduledAt)}).`,
+    );
+  } else {
+    lines.push(`Время то же: ${formatWhen(after.scheduledAt)}.`);
+  }
+  if (!samePlace(before, after)) {
+    lines.push(
+      after.location
+        ? `Новое место: ${escapeHtml(after.location)}` +
+            (before.location ? ` (было ${escapeHtml(before.location)}).` : '.')
+        : 'Место уточним позже.',
+    );
+  } else if (after.location) {
+    lines.push(placeLine(after.location));
+  }
+  lines.push('', 'Если планы поменялись, обновите ответ «иду / не иду».');
+  return {
+    text: lines.join('\n'),
+    buttons: appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`),
+  };
+}
+
+/** «Вечер 8 октября отменён» и причина отмены, если админ её указал. */
+export function eveningCancelledPost(input: AnnounceChangePostInput): Post {
+  const lines = [`♠️ <b>Вечер ${formatClubDate(input.before.scheduledAt)} отменён</b>`];
+  const reason = input.reason?.trim();
+  if (reason) lines.push(`Причина: ${escapeHtml(reason)}`);
+  return { text: lines.join('\n'), buttons: [] };
+}
+
+/** Отменённый вечер вернули — он всё-таки состоится (возможно, уже в другое время). */
+export function eveningRestoredPost(input: AnnounceChangePostInput): Post {
+  const { after } = input;
+  const lines = [
+    `♠️ <b>Вечер ${formatClubDate(after.scheduledAt)} всё-таки состоится</b>`,
+    `Приходите ${formatWhen(after.scheduledAt)}.`,
+  ];
+  if (after.location) lines.push(placeLine(after.location));
+  lines.push('', 'Отметьтесь, идёте ли: прошлые ответы сохранились.');
+  return {
+    text: lines.join('\n'),
+    buttons: appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`),
+  };
+}
+
+export function announceChangePost(change: AnnounceChange, input: AnnounceChangePostInput): Post {
+  if (change === 'cancelled') return eveningCancelledPost(input);
+  if (change === 'restored') return eveningRestoredPost(input);
+  return eveningMovedPost(input);
 }
 
 // ---------------------------------------------------------------------------

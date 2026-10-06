@@ -24,6 +24,7 @@ import {
   useToast,
 } from '../../shared/ui';
 import { adminErrorText, groupPlayers, nameError } from './lib';
+import { MergeSheet } from './MergeSheet';
 import { ListSkeleton } from './parts';
 
 const PLAYERS = ['игрок', 'игрока', 'игроков'] as const;
@@ -33,6 +34,7 @@ export function PlayersTab() {
   const players = usePlayers();
   const { player: me } = useAuth();
   const [openId, setOpenId] = useState<string | null>(null);
+  const [mergeId, setMergeId] = useState<string | null>(null);
 
   if (players.isPending) return <ListSkeleton label="Загрузка игроков" />;
   if (players.isError)
@@ -46,10 +48,11 @@ export function PlayersTab() {
 
   const { members, guests, inactive } = groupPlayers(players.data);
   const open = players.data.find((p) => p.id === openId) ?? null;
+  const merging = players.data.find((p) => p.id === mergeId) ?? null;
 
   const row = (p: Player) => {
     const parts = [
-      p.id === me?.id ? 'это вы' : null,
+      p.id === me?.id ? 'это ты' : null,
       p.username ? `@${p.username}` : p.tg_id === null ? 'без Telegram' : null,
     ].filter(Boolean);
     return (
@@ -100,6 +103,20 @@ export function PlayersTab() {
           player={open}
           isMe={open.id === me?.id}
           onClose={() => setOpenId(null)}
+          onLink={() => setMergeId(open.id)}
+        />
+      )}
+      {merging && (
+        <MergeSheet
+          // Не просто id: рядом PlayerSheet с key={id} того же игрока — одинаковые ключи соседей.
+          key={`merge-${merging.id}`}
+          guest={merging}
+          players={players.data}
+          onClose={() => setMergeId(null)}
+          onMerged={() => {
+            setMergeId(null);
+            setOpenId(null);
+          }}
         />
       )}
     </div>
@@ -112,10 +129,13 @@ function PlayerSheet({
   player,
   isMe,
   onClose,
+  onLink,
 }: {
   player: Player;
   isMe: boolean;
   onClose: () => void;
+  /** Открыть «Привязать к Telegram» (только у игрока без Telegram). */
+  onLink: () => void;
 }) {
   const [name, setName] = useState(player.display_name);
   const [nameTouched, setNameTouched] = useState(false);
@@ -271,7 +291,7 @@ function PlayerSheet({
       {player.is_guest && (
         <div className="adm-guest">
           <p className="m-small adm-muted">
-            Гость не попадает в рейтинг и не получает ачивки. Сделайте его постоянным, если он ходит
+            Гость не попадает в рейтинг и не получает ачивки. Сделай его постоянным, если он ходит
             регулярно.
           </p>
           <Button
@@ -281,6 +301,18 @@ function PlayerSheet({
             onClick={makePermanent}
           >
             Сделать постоянным
+          </Button>
+        </div>
+      )}
+
+      {player.tg_id === null && (
+        <div className="adm-guest">
+          <p className="m-small adm-muted">
+            Если этот игрок уже входит через Telegram, у него есть второй профиль. Привяжи к нему
+            этот — вечера, голоса и прогнозы перейдут туда.
+          </p>
+          <Button icon="send" block disabled={update.isPending} onClick={onLink}>
+            Привязать к Telegram
           </Button>
         </div>
       )}

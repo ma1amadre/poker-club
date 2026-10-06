@@ -5,7 +5,7 @@ import { Button } from './Button';
 import { Dialog } from './materia';
 
 export interface ConfirmOptions {
-  /** Вопрос с объектом: «Отменить вылет Саши?». Не «Вы уверены?». */
+  /** Вопрос с объектом: «Отменить вылет Саши?». Не «Ты уверен?». */
   title: ReactNode;
   /** Последствия: что пропадёт и можно ли вернуть. */
   message?: ReactNode;

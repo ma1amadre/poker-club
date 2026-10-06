@@ -45,15 +45,15 @@ export function Rivals({ playersById, rows, nemesis, victims, isMe }: RivalsProp
               title={`Немезида — ${name(nemesis)}`}
               subtitle={
                 nemesisRow
-                  ? `Чаще всех выбивает ${isMe ? 'вас' : 'этого игрока'}: ${times(nemesisRow.knockedOutBy)}`
-                  : `Чаще всех выбивает ${isMe ? 'вас' : 'этого игрока'}`
+                  ? `Чаще всех выбивает ${isMe ? 'тебя' : 'этого игрока'}: ${times(nemesisRow.knockedOutBy)}`
+                  : `Чаще всех выбивает ${isMe ? 'тебя' : 'этого игрока'}`
               }
             />
           )}
           {victims.length > 0 && (
             <ListItem
               before={<Icon name="crown" size={20} className="pl-rivals__icon" />}
-              title={`${isMe ? 'Вы — немезида' : 'Немезида'} для: ${victims.map(name).join(', ')}`}
+              title={`${isMe ? 'Ты — немезида' : 'Немезида'} для: ${victims.map(name).join(', ')}`}
               subtitle={`Звание «${TITLE_META.nemesis.title}» — ${TITLE_META.nemesis.description.toLowerCase()}`}
             />
           )}

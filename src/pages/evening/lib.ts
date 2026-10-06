@@ -481,3 +481,82 @@ export function eventPlayerId(ev: EveningEvent): PlayerId | null {
 export function totalRebuys(state: EveningState): number {
   return state.joinOrder.reduce((s, id) => s + (state.players[id]?.rebuys ?? 0), 0);
 }
+
+export interface ReopenedNotice {
+  title: string;
+  text: string;
+}
+
+/**
+ * Пометка «расчёт снова открыт»: закрытый расчёт сам вернулся в «Игра окончена», потому что после
+ * закрытия правили журнал (миграция 008, evenings.settle_reopened_at). null — пометка не нужна.
+ * Тому, кто ведёт расчёт, — что делать; игроку вечера — проверить свой остаток; остальным
+ * участникам клуба переводить нечего — только что происходит.
+ */
+export function reopenedNotice(
+  evening: { status: string; settle_reopened_at: string | null },
+  canControl: boolean,
+  played: boolean,
+): ReopenedNotice | null {
+  if (evening.status !== 'finished' || !evening.settle_reopened_at) return null;
+  const title = 'Расчёт снова открыт';
+  if (canControl)
+    return {
+      title,
+      text: 'Журнал изменился после закрытия расчёта — проверь остатки и закрой его заново.',
+    };
+  if (played)
+    return {
+      title,
+      text: 'Журнал изменился после закрытия расчёта — проверь, сколько осталось перевести через банкира.',
+    };
+  return {
+    title,
+    text: 'Журнал изменился после закрытия расчёта — банкир сверит остатки и закроет его заново.',
+  };
+}
+
+/**
+ * Пометка закрытого расчёта. Остатки по журналу на экране не нулевые — значит, журнал после
+ * закрытия менялся (старые данные или правка в обход триггера 008): предупредить, а не писать,
+ * что баланс сошёлся.
+ */
+export function settledNotice(
+  allSettled: boolean,
+  canControl: boolean,
+  settledText: string | null,
+): { tone: 'positive' | 'caution'; title: string; text: string } {
+  if (allSettled)
+    return {
+      tone: 'positive',
+      title: 'Расчёт закрыт',
+      text: settledText
+        ? `Баланс банкира сошёлся в ноль — ${settledText}.`
+        : 'Баланс банкира сошёлся в ноль.',
+    };
+  return {
+    tone: 'caution',
+    title: 'Расчёт закрыт, но остатки не нулевые',
+    text: canControl
+      ? 'После закрытия журнал менялся — проверь остатки ниже и открой расчёт заново.'
+      : 'После закрытия журнал менялся — проверь остатки ниже.',
+  };
+}
+
+/**
+ * Какой журнал видит экран расчёта: последний id и число отменённых записей. mark_settled
+ * (миграция 010) закрывает расчёт, только если на сервере журнал тот же: платёж, записанный или
+ * отменённый с другого устройства, пока Realtime не обновил экран, расчёт с долгом не закроет.
+ */
+export function journalVersion(events: readonly { id: number; voided: boolean }[]): {
+  lastEventId: number;
+  voidedCount: number;
+} {
+  let lastEventId = 0;
+  let voidedCount = 0;
+  for (const e of events) {
+    if (e.id > lastEventId) lastEventId = e.id;
+    if (e.voided) voidedCount += 1;
+  }
+  return { lastEventId, voidedCount };
+}

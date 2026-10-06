@@ -109,17 +109,17 @@ export function checkEveningDraft(
   const errors: EveningCheck['errors'] = {};
   const dateOk = parseClubDate(draft.date) !== null;
   const time = normalizeTime(draft.time);
-  if (!dateOk) errors.date = 'Укажите дату вечера.';
-  if (!time) errors.time = 'Укажите время начала, например 19:00.';
+  if (!dateOk) errors.date = 'Укажи дату вечера.';
+  if (!time) errors.time = 'Укажи время начала, например 19:00.';
   const scheduledAt = dateOk && time ? moscowToIso(draft.date, time) : null;
   if (scheduledAt && opts.taken.has(draft.date)) {
-    errors.date = `На ${formatDate(scheduledAt, opts.nowMs)} уже есть вечер. Выберите другую дату или откройте тот вечер.`;
+    errors.date = `На ${formatDate(scheduledAt, opts.nowMs)} уже есть вечер. Выбери другую дату или открой тот вечер.`;
   }
   if (!opts.format) {
-    errors.format = 'Выберите формат вечера.';
+    errors.format = 'Выбери формат вечера.';
   } else if (validateFormat(opts.format).length > 0) {
     errors.format =
-      'В этом формате есть ошибки. Откройте его во вкладке «Форматы», исправьте и вернитесь.';
+      'В этом формате есть ошибки. Открой его во вкладке «Форматы», исправь и вернись.';
   }
   return {
     scheduledAt,

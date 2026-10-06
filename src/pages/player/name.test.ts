@@ -8,8 +8,8 @@ describe('имя игрока', () => {
   });
 
   it('пустое и слишком длинное — с подсказкой, как исправить', () => {
-    expect(nameError('   ')).toMatch(/Введите/);
-    expect(nameError('я'.repeat(41))).toMatch(/Сократите/);
+    expect(nameError('   ')).toMatch(/Введи /);
+    expect(nameError('я'.repeat(41))).toMatch(/Сократи /);
     expect(nameError('я'.repeat(40))).toBeNull();
   });
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { nextGameAt as cronNextGameAt } from '../../../supabase/functions/cron-tick/schedule.ts';
+import {
+  clubDateKey,
+  holdsSlot,
+  nextGameAt as cronNextGameAt,
+  slotFilter,
+} from '../../../supabase/functions/cron-tick/schedule.ts';
 import {
   announceMoment,
   clubWeekday,
@@ -209,5 +214,46 @@ describe('announceMoment', () => {
     expect(announceMoment(4, '19:00', 1.5)).toBeNull();
     expect(announceMoment(0, '19:00', 48)).toBeNull();
     expect(announceMoment(4, 'вечер', 48)).toBeNull();
+  });
+});
+
+describe('cron-tick: занят ли слот расписания (holdsSlot, миграция 010)', () => {
+  // Ближайшая игра по расписанию — чт 08.10.2026, 19:00 МСК.
+  const GAME = Date.parse('2026-10-08T16:00:00Z');
+
+  it('московский день слота', () => {
+    expect(clubDateKey(GAME)).toBe('2026-10-08');
+    // 23:30 МСК 08.10 — ещё 8-е, хотя в UTC тоже 8-е; 00:30 МСК 09.10 — уже 9-е (в UTC 8-е).
+    expect(clubDateKey(Date.parse('2026-10-08T20:30:00Z'))).toBe('2026-10-08');
+    expect(clubDateKey(Date.parse('2026-10-08T21:30:00Z'))).toBe('2026-10-09');
+  });
+
+  it('вечер в этот день — слот занят, даже на другое время', () => {
+    const at = (iso: string) => ({ scheduled_at: iso, slot_date: '2026-10-08' });
+    expect(holdsSlot(at('2026-10-08T16:00:00Z'), GAME)).toBe(true);
+    expect(holdsSlot({ scheduled_at: '2026-10-08T18:00:00Z', slot_date: null }, GAME)).toBe(true);
+    expect(holdsSlot(at('2026-10-07T21:00:00Z'), GAME)).toBe(true); // 00:00 МСК 08.10
+  });
+
+  it('вечер перенесли с четверга на пятницу — четверг остаётся за ним', () => {
+    const moved = { scheduled_at: '2026-10-09T17:00:00Z', slot_date: '2026-10-08' };
+    expect(holdsSlot(moved, GAME)).toBe(true);
+    // А пятничный слот через неделю ему не принадлежит.
+    expect(holdsSlot(moved, Date.parse('2026-10-15T16:00:00Z'))).toBe(false);
+  });
+
+  it('вечер другого дня без слота на этот день — слот свободен', () => {
+    expect(holdsSlot({ scheduled_at: '2026-10-09T17:00:00Z', slot_date: '2026-10-09' }, GAME)).toBe(
+      false,
+    );
+    expect(holdsSlot({ scheduled_at: '2026-10-01T16:00:00Z', slot_date: '2026-10-01' }, GAME)).toBe(
+      false,
+    );
+  });
+
+  it('фильтр PostgREST: тот же московский день по времени или слот', () => {
+    expect(slotFilter(GAME)).toBe(
+      'and(scheduled_at.gte.2026-10-07T21:00:00.000Z,scheduled_at.lt.2026-10-08T21:00:00.000Z),slot_date.eq.2026-10-08',
+    );
   });
 });

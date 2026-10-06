@@ -1,11 +1,14 @@
 // Создание и правка вечера (/admin/evening/new, /admin/evening/:id): дата и время по Москве,
 // место, заметка, формат (снимок config в evenings.format — у начатого вечера не меняется),
 // банкир (меняется в любой момент), отмена до старта, ссылки на экран вечера и расчёт.
+// Если анонс уже в группе, после сохранения бот пишет о переносе, отмене или возврате вечера
+// (notify evening_changed; не дошедший вызов добьёт cron-tick).
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   fetchEvening,
+  notifyEveningChanged,
   queryKeys,
   upsertEvening,
   useEvening,
@@ -22,7 +25,15 @@ import {
   type Settings,
 } from '../../shared/api';
 import { useCurrentPlayer } from '../../shared/auth';
-import { capitalize, formatTime, formatWeekdayDate, paths, useNow } from '../../shared/lib';
+import {
+  capitalize,
+  formatDate,
+  formatTime,
+  formatWeekdayDate,
+  moscowToIso,
+  paths,
+  useNow,
+} from '../../shared/lib';
 import {
   Button,
   ButtonLink,
@@ -40,6 +51,7 @@ import {
   PlayerPicker,
   Section,
   Select,
+  useConfirm,
   useToast,
 } from '../../shared/ui';
 import './admin.css';
@@ -55,19 +67,35 @@ import {
   type EveningField,
 } from './eveningDraft';
 import { formatSummary } from './formatDraft';
-import { adminErrorText, bankerCandidates, takenDates } from './lib';
+import {
+  adminErrorText,
+  announceChangeText,
+  announceReach,
+  bankerCandidates,
+  cancelConfirmMessage,
+  cancelFooter,
+  cancelledNoticeText,
+  noteHint,
+  takenDates,
+  vacatedSlot,
+} from './lib';
 import { AdminGuard } from './parts';
 import { useFocusInvalid } from './useFocusInvalid';
 import { useLeave } from './useLeave';
 
 const EVENINGS_PATH = `${paths.admin}?tab=evenings`;
+/** Как check у evenings.cancel_reason (миграция 010). */
+const CANCEL_REASON_MAX = 200;
+
+/** «2026-10-08» → полдень этого дня по Москве: подпись даты без сдвига на соседний день. */
+const clubNoon = (date: string) => moscowToIso(date, '12:00') ?? date;
 
 const LOCKED_FORMAT_NOTE: Record<EveningStatus, string> = {
   announced: '',
   live: 'Игра уже идёт — формат вечера не меняется.',
   finished: 'Вечер сыгран — формат не меняется.',
   settled: 'Вечер сыгран — формат не меняется.',
-  cancelled: 'Вечер отменён. Чтобы сменить формат, сначала верните вечер.',
+  cancelled: 'Вечер отменён. Чтобы сменить формат, сначала верни вечер.',
 };
 
 export default function EveningEditPage() {
@@ -150,6 +178,8 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
   const [checking, setChecking] = useState(false);
   const [touched, setTouched] = useState<ReadonlySet<EveningField>>(new Set());
   const [submitted, setSubmitted] = useState(false);
+  // Причина отмены для поста в группу — отдельно от заметки анонса (evenings.cancel_reason).
+  const [cancelReason, setCancelReason] = useState('');
 
   const taken = useMemo(() => takenDates(evenings, evening?.id), [evenings, evening?.id]);
   const [initial] = useState<EveningDraft>(() =>
@@ -161,6 +191,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
   const dirty = eveningDirty(draft, { ...baseline, formatChoice: initial.formatChoice });
 
   const { leave, confirmElement } = useLeave(EVENINGS_PATH, dirty, 'вечера');
+  const { confirm, confirmElement: cancelConfirmElement } = useConfirm();
 
   const status = evening?.status ?? 'announced';
   const formatLocked = evening !== null && status !== 'announced';
@@ -180,6 +211,13 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
     evening.announce_posted_at !== null &&
     check.scheduledAt !== null &&
     Date.parse(check.scheduledAt) !== Date.parse(evening.scheduled_at);
+  // Узнает ли группа об отмене или возврате: о прошедшем вечере сервер молчит.
+  const reach = evening ? announceReach(evening, now) : 'none';
+  // Перенос на другой день: день по расписанию останется за этим вечером (slot_date) пустым.
+  const vacated =
+    evening && status === 'announced'
+      ? vacatedSlot(evening, draft.date, settings?.game_weekday, now)
+      : null;
 
   const formatOptions = [
     ...(evening
@@ -192,6 +230,35 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.eveningsAll });
     if (evening) void queryClient.invalidateQueries({ queryKey: queryKeys.evening(evening.id) });
+  };
+
+  /**
+   * Сохранили вечер, анонс которого уже в группе, — пусть бот скажет группе о переносе, отмене или
+   * возврате (сервер сам сравнит с тем, что группа знает). Тост один: «сохранено» и что ушло в группу.
+   */
+  const savedToast = async (saved: Evening, text: string, quietDetail?: string) => {
+    if (!saved.announce_posted_at) {
+      toast.success(text);
+      return;
+    }
+    try {
+      const { outcome, change } = await notifyEveningChanged(saved.id);
+      if (outcome === 'posted' && change)
+        toast.success(text, { detail: announceChangeText(change) });
+      else if (outcome === 'no_group')
+        toast.show(text, {
+          tone: 'caution',
+          detail: 'Группа клуба не подключена — пост о правке не отправлен.',
+        });
+      else toast.success(text, quietDetail ? { detail: quietDetail } : undefined);
+    } catch {
+      // Снимок на сервере не сдвинулся — cron-tick повторит пост сам.
+      toast.show(text, {
+        tone: 'caution',
+        detail: 'Пост в группу пока не ушёл — бот отправит его сам в течение 15 минут.',
+      });
+    }
+    invalidate();
   };
 
   /** Вечер всё ещё до старта? Пока форма была открыта, банкир мог запустить таймер. */
@@ -240,7 +307,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
           setDraft((d) => ({ ...d, formatChoice: KEEP_FORMAT }));
           setTouched(new Set());
           setSubmitted(false);
-          toast.success('Вечер сохранён');
+          void savedToast(saved, 'Вечер сохранён');
         } else {
           toast.success('Вечер создан');
           navigate(paths.adminEvening(saved.id), { replace: true });
@@ -256,6 +323,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
       scheduled_at: target.scheduled_at,
       format: target.format,
       status: next,
+      ...(next === 'announced' ? { cancel_reason: null } : {}),
     });
 
   const cancelEvening = async () => {
@@ -266,16 +334,42 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
       toast.error(adminErrorText(error));
       return;
     }
-    // Обратимое действие — без подтверждения, с «Вернуть» в тосте (правило «Материи»).
+    // Причина — только для поста в группу; заметку анонса отмена не трогает.
+    const cancelReach = announceReach(evening, Date.now());
+    const reason = cancelReach === 'group' ? cancelReason.trim() : '';
+    if (cancelReach === 'group') {
+      // Пост в группу не отзовёшь — подтверждение. Без поста отмена обратима: «Вернуть» рядом.
+      const ok = await confirm({
+        title: `Отменить вечер ${formatDate(evening.scheduled_at, now)}?`,
+        message: cancelConfirmMessage(reason),
+        confirmText: 'Отменить вечер',
+        cancelText: 'Не отменять',
+        danger: true,
+      });
+      if (!ok) return;
+    }
     save.mutate(
       {
         id: evening.id,
         scheduled_at: evening.scheduled_at,
         format: evening.format,
+        cancel_reason: reason || null,
         status: 'cancelled',
       },
       {
-        onSuccess: (saved) =>
+        onSuccess: (saved) => {
+          setCancelReason('');
+          if (saved.announce_posted_at) {
+            // Снимок анонса обновит notify; о прошедшем вечере — молча.
+            void savedToast(
+              saved,
+              'Вечер отменён',
+              cancelReach === 'past'
+                ? 'Время вечера уже прошло — в группу ничего не ушло.'
+                : undefined,
+            );
+            return;
+          }
           toast.show('Вечер отменён', {
             durationMs: 8000,
             action: {
@@ -285,7 +379,8 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
                   .then(invalidate)
                   .catch((error: unknown) => toast.error(adminErrorText(error))),
             },
-          }),
+          });
+        },
         onError: (error) => toast.error(adminErrorText(error)),
       },
     );
@@ -298,10 +393,11 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
         id: evening.id,
         scheduled_at: evening.scheduled_at,
         format: evening.format,
+        cancel_reason: null,
         status: 'announced',
       },
       {
-        onSuccess: () => toast.success('Вечер снова в анонсе'),
+        onSuccess: (saved) => void savedToast(saved, 'Вечер снова в анонсе'),
         onError: (error) => toast.error(adminErrorText(error)),
       },
     );
@@ -327,6 +423,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
       back={{ onBack: () => void leave(), fallback: EVENINGS_PATH }}
     >
       {confirmElement}
+      {cancelConfirmElement}
 
       {status === 'cancelled' && (
         <Notice
@@ -338,7 +435,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
             </Button>
           }
         >
-          Его нет среди ближайших, бот не создаст новый вечер на этот день.
+          {cancelledNoticeText(evening?.cancel_reason ?? null, reach)}
         </Notice>
       )}
       {status === 'live' && (
@@ -374,9 +471,20 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
               <span>Это время уже прошло. Так можно внести вечер задним числом.</span>
             </p>
           )}
-          {moved && (
-            <Notice tone="caution" title="Анонс уже в группе">
-              Бот не обновит пост — напишите в группу о новом времени сами.
+          {moved && status === 'announced' && (
+            <Notice tone="info" title="Анонс уже в группе">
+              {check.past
+                ? 'Новое время уже прошло — о переносе бот в группу писать не будет.'
+                : 'После сохранения бот напишет в группу, что вечер перенесён, с новым временем и местом.'}
+            </Notice>
+          )}
+          {vacated && (
+            <Notice
+              tone="caution"
+              title={`${formatDate(clubNoon(vacated), now)} останется без вечера`}
+            >
+              Этот вечер закреплён за днём по расписанию, поэтому бот не создаст на него новый. Если
+              в этот день тоже нужна игра, создай вечер отдельно.
             </Notice>
           )}
           <Field
@@ -390,7 +498,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
             label="Заметка"
             multiline
             placeholder="Возьмите наличку на ребаи"
-            hint={status === 'announced' ? 'Попадёт в анонс в группе.' : undefined}
+            hint={noteHint(status, Boolean(evening?.announce_posted_at))}
             value={draft.note}
             onChange={(e) => set('note', e.target.value)}
           />
@@ -436,7 +544,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
                 onChange={(ids) => set('bankerId', ids[0] ?? null)}
                 max={1}
                 min={0}
-                hints={{ [me.id]: 'это вы' }}
+                hints={{ [me.id]: 'это ты' }}
               />
             </FieldGroup>
           ) : (
@@ -487,14 +595,18 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
       )}
 
       {evening && status === 'announced' && (
-        <Section
-          title="Отмена"
-          footer={
-            evening.announce_posted_at
-              ? 'Анонс в группе останется — сообщите участникам сами. Вернуть вечер можно здесь же.'
-              : 'Вечер пропадёт из ближайших, бот не создаст новый на этот день. Вернуть его можно здесь же.'
-          }
-        >
+        <Section title="Отмена" footer={cancelFooter(reach)}>
+          {reach === 'group' && (
+            <Field
+              label="Причина для группы"
+              autoComplete="off"
+              maxLength={CANCEL_REASON_MAX}
+              placeholder="Не собирается состав"
+              hint="Необязательно. Бот добавит её в пост об отмене, заметка анонса не изменится."
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+            />
+          )}
           <Button
             variant="danger"
             icon="x"

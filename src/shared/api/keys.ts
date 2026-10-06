@@ -18,4 +18,6 @@ export const queryKeys = {
   clubHistory: ['club-history'] as const,
   board: (token: string) => ['board', token] as const,
   votePhoto: (path: string) => ['vote-photo', path] as const,
+  mergePreview: (guestId: string, targetId: string) =>
+    ['merge-preview', guestId, targetId] as const,
 };

@@ -86,8 +86,10 @@ export type Database = {
       evenings: {
         Row: {
           announce_posted_at: string | null;
+          announce_snapshot: Json | null;
           banker_id: string | null;
           board_token: string;
+          cancel_reason: string | null;
           created_at: string;
           created_by: string | null;
           finished_at: string | null;
@@ -98,7 +100,9 @@ export type Database = {
           results_posted_at: string | null;
           results_revision: number;
           scheduled_at: string;
+          settle_reopened_at: string | null;
           settled_at: string | null;
+          slot_date: string | null;
           started_at: string | null;
           status: string;
           voting_closes_at: string | null;
@@ -106,8 +110,10 @@ export type Database = {
         };
         Insert: {
           announce_posted_at?: string | null;
+          announce_snapshot?: Json | null;
           banker_id?: string | null;
           board_token?: string;
+          cancel_reason?: string | null;
           created_at?: string;
           created_by?: string | null;
           finished_at?: string | null;
@@ -118,7 +124,9 @@ export type Database = {
           results_posted_at?: string | null;
           results_revision?: number;
           scheduled_at: string;
+          settle_reopened_at?: string | null;
           settled_at?: string | null;
+          slot_date?: string | null;
           started_at?: string | null;
           status?: string;
           voting_closes_at?: string | null;
@@ -126,8 +134,10 @@ export type Database = {
         };
         Update: {
           announce_posted_at?: string | null;
+          announce_snapshot?: Json | null;
           banker_id?: string | null;
           board_token?: string;
+          cancel_reason?: string | null;
           created_at?: string;
           created_by?: string | null;
           finished_at?: string | null;
@@ -138,7 +148,9 @@ export type Database = {
           results_posted_at?: string | null;
           results_revision?: number;
           scheduled_at?: string;
+          settle_reopened_at?: string | null;
           settled_at?: string | null;
+          slot_date?: string | null;
           started_at?: string | null;
           status?: string;
           voting_closes_at?: string | null;
@@ -464,7 +476,12 @@ export type Database = {
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean };
       is_banker: { Args: { evening: string }; Returns: boolean };
       is_participant: { Args: { evening: string; player: string }; Returns: boolean };
-      mark_settled: { Args: { p_evening: string }; Returns: undefined };
+      mark_settled: {
+        Args: { p_evening: string; p_last_event_id: number; p_voided_count: number };
+        Returns: undefined;
+      };
+      merge_players: { Args: { p_guest: string; p_target: string }; Returns: Json };
+      merge_players_preview: { Args: { p_guest: string; p_target: string }; Returns: Json };
       server_now: { Args: Record<PropertyKey, never>; Returns: string };
       set_my_name: { Args: { p_name: string }; Returns: undefined };
       set_payout: { Args: { p_evening: string; p_pct: number[] }; Returns: undefined };

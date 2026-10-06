@@ -68,8 +68,8 @@ const DENIED: Record<
 > = {
   no_telegram: {
     icon: 'send',
-    title: 'Откройте приложение в Telegram',
-    text: 'Вход работает только через Telegram: откройте приложение кнопкой в группе клуба.',
+    title: 'Открой приложение в Telegram',
+    text: 'Вход работает только через Telegram: открой приложение кнопкой в группе клуба.',
   },
   signature: { icon: 'shield', title: 'Telegram не подтвердил вход' },
   not_member: { icon: 'user', title: 'Вход только для участников клуба' },
@@ -91,7 +91,7 @@ export function DeniedScreen({ error, onRetry }: { error: AuthError | null; onRe
       role="alert"
       icon={screen.icon}
       title={screen.title}
-      text={screen.text ?? error?.message ?? 'Доступ к клубу закрыт. Обратитесь к админу клуба.'}
+      text={screen.text ?? error?.message ?? 'Доступ к клубу закрыт. Обратись к админу клуба.'}
       actions={
         <>
           {/* Подпись могла не сойтись из-за устаревшего initData — повтор иногда помогает. */}
@@ -134,7 +134,7 @@ export function AuthErrorScreen({
       error
       icon={kind === 'network' ? 'globe' : 'alert-triangle'}
       title={ERROR_TITLES[kind] ?? 'Не удалось войти'}
-      text={error?.message ?? 'Повторите вход через минуту.'}
+      text={error?.message ?? 'Повтори вход через минуту.'}
       details={error?.details}
       actions={
         <>
@@ -174,7 +174,7 @@ export function AdminOnlyDenied() {
       <Empty
         icon="shield"
         title="Раздел только для админа клуба"
-        description="Если нужно что-то изменить в расписании или составе, напишите админу."
+        description="Если нужно что-то изменить в расписании или составе, напиши админу."
       />
     </Page>
   );

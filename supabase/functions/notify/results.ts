@@ -59,11 +59,15 @@ export interface EveningRow {
   voting_posted_at: string | null;
   /** > 0 — итог уже публиковался и устарел (отмена finish или правка): пост «Исправленные итоги». */
   results_revision: number;
+  /** Что группа знает о вечере из постов бота (миграция 008, _shared/announce.ts). */
+  announce_snapshot: unknown;
+  /** Причина отмены для поста в группу (миграция 010); заметка вечера ей больше не служит. */
+  cancel_reason: string | null;
 }
 
 // Одной строкой-литералом: из конкатенации supabase-js не выводит тип строк select.
 export const EVENING_COLUMNS =
-  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, results_posted_at, voting_posted_at, results_revision';
+  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, results_posted_at, voting_posted_at, results_revision, announce_snapshot, cancel_reason';
 
 interface PlayerRow {
   id: string;
@@ -372,17 +376,21 @@ export async function buildResultsPost(
 
 export type PostColumn = 'announce_posted_at' | 'results_posted_at' | 'voting_posted_at';
 
-/** statuses — дополнительно требовать статус вечера (итоги — только у завершённого). */
+/**
+ * statuses — дополнительно требовать статус вечера (итоги — только у завершённого).
+ * extra — поля, которые пишутся вместе с отметкой (анонс запоминает снимок announce_snapshot).
+ */
 export async function claimPost(
   db: Db,
   eveningId: string,
   column: PostColumn,
   atIso: string,
   statuses?: readonly EveningRow['status'][],
+  extra: Record<string, unknown> = {},
 ): Promise<boolean> {
   let query = db
     .from('evenings')
-    .update({ [column]: atIso })
+    .update({ ...extra, [column]: atIso })
     .eq('id', eveningId)
     .is(column, null);
   if (statuses) query = query.in('status', [...statuses]);
@@ -405,7 +413,8 @@ export async function releasePost(
   if (error) console.error(`release ${column} ${eveningId}: ${describeError(error)}`);
 }
 
-export type PostOutcome = 'posted' | 'already_posted' | 'no_group' | 'no_changes';
+/** not_announced — анонс вечера в группу ещё не уходил: о правке писать не нужно (миграция 008). */
+export type PostOutcome = 'posted' | 'already_posted' | 'no_group' | 'no_changes' | 'not_announced';
 
 /** Застолбить → отправить → при ошибке снять отметку и пробросить ошибку. */
 export async function publishOnce(
@@ -416,9 +425,10 @@ export async function publishOnce(
   post: Post,
   nowMs: number,
   statuses?: readonly EveningRow['status'][],
+  extra: Record<string, unknown> = {},
 ): Promise<PostOutcome> {
   const atIso = new Date(nowMs).toISOString();
-  if (!(await claimPost(db, eveningId, column, atIso, statuses))) return 'already_posted';
+  if (!(await claimPost(db, eveningId, column, atIso, statuses, extra))) return 'already_posted';
   try {
     await sendMessage(chatId, post.text, { buttons: post.buttons });
     return 'posted';

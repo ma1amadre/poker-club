@@ -169,7 +169,7 @@ function StatusSample() {
         Без банкира пульт вечера недоступен.
       </Notice>
       <Notice tone="critical" title="Событие не записано">
-        Нет связи с сервером. Проверьте интернет и повторите действие.
+        Нет связи с сервером. Проверь интернет и повтори действие.
       </Notice>
       <Progress label="Расчёт" value={4} max={6} valueText="4 из 6 игроков" showValue />
       <Progress label="Синхронизация журнала" />
@@ -202,7 +202,7 @@ function FormsSample() {
         />
         <Field label="Взнос" inputMode="numeric" defaultValue="500" suffix="₽" />
         <Field label="Подпись к голосу" multiline placeholder="Флеш на ривере против сета" />
-        <Field label="Место" defaultValue="" error="Укажите адрес — его увидят в анонсе." />
+        <Field label="Место" defaultValue="" error="Укажи адрес — его увидят в анонсе." />
         <Select
           label="Формат"
           defaultValue="club"
@@ -218,7 +218,7 @@ function FormsSample() {
         />
         <Checkbox label="Сплит-нокаут" description="Голова делится между выбившими поровну." />
         <RadioGroup
-          label="Придёте в четверг?"
+          label="Придёшь в четверг?"
           value={rsvp}
           onChange={setRsvp}
           orientation="horizontal"
@@ -242,7 +242,7 @@ function FormsSample() {
         label="Кто выбил"
         error={
           killers.length === 0
-            ? 'Выберите хотя бы одного игрока или оставьте голову сиротской.'
+            ? 'Выбери хотя бы одного игрока или оставь голову сиротской.'
             : undefined
         }
       >
@@ -414,14 +414,14 @@ function ContentSample() {
       <Section title="Пустые состояния">
         <Empty
           icon="calendar"
-          title="Назначьте первый вечер"
+          title="Назначь первый вечер"
           description="Анонс уйдёт в группу клуба, участники отметятся «Приду»."
           action={<Button icon="plus">Назначить вечер</Button>}
         />
         <Empty
           kind="no-results"
           title="Никто не подходит под фильтр"
-          description="Сбросьте фильтр «Только гости»."
+          description="Сбрось фильтр «Только гости»."
         />
         <ErrorView error={new Error('Failed to fetch')} onRetry={() => {}} />
       </Section>

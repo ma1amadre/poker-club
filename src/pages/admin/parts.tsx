@@ -15,7 +15,7 @@ export function AdminGuard({ children }: { children: ReactNode }) {
       <Empty
         icon="shield"
         title="Раздел только для админа клуба"
-        description="Если нужно что-то изменить в расписании или составе, напишите админу."
+        description="Если нужно что-то изменить в расписании или составе, напиши админу."
       />
     </Page>
   );

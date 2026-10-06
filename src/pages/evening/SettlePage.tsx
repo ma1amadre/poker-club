@@ -11,6 +11,7 @@ import {
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMarkSettled, useUnmarkSettled } from '../../shared/api';
+import { useAuth } from '../../shared/auth';
 import { formatDate, formatNumber, formatRub, formatTime, paths } from '../../shared/lib';
 import {
   Amount,
@@ -34,11 +35,14 @@ import {
 import './evening.css';
 import {
   eventPlayerId,
+  journalVersion,
   paymentEvents,
+  reopenedNotice,
   settleDirection,
   settleLabel,
   settleOrder,
   settleTotals,
+  settledNotice,
 } from './lib';
 import { EventRow, StaleNotice } from './parts';
 import { PaymentSheet, type PaymentTarget } from './PaymentSheet';
@@ -69,7 +73,7 @@ export default function SettlePage() {
         <Empty
           kind="no-results"
           title="Такого вечера нет"
-          description="Ссылка устарела или вечер удалили. Откройте вечер из списка на главной."
+          description="Ссылка устарела или вечер удалили. Открой вечер из списка на главной."
           action={<ButtonLink to={paths.home}>Открыть главную</ButtonLink>}
         />
       </Page>
@@ -80,6 +84,7 @@ export default function SettlePage() {
 
 function SettleScreen({ model }: { model: EveningModel }) {
   const { evening, state, events, nameOf, playersById, canControl, nowMs } = model;
+  const { player } = useAuth();
   const actions = useEveningActions(model);
   const toast = useToast();
   const markSettled = useMarkSettled();
@@ -95,10 +100,19 @@ function SettleScreen({ model }: { model: EveningModel }) {
   const status = evening.status;
   const finished = status === 'finished' || status === 'settled';
   const canPay = canControl && status !== 'cancelled';
+  const reopened = reopenedNotice(evening, canControl, Boolean(player && state.players[player.id]));
+  const settled = settledNotice(
+    allSettled,
+    canControl,
+    evening.settled_at
+      ? `${formatDate(evening.settled_at, nowMs)} в ${formatTime(evening.settled_at)}`
+      : null,
+  );
 
   const close = async () => {
     try {
-      await markSettled.mutateAsync(evening.id);
+      // Какой журнал видел банкир: если с тех пор его правили, сервер откажет (миграция 010).
+      await markSettled.mutateAsync({ eveningId: evening.id, ...journalVersion(events) });
       toast.show('Расчёт закрыт', { tone: 'positive' });
     } catch {
       // тост с причиной показал глобальный обработчик мутаций
@@ -142,11 +156,12 @@ function SettleScreen({ model }: { model: EveningModel }) {
           Сейчас видны только взносы. Призы и головы появятся после завершения вечера.
         </Notice>
       ) : status === 'settled' ? (
-        <Notice tone="positive" title="Расчёт закрыт">
-          {evening.settled_at
-            ? `Баланс банкира сошёлся в ноль — ${formatDate(evening.settled_at, nowMs)} в ${formatTime(evening.settled_at)}.`
-            : 'Баланс банкира сошёлся в ноль.'}
-          {!allSettled ? ' После закрытия журнал менялся — проверьте остатки ниже.' : ''}
+        <Notice tone={settled.tone} title={settled.title}>
+          {settled.text}
+        </Notice>
+      ) : reopened ? (
+        <Notice tone="caution" title={reopened.title}>
+          {reopened.text}
         </Notice>
       ) : status === 'cancelled' ? (
         <Notice tone="info" title="Вечер отменён">
@@ -172,7 +187,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
 
       <Section
         title="Кто кому должен"
-        footer={canPay ? 'Нажмите на игрока, чтобы записать платёж.' : undefined}
+        footer={canPay ? 'Нажми на игрока, чтобы записать платёж.' : undefined}
       >
         {ids.length === 0 ? (
           <Empty
@@ -262,9 +277,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
 
       <Section
         title="Платежи"
-        footer={
-          canPay && payments.length > 0 ? 'Чтобы отменить платёж, нажмите на него.' : undefined
-        }
+        footer={canPay && payments.length > 0 ? 'Чтобы отменить платёж, нажми на него.' : undefined}
       >
         {payments.length === 0 ? (
           <p className="m-small">Платежей пока нет.</p>

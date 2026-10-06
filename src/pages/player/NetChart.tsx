@@ -213,7 +213,7 @@ export function NetChart({ points }: NetChartProps) {
           : summary}
       </p>
       <figcaption className="m-small pl-chart__caption">
-        Сумма в рублях после каждого вечера, пунктир — ноль. Коснитесь графика, чтобы увидеть вечер.
+        Сумма в рублях после каждого вечера, пунктир — ноль. Коснись графика, чтобы увидеть вечер.
       </figcaption>
     </figure>
   );

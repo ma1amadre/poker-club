@@ -6,7 +6,7 @@ export interface FieldGroupProps {
   /** Подпись над группой (legend) — всегда видна. */
   label: ReactNode;
   hint?: ReactNode;
-  /** Что не так и как исправить: «Выберите хотя бы одного игрока». */
+  /** Что не так и как исправить: «Выбери хотя бы одного игрока». */
   error?: ReactNode;
   className?: string;
   children: ReactNode;

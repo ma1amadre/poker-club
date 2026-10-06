@@ -60,7 +60,7 @@ export function FormatsTab({ onOpen }: FormatsTabProps) {
       {active.length === 0 ? (
         <Empty
           icon="layers"
-          title="Создайте первый формат"
+          title="Создай первый формат"
           description="Пока своих форматов нет, вечера идут по встроенному клубному: 500 ₽ за вход, уровни по 40 минут."
           action={create}
         />

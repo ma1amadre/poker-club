@@ -30,7 +30,7 @@ import {
   Stats,
   useToast,
 } from '../../shared/ui';
-import { bestHunters, orderedPlayers, ordinalPlace, totalRebuys } from './lib';
+import { bestHunters, orderedPlayers, ordinalPlace, reopenedNotice, totalRebuys } from './lib';
 import { EventFeed, PlayersList } from './parts';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -61,6 +61,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
   const settleIsMain = !voteIsMain && canControl && evening.status === 'finished';
 
   const finishEvent = [...events].reverse().find((e) => e.type === 'finish' && !e.voided);
+  const reopened = reopenedNotice(evening, canControl, iPlayed);
   const toast = useToast();
   const [publishing, setPublishing] = useState(false);
   // Журнал правили после поста итогов (платежи на итог не влияют) — пост в группе устарел.
@@ -102,8 +103,15 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
       {!state.finished && (
         <Notice tone="caution" title="Итог не сходится с журналом">
           {isAdmin
-            ? `После правки в игре ${pluralWithNumber(state.aliveCount, ['игрок', 'игрока', 'игроков'])}. Верните вечер в игру, отметьте недостающие вылеты и завершите его заново.`
+            ? `После правки в игре ${pluralWithNumber(state.aliveCount, ['игрок', 'игрока', 'игроков'])}. Верни вечер в игру, отметь недостающие вылеты и заверши его заново.`
             : 'Админ правит журнал вечера. Итог обновится сам.'}
+        </Notice>
+      )}
+
+      {/* Без кнопки: «Открыть расчёт» ниже на этом же экране. */}
+      {reopened && (
+        <Notice tone="caution" title={reopened.title}>
+          {reopened.text}
         </Notice>
       )}
 
@@ -228,8 +236,8 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
       {isAdmin && (
         <Section title="Правка закрытого вечера">
           <p className="m-small">
-            Отмена записи пересчитает места, очки и деньги — нажмите на неё в журнале ниже. Чтобы
-            добавить вылет или ребай, верните вечер в игру: пульт откроется снова на паузе, закрытый
+            Отмена записи пересчитает места, очки и деньги — нажми на неё в журнале ниже. Чтобы
+            добавить вылет или ребай, верни вечер в игру: пульт откроется снова на паузе, закрытый
             расчёт откроется, а завершить вечер нужно будет заново — в группу уйдут исправленные
             итоги. Ребай после возврата можно записать, только если ребаи были открыты в момент
             завершения.

@@ -84,7 +84,7 @@ async function callTgAuth(initData: string): Promise<string> {
       if (status === 401) {
         throw new AuthError(
           'signature',
-          'Telegram не подтвердил вход. Закройте приложение и откройте его снова.',
+          'Telegram не подтвердил вход. Закрой приложение и открой его снова.',
           details,
         );
       }
@@ -92,7 +92,7 @@ async function callTgAuth(initData: string): Promise<string> {
       if (status === 403 && code === 'inactive') {
         throw new AuthError(
           'inactive',
-          'Ваш профиль в клубе отключён. Обратитесь к админу клуба.',
+          'Твой профиль в клубе отключён. Обратись к админу клуба.',
           details,
         );
       }
@@ -106,7 +106,7 @@ async function callTgAuth(initData: string): Promise<string> {
       if (status === 403) {
         throw new AuthError(
           'not_member',
-          'Приложение только для участников группы клуба. Попросите админа добавить вас в группу.',
+          'Приложение только для участников группы клуба. Попроси админа добавить тебя в группу.',
           details,
         );
       }
@@ -117,13 +117,10 @@ async function callTgAuth(initData: string): Promise<string> {
       );
     }
     if (error instanceof FunctionsFetchError) {
-      throw new AuthError(
-        'network',
-        'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.',
-      );
+      throw new AuthError('network', 'Нет связи с сервером. Проверь интернет и попробуй ещё раз.');
     }
     if (error instanceof FunctionsRelayError) {
-      throw new AuthError('server', 'Сервер входа недоступен. Попробуйте чуть позже.');
+      throw new AuthError('server', 'Сервер входа недоступен. Попробуй чуть позже.');
     }
     throw new AuthError('server', 'Не удалось войти.', String(error));
   }
@@ -162,7 +159,7 @@ async function signIn(initData: string): Promise<Player> {
   // активным участником клуба (current_player_id() не null), — иначе все экраны были бы пустыми.
   const player = await loadCurrentPlayer(data.user.id);
   if (!player || !player.is_active) {
-    throw new AuthError('inactive', 'Ваш профиль в клубе отключён. Обратитесь к админу клуба.');
+    throw new AuthError('inactive', 'Твой профиль в клубе отключён. Обратись к админу клуба.');
   }
   return player;
 }
@@ -191,10 +188,7 @@ export function toAuthError(error: unknown): AuthError {
   if (error instanceof AuthError) return error;
   const message = error instanceof Error ? error.message : String(error);
   if (/failed to fetch|networkerror|load failed/i.test(message)) {
-    return new AuthError(
-      'network',
-      'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.',
-    );
+    return new AuthError('network', 'Нет связи с сервером. Проверь интернет и попробуй ещё раз.');
   }
   return new AuthError('server', 'Не удалось войти.', message);
 }

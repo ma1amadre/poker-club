@@ -49,7 +49,7 @@ async function decode(file: Blob): Promise<Drawable> {
     };
   } catch {
     URL.revokeObjectURL(url);
-    throw new Error('Не удалось открыть изображение. Попробуйте другое фото (JPEG или PNG).');
+    throw new Error('Не удалось открыть изображение. Попробуй другое фото (JPEG или PNG).');
   }
 }
 

@@ -2,6 +2,8 @@
 // POST {kind: 'evening_finished' | 'evening_corrected', eveningId} с JWT игрока. evening_corrected —
 // только админ: исправленный итог закрытого вечера после правки журнала. Текст сервер собирает сам из БД
 // доменными функциями: клиенту не доверяем ни цифры, ни имена. Идемпотентно по results_posted_at.
+// evening_changed — только админ, после сохранения вечера: если анонс уже в группе и изменились
+// время, место или отмена — пост «Вечер перенесён» / «отменён» / «всё-таки состоится» (changes.ts).
 import {
   adminClient,
   bearerToken,
@@ -13,6 +15,7 @@ import {
   UUID_RE,
 } from '../_shared/admin.ts';
 import { TelegramApiError } from '../_shared/telegram.ts';
+import { postAnnounceChange } from './changes.ts';
 import {
   EVENING_COLUMNS,
   NotReadyError,
@@ -40,7 +43,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!token) return errorResponse(401, 'no_token', 'Нужен вход в приложение');
     const { data: userData, error: userError } = await db.auth.getUser(token);
     if (userError || !userData.user) {
-      return errorResponse(401, 'bad_token', 'Сессия недействительна, откройте приложение заново');
+      return errorResponse(401, 'bad_token', 'Сессия недействительна, открой приложение заново');
     }
     const { data: caller, error: callerError } = await db
       .from('players')
@@ -49,11 +52,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .eq('is_active', true)
       .maybeSingle<CallerRow>();
     if (callerError) throw new Error(describeError(callerError));
-    if (!caller) return errorResponse(403, 'not_player', 'Вы не участник клуба');
+    if (!caller) return errorResponse(403, 'not_player', 'Ты не участник клуба');
 
     const body = await readJsonBody(req);
     const kind = body?.kind;
-    if (kind !== 'evening_finished' && kind !== 'evening_corrected') {
+    if (kind !== 'evening_finished' && kind !== 'evening_corrected' && kind !== 'evening_changed') {
       return errorResponse(400, 'bad_kind', 'Неизвестный тип уведомления');
     }
     const eveningId = body?.eveningId;
@@ -68,6 +71,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .maybeSingle<EveningRow>();
     if (eveningError) throw new Error(describeError(eveningError));
     if (!evening) return errorResponse(404, 'not_found', 'Вечер не найден');
+
+    if (kind === 'evening_changed') {
+      // Вечер правит только админ (RLS evenings), он же сообщает группе о правке.
+      if (!caller.is_admin) {
+        return errorResponse(403, 'forbidden', 'О переносе и отмене вечера пишет админ');
+      }
+      const result = await postAnnounceChange(db, evening, Date.now());
+      return json({ ok: true, ...result });
+    }
 
     if (!caller.is_admin && evening.banker_id !== caller.id) {
       return errorResponse(403, 'forbidden', 'Итоги публикует банкир вечера или админ');
@@ -92,6 +104,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return errorResponse(502, 'telegram', 'Telegram не принял пост, бот повторит попытку позже');
     }
     console.error(`notify: ${describeError(error)}`);
-    return errorResponse(500, 'internal', 'Не удалось опубликовать итоги, попробуйте позже');
+    return errorResponse(500, 'internal', 'Не удалось отправить пост в группу, попробуй позже');
   }
 });

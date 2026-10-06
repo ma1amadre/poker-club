@@ -398,7 +398,7 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
           >
             {problems.other.length > 0
               ? `${problems.other.join('. ')}. Остальное отмечено у полей.`
-              : 'Исправьте отмеченные поля и сохраните ещё раз.'}
+              : 'Исправь отмеченные поля и сохрани ещё раз.'}
           </Notice>
         )}
 
@@ -420,7 +420,7 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
             title="Архив"
             footer={
               isDefault
-                ? 'Это формат по умолчанию: сначала выберите другой во вкладке «Клуб».'
+                ? 'Это формат по умолчанию: сначала выбери другой во вкладке «Клуб».'
                 : 'Формат пропадёт из выбора для новых вечеров. Сыгранные по нему вечера не изменятся.'
             }
           >

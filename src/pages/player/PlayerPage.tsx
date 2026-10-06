@@ -81,7 +81,7 @@ export default function PlayerPage() {
           kind="no-results"
           icon="user"
           title="Такого игрока в клубе нет"
-          description="Ссылка устарела или игрок удалён. Найдите его в рейтинге."
+          description="Ссылка устарела или игрок удалён. Найди его в рейтинге."
           action={<ButtonLink to={paths.rating}>Открыть рейтинг</ButtonLink>}
         />
       </Page>

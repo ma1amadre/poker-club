@@ -104,13 +104,13 @@ export function voteDraftError(
   meId: PlayerId,
   participants: readonly PlayerId[],
 ): string | null {
-  if (!draft.nomineeId) return 'Выберите номинанта — без него голос не сохранится.';
-  if (draft.nomineeId === meId) return 'Голосовать за себя нельзя. Выберите другого игрока.';
+  if (!draft.nomineeId) return 'Выбери номинанта — без него голос не сохранится.';
+  if (draft.nomineeId === meId) return 'Голосовать за себя нельзя. Выбери другого игрока.';
   if (!participants.includes(draft.nomineeId)) {
-    return 'Этот игрок не играл в этот вечер. Выберите участника.';
+    return 'Этот игрок не играл в этот вечер. Выбери участника.';
   }
   if (draft.caption.trim().length > CAPTION_MAX) {
-    return `Подпись длиннее ${CAPTION_MAX} символов. Сократите её.`;
+    return `Подпись длиннее ${CAPTION_MAX} символов. Сократи её.`;
   }
   return null;
 }

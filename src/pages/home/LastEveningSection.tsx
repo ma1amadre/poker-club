@@ -132,7 +132,7 @@ function Winner({
 }
 
 function Mine({ result }: { result: ReturnType<typeof myResult> }) {
-  if (!result) return <p className="m-small">Вы в этот вечер не играли.</p>;
+  if (!result) return <p className="m-small">В этот вечер тебя не было за столом.</p>;
   return (
     <Stats className="home-stats">
       <Stat
@@ -178,12 +178,12 @@ function Voting({ evening, played, nowMs }: { evening: Evening; played: boolean;
 
   const mine = votes.data ? new Set(votes.data.map((v) => v.category)).size : null;
   const text = votes.isError
-    ? `Ваши голоса не загрузились: ${errorMessage(votes.error)}`
+    ? `Твои голоса не загрузились: ${errorMessage(votes.error)}`
     : mine === null
       ? 'Рука, блеф и бэд-бит вечера.'
       : mine >= VOTE_CATEGORIES.length
-        ? 'Вы проголосовали во всех номинациях — голос можно изменить до закрытия.'
-        : `Рука, блеф и бэд-бит вечера. Ваших голосов: ${mine} из ${VOTE_CATEGORIES.length}.`;
+        ? 'Твои голоса отданы во всех номинациях — изменить их можно до закрытия.'
+        : `Рука, блеф и бэд-бит вечера. Твоих голосов: ${mine} из ${VOTE_CATEGORIES.length}.`;
 
   return (
     <Notice

@@ -144,14 +144,14 @@ function EveningTitle({ evening }: { evening: Evening }) {
   );
 }
 
-/** Строка прошедшего вечера: победитель, участники, фонд; у отменённого — заметка админа. */
+/** Строка прошедшего вечера: победитель, участники, фонд; у отменённого — причина отмены. */
 function pastDetails(
   evening: Evening,
   history: ClubHistory,
   names: ReadonlyMap<string, string>,
   totals: EveningTotals | undefined,
 ): string {
-  if (evening.status === 'cancelled') return evening.note?.trim() || 'Вечер не состоялся';
+  if (evening.status === 'cancelled') return evening.cancel_reason?.trim() || 'Вечер не состоялся';
   const summary = history.summaryById.get(evening.id);
   const parts: string[] = [];
   const winner = summary?.places[0];
@@ -172,7 +172,7 @@ function LiveRow({ evening }: { evening: Evening }) {
   );
 
   let details: string;
-  if (events.isError) details = 'Состав не загрузился — откройте вечер';
+  if (events.isError) details = 'Состав не загрузился — открой вечер';
   else if (!totals) details = 'Загружаем состав';
   else if (totals.players === 0) details = 'Игроков ещё нет';
   else

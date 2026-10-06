@@ -82,22 +82,22 @@ export function parseSettingsDraft(draft: SettingsDraft): {
   const chat = parseIntInput(draft.groupChatId);
   if (chat !== null && (Number.isNaN(chat) || chat >= 0)) {
     errors.groupChatId =
-      'ID группы — отрицательное число, у супергрупп оно начинается с -100. Скопируйте его целиком.';
+      'ID группы — отрицательное число, у супергрупп оно начинается с -100. Скопируй его целиком.';
   }
 
   const bot = normalizeBotUsername(draft.botUsername);
   if (bot !== '' && !BOT_RE.test(bot)) {
     errors.botUsername =
-      'Имя бота — 5–32 латинские буквы, цифры или «_», в конце «bot». Скопируйте его из BotFather.';
+      'Имя бота — 5–32 латинские буквы, цифры или «_», в конце «bot». Скопируй его из BotFather.';
   }
 
   const weekday = parseIntInput(draft.weekday);
   if (weekday === null || Number.isNaN(weekday) || weekday < 1 || weekday > 7) {
-    errors.weekday = 'Выберите день недели.';
+    errors.weekday = 'Выбери день недели.';
   }
 
   const time = normalizeTime(draft.time);
-  if (!time) errors.time = 'Укажите время начала, например 19:00.';
+  if (!time) errors.time = 'Укажи время начала, например 19:00.';
 
   const hours = parseIntInput(draft.announceHours);
   if (hours === null || Number.isNaN(hours) || hours < 1 || hours > ANNOUNCE_HOURS_MAX) {

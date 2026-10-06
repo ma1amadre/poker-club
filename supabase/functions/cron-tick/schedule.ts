@@ -80,3 +80,35 @@ export function clubDayRange(ms: number): { startMs: number; endMs: number } {
     ),
   };
 }
+
+/** Клубный (московский) день момента ms — «2026-10-08», как evenings.slot_date. */
+export function clubDateKey(ms: number): string {
+  const p = clubParts(ms);
+  return `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+/** Вечер глазами расписания: когда он сейчас и за каким днём закреплён (миграция 010). */
+export interface SlotEvening {
+  scheduled_at: string;
+  slot_date: string | null;
+}
+
+/**
+ * Занят ли слот расписания gameMs этим вечером — в любом статусе: отменённый админом вечер не
+ * воскрешаем. Занят, если вечер сейчас идёт в этот московский день (перенесён на другое время
+ * того же дня или создан вручную) или закреплён за ним (slot_date: перенесён на другой день —
+ * второй вечер и свежий анонс на опустевший день не нужны).
+ */
+export function holdsSlot(evening: SlotEvening, gameMs: number): boolean {
+  const { startMs, endMs } = clubDayRange(gameMs);
+  const at = Date.parse(evening.scheduled_at);
+  return (at >= startMs && at < endMs) || evening.slot_date === clubDateKey(gameMs);
+}
+
+/** Фильтр PostgREST (`.or(...)`) для кандидатов holdsSlot: тот же день по времени или по слоту. */
+export function slotFilter(gameMs: number): string {
+  const { startMs, endMs } = clubDayRange(gameMs);
+  const start = new Date(startMs).toISOString();
+  const end = new Date(endMs).toISOString();
+  return `and(scheduled_at.gte.${start},scheduled_at.lt.${end}),slot_date.eq.${clubDateKey(gameMs)}`;
+}

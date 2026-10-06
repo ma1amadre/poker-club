@@ -1,5 +1,5 @@
-// Шторка прогноза: «Кто выиграет» (3 очка) и «Кто вылетит первым» (2 очка). Кандидаты — активные
-// постоянные игроки и гости, отмеченные «иду» (predictionCandidates). Сохраняет set_prediction.
+// Шторка прогноза: «Кто выиграет» (3 очка) и «Кто вылетит первым» (2 очка). Кандидаты — все
+// активные игроки, гости после постоянных (predictionCandidates). Сохраняет set_prediction.
 import { PREDICTION_POINTS } from '@domain/predictions.ts';
 import { useMemo, useState } from 'react';
 import {
@@ -11,7 +11,7 @@ import {
 } from '../../shared/api';
 import { capitalize, formatWeekdayDate } from '../../shared/lib';
 import { Button, PlayerPicker, Sheet, useToast } from '../../shared/ui';
-import { predictionCandidates, rsvpHint } from './lib';
+import { candidateHint, predictionCandidates } from './lib';
 
 export interface PredictionSheetProps {
   evening: Evening;
@@ -39,7 +39,7 @@ export function PredictionSheet({
     [players, rsvps, current],
   );
   const pickerPlayers = candidates.map((c) => c.player);
-  const hints = Object.fromEntries(candidates.map((c) => [c.player.id, rsvpHint(c.rsvp)]));
+  const hints = Object.fromEntries(candidates.map((c) => [c.player.id, candidateHint(c)]));
 
   const changed =
     winner !== (current?.winner_id ?? null) || firstOut !== (current?.first_out_id ?? null);
@@ -96,10 +96,7 @@ export function PredictionSheet({
       }
     >
       {pickerPlayers.length === 0 ? (
-        <p className="m-small">
-          Выбрать пока некого: в клубе нет активных игроков. Гости появятся здесь, когда отметят
-          «иду».
-        </p>
+        <p className="m-small">Выбрать пока некого: в клубе нет активных игроков.</p>
       ) : (
         <>
           <PlayerPicker

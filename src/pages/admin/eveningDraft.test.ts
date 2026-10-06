@@ -105,9 +105,9 @@ describe('checkEveningDraft', () => {
   });
 
   it('пустые и неверные дата и время', () => {
-    expect(check({ date: '' }).errors.date).toMatch(/Укажите дату/);
+    expect(check({ date: '' }).errors.date).toMatch(/Укажи дату/);
     expect(check({ date: '2026-02-30' }).errors.date).toBeDefined();
-    expect(check({ time: '' }).errors.time).toMatch(/Укажите время/);
+    expect(check({ time: '' }).errors.time).toMatch(/Укажи время/);
     expect(check({ time: '' }).scheduledAt).toBeNull();
   });
 
@@ -122,7 +122,7 @@ describe('checkEveningDraft', () => {
   });
 
   it('формат: не выбран или с ошибками', () => {
-    expect(check({}, [], null).errors.format).toMatch(/Выберите формат/);
+    expect(check({}, [], null).errors.format).toMatch(/Выбери формат/);
     expect(check({}, [], { ...DEFAULT_FORMAT, levels: [] }).errors.format).toMatch(/ошибки/);
   });
 });

@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import type { ClubHistory, Player } from '../../shared/api';
 import { formatDate, formatRub, paths, pluralWithNumber } from '../../shared/lib';
 import { ButtonLink, Notice } from '../../shared/ui';
-import { openSettlements } from './lib';
+import { openSettlements, type BankerDuty } from './lib';
 
 export interface SettlementNoticesProps {
   history: ClubHistory;
@@ -29,12 +29,14 @@ export function SettlementNotices({ history, me, playersById }: SettlementNotice
     <div className="home-notices">
       {open.debts.map((debt) => {
         const banker = debt.bankerId ? playersById.get(debt.bankerId)?.display_name : null;
-        const where = `Вечер ${formatDate(debt.scheduledAt)}${banker ? ` · банкир — ${banker}` : ''}.`;
+        const where =
+          `Вечер ${formatDate(debt.scheduledAt)}${banker ? ` · банкир — ${banker}` : ''}.` +
+          (debt.reopened ? ' Журнал изменился после закрытия расчёта.' : '');
         return debt.kind === 'owe' ? (
           <Notice
             key={debt.eveningId}
             tone="caution"
-            title={`Вы должны банкиру ${formatRub(debt.amountRub)}`}
+            title={`Твой долг банкиру — ${formatRub(debt.amountRub)}`}
             action={action(debt.eveningId)}
           >
             {where}
@@ -43,7 +45,7 @@ export function SettlementNotices({ history, me, playersById }: SettlementNotice
           <Notice
             key={debt.eveningId}
             tone="info"
-            title={`Банкир должен вам ${formatRub(debt.amountRub)}`}
+            title={`Банкир должен тебе ${formatRub(debt.amountRub)}`}
             action={action(debt.eveningId)}
           >
             {where}
@@ -53,19 +55,34 @@ export function SettlementNotices({ history, me, playersById }: SettlementNotice
       {open.banker.map((duty) => (
         <Notice
           key={duty.eveningId}
-          tone="info"
-          title={`Расчёт за ${formatDate(duty.scheduledAt)} не закрыт`}
+          tone={duty.reopened ? 'caution' : 'info'}
+          title={
+            duty.reopened
+              ? `Расчёт за ${formatDate(duty.scheduledAt)} снова открыт`
+              : `Расчёт за ${formatDate(duty.scheduledAt)} не закрыт`
+          }
           action={action(duty.eveningId)}
         >
-          {duty.pending > 0
-            ? `Вы банкир вечера. Осталось рассчитать ${pluralWithNumber(duty.pending, ['игрока', 'игроков', 'игроков'])}.`
-            : duty.selfRemainingRub < 0
-              ? `Остальные рассчитались. Запишите, что вы забрали себе ${formatRub(-duty.selfRemainingRub)}, и закройте расчёт.`
-              : duty.selfRemainingRub > 0
-                ? `Остальные рассчитались. Запишите, что вы внесли ${formatRub(duty.selfRemainingRub)}, и закройте расчёт.`
-                : 'Все в расчёте — нажмите «Закрыть расчёт».'}
+          {bankerDutyText(duty)}
         </Notice>
       ))}
     </div>
   );
+}
+
+/** Что осталось сделать банкиру вечера; при открывшемся заново расчёте — сначала почему. */
+function bankerDutyText(duty: BankerDuty): string {
+  const why = duty.reopened ? 'Журнал изменился после закрытия расчёта. ' : '';
+  if (duty.pending > 0) {
+    return `${why}Ты банкир вечера. Осталось рассчитать ${pluralWithNumber(duty.pending, ['игрока', 'игроков', 'игроков'])}.`;
+  }
+  if (duty.selfRemainingRub < 0) {
+    return `${why}Остальные рассчитались. Запиши свой выигрыш — ${formatRub(-duty.selfRemainingRub)} — и закрой расчёт.`;
+  }
+  if (duty.selfRemainingRub > 0) {
+    return `${why}Остальные рассчитались. Запиши свой взнос — ${formatRub(duty.selfRemainingRub)} — и закрой расчёт.`;
+  }
+  return duty.reopened
+    ? 'Журнал изменился после закрытия расчёта, но все по-прежнему в расчёте — закрой его заново.'
+    : 'Все в расчёте — нажми «Закрыть расчёт».';
 }

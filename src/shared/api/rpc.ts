@@ -2,7 +2,7 @@
 // evening_events, rsvps, predictions, votes напрямую не пишутся: RLS это запрещает.
 import type { EventPayload, EventType } from '@domain/types.ts';
 import type { VoteCategory } from '@domain/votes.ts';
-import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/context';
 import { addClockSample } from '../lib/serverClock';
 import { supabase } from '../supabase';
@@ -63,8 +63,23 @@ export async function voidEvent(eventId: number): Promise<void> {
   if (error) throw toError(error);
 }
 
-export async function markSettled(eveningId: string): Promise<void> {
-  const { error } = await supabase.rpc('mark_settled', { p_evening: eveningId });
+export interface MarkSettledInput {
+  eveningId: string;
+  /** Журнал, который видел экран расчёта (journalVersion): изменился — сервер откажет, P0001. */
+  lastEventId: number;
+  voidedCount: number;
+}
+
+export async function markSettled({
+  eveningId,
+  lastEventId,
+  voidedCount,
+}: MarkSettledInput): Promise<void> {
+  const { error } = await supabase.rpc('mark_settled', {
+    p_evening: eveningId,
+    p_last_event_id: lastEventId,
+    p_voided_count: voidedCount,
+  });
   if (error) throw toError(error);
 }
 
@@ -142,9 +157,42 @@ export async function deleteVote({ eveningId, voterId, category }: DeleteVoteInp
 }
 
 /** Ответ Edge Function notify (supabase/functions/notify/results.ts → PostOutcome). */
-export type NotifyOutcome = 'posted' | 'already_posted' | 'no_group' | 'no_changes';
+export type NotifyOutcome =
+  | 'posted'
+  | 'already_posted'
+  | 'no_group'
+  | 'no_changes'
+  /** Анонс вечера в группу ещё не уходил — о правке писать не нужно (evening_changed). */
+  | 'not_announced';
 
 export type NotifyKind = 'evening_finished' | 'evening_corrected';
+
+/** О чём бот написал группе после правки вечера (notify/changes.ts). */
+export type AnnounceChange = 'moved' | 'cancelled' | 'restored';
+
+interface NotifyResponse {
+  ok: true;
+  outcome: NotifyOutcome;
+  change?: AnnounceChange;
+}
+
+async function invokeNotify(body: Record<string, unknown>): Promise<NotifyResponse> {
+  const { data, error } = await supabase.functions.invoke<NotifyResponse>('notify', { body });
+  if (error) {
+    // Тело ошибки функции: {error: текст по-русски, code}.
+    const response = (error as { context?: unknown }).context;
+    if (response instanceof Response) {
+      const parsed = (await response
+        .clone()
+        .json()
+        .catch(() => null)) as { error?: unknown } | null;
+      if (typeof parsed?.error === 'string') throw new Error(parsed.error);
+    }
+    throw toError(error);
+  }
+  if (!data) throw new Error('Сервер уведомлений вернул пустой ответ.');
+  return data;
+}
 
 /**
  * Пост итогов вечера в группу — банкир (или админ) после finish. Текст собирает сервер из БД;
@@ -156,24 +204,65 @@ export async function notifyEveningFinished(
   eveningId: string,
   kind: NotifyKind = 'evening_finished',
 ): Promise<NotifyOutcome> {
-  const { data, error } = await supabase.functions.invoke<{ ok: true; outcome: NotifyOutcome }>(
-    'notify',
-    { body: { kind, eveningId } },
-  );
-  if (error) {
-    // Тело ошибки функции: {error: текст по-русски, code}.
-    const response = (error as { context?: unknown }).context;
-    if (response instanceof Response) {
-      const body = (await response
-        .clone()
-        .json()
-        .catch(() => null)) as { error?: unknown } | null;
-      if (typeof body?.error === 'string') throw new Error(body.error);
-    }
-    throw toError(error);
-  }
-  if (!data) throw new Error('Сервер уведомлений вернул пустой ответ.');
-  return data.outcome;
+  return (await invokeNotify({ kind, eveningId })).outcome;
+}
+
+/**
+ * Админ сохранил вечер: если анонс уже в группе, а время, место или отмена изменились, бот пишет
+ * «Вечер перенесён» / «отменён» / «всё-таки состоится» (миграция 008). Повтор безопасен
+ * (no_changes); не дошедший вызов добьёт cron-tick.
+ */
+export async function notifyEveningChanged(
+  eveningId: string,
+): Promise<{ outcome: NotifyOutcome; change: AnnounceChange | null }> {
+  const data = await invokeNotify({ kind: 'evening_changed', eveningId });
+  return { outcome: data.outcome, change: data.change ?? null };
+}
+
+/** Отчёт merge_players / merge_players_preview (миграция 008). */
+export interface MergeReport {
+  guest: { id: string; name: string };
+  target: { id: string; name: string };
+  /** Сыгранные гостем вечера (действующий join). */
+  evenings: number;
+  /** Записи журнала с гостем (входы, ребаи, вылеты, платежи, в том числе отменённые). */
+  events: number;
+  votesReceived: number;
+  votesCast: number;
+  /** Чужие прогнозы, где гость — победитель или первый вылет. */
+  predictionsAbout: number;
+  predictionsMade: number;
+  rsvps: number;
+  bankerOf: number;
+  /** Фото голосов гостя: остаются в его папке Storage. */
+  photosKept: number;
+  /** Что мешает слиянию; пусто — можно сливать. */
+  blockers: string[];
+}
+
+function toMergeReport(data: unknown): MergeReport {
+  if (!data || typeof data !== 'object') throw new Error('Сервер не вернул отчёт о слиянии.');
+  return data as MergeReport;
+}
+
+/** Что перенесёт слияние гостя с Telegram-профилем и что ему мешает. Только админ. */
+export async function mergePlayersPreview(guestId: string, targetId: string): Promise<MergeReport> {
+  const { data, error } = await supabase.rpc('merge_players_preview', {
+    p_guest: guestId,
+    p_target: targetId,
+  });
+  if (error) throw toError(error);
+  return toMergeReport(data);
+}
+
+/** Перенести всё гостя на Telegram-профиль и удалить гостя. Только админ; атомарно. */
+export async function mergePlayers(guestId: string, targetId: string): Promise<MergeReport> {
+  const { data, error } = await supabase.rpc('merge_players', {
+    p_guest: guestId,
+    p_target: targetId,
+  });
+  if (error) throw toError(error);
+  return toMergeReport(data);
 }
 
 /**
@@ -183,7 +272,7 @@ export async function notifyEveningFinished(
 export async function addGuest(eveningId: string, name: string): Promise<string> {
   const { data, error } = await supabase.rpc('add_guest', { p_evening: eveningId, p_name: name });
   if (error) throw toError(error);
-  if (typeof data !== 'string') throw new Error('Сервер не вернул id гостя. Повторите попытку.');
+  if (typeof data !== 'string') throw new Error('Сервер не вернул id гостя. Повтори попытку.');
   return data;
 }
 
@@ -261,8 +350,13 @@ export function useAddGuest(eveningId: string) {
 export function useMarkSettled() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (eveningId: string) => markSettled(eveningId),
-    onSuccess: (_void, eveningId) => invalidateEvening(queryClient, eveningId),
+    mutationFn: (input: MarkSettledInput) => markSettled(input),
+    onSuccess: (_void, { eveningId }) => invalidateEvening(queryClient, eveningId),
+    // Отказ «журнал изменился» — перечитать журнал, чтобы остатки на экране стали актуальными.
+    onError: (_error, { eveningId }) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
   });
 }
 
@@ -332,6 +426,37 @@ export function useNotifyEveningFinished(eveningId: string, kind: NotifyKind = '
     mutationFn: () => notifyEveningFinished(eveningId, kind),
     // results_posted_at изменился — перечитать вечер.
     onSuccess: () => invalidateEvening(queryClient, eveningId),
+  });
+}
+
+/** Предпросмотр слияния для выбранной пары; всегда свежий — данные клуба могли измениться. */
+export function useMergePreview(guestId: string, targetId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.mergePreview(guestId, targetId ?? ''),
+    queryFn: () => mergePlayersPreview(guestId, targetId ?? ''),
+    enabled: targetId !== null,
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
+
+/**
+ * Слияние гостя с Telegram-профилем: id гостя пропадает из журналов, голосов и прогнозов —
+ * перечитываем всё (вечера, история клуба, справочник игроков).
+ */
+export function useMergePlayers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ guestId, targetId }: { guestId: string; targetId: string }) =>
+      mergePlayers(guestId, targetId),
+    meta: { silent: true }, // причину отказа показывает шторка привязки
+    onSuccess: () => {
+      // Предпросмотр слитой пары устарел навсегда (гостя нет) — убрать, а не перезапрашивать.
+      queryClient.removeQueries({ queryKey: ['merge-preview'] });
+      void queryClient.invalidateQueries({
+        predicate: (query) => query.queryKey[0] !== 'merge-preview',
+      });
+    },
   });
 }
 

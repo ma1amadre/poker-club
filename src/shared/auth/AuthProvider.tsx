@@ -28,7 +28,7 @@ let lastInitData: string | null = null;
 
 const NO_TELEGRAM = new AuthError(
   'no_telegram',
-  'Откройте приложение из Telegram — по кнопке в группе клуба или в чате с ботом.',
+  'Открой приложение из Telegram — по кнопке в группе клуба или в чате с ботом.',
 );
 
 const DENIED_NO_TELEGRAM: AuthState = {
@@ -49,7 +49,7 @@ function currentInitData(): string | null {
  * экран выбора тестового игрока, который вызывает signInWithInitData.
  */
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // Начальное состояние известно сразу: есть initData — идёт вход, нет — «откройте в Telegram».
+  // Начальное состояние известно сразу: есть initData — идёт вход, нет — «открой в Telegram».
   const [state, setState] = useState<AuthState>(() =>
     currentInitData() ? LOADING : DENIED_NO_TELEGRAM,
   );

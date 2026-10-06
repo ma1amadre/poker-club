@@ -99,8 +99,8 @@ describe('checkDraft', () => {
 
   it('нечисло — у поля, без дубля от домена', () => {
     const { problems } = checkDraft(valid({ buyIn: 'пятьсот', chips: '' }));
-    expect(problems.fields.buyIn).toBe('Введите целое число.');
-    expect(problems.fields.chips).toBe('Заполните поле.');
+    expect(problems.fields.buyIn).toBe('Введи целое число.');
+    expect(problems.fields.chips).toBe('Заполни поле.');
     expect(problems.other).toEqual([]);
     expect(problems.count).toBe(2);
   });

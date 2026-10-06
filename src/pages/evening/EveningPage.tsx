@@ -41,7 +41,7 @@ export default function EveningPage() {
         <Empty
           kind="no-results"
           title="Такого вечера нет"
-          description="Ссылка устарела или вечер удалили. Откройте вечер из списка на главной."
+          description="Ссылка устарела или вечер удалили. Открой вечер из списка на главной."
           action={<ButtonLink to={paths.home}>Открыть главную</ButtonLink>}
         />
       </Page>
@@ -90,6 +90,7 @@ function EveningScreen({ model }: { model: EveningModel }) {
       {evening.status === 'cancelled' && (
         <>
           <Notice tone="info" title="Вечер отменён">
+            {evening.cancel_reason ? `Причина: «${evening.cancel_reason}». ` : ''}
             Игры в этот день не будет. Следующий вечер появится на главной, как только его назначат.
           </Notice>
           <FormatSummary format={evening.format} />

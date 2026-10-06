@@ -95,7 +95,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
             />
           ) : (
             <p className="m-small">
-              Перед стартом отметьте, кто пришёл: ответившие «иду» будут уже выбраны.
+              Перед стартом отметь, кто пришёл: ответившие «иду» будут уже выбраны.
             </p>
           )}
           <div className="ev-actions">
@@ -122,7 +122,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
             )}
           </div>
           {seated > 0 && (
-            <p className="m-small">Чтобы убрать игрока из-за стола, нажмите на его строку.</p>
+            <p className="m-small">Чтобы убрать игрока из-за стола, нажми на его строку.</p>
           )}
         </Section>
       )}
@@ -160,7 +160,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
               </Button>
             }
           >
-            Проверьте интернет — список обновится сам, когда связь вернётся.
+            Проверь интернет — список обновится сам, когда связь вернётся.
           </Notice>
         ) : rsvps.length === 0 ? (
           <Empty
@@ -237,9 +237,9 @@ function MyRsvp({ eveningId, rsvps }: { eveningId: string; rsvps: readonly Rsvp[
   const mine = rsvps.find((r) => r.player_id === player.id)?.status;
   const value = setRsvp.isPending ? setRsvp.variables : mine;
   return (
-    <Section title="Ваш ответ">
+    <Section title="Твой ответ">
       <Segmented<RsvpStatus>
-        label="Ваш ответ на анонс"
+        label="Твой ответ на анонс"
         block
         value={value}
         options={RSVP_CHOICES.map((status) => ({

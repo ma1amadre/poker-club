@@ -165,9 +165,9 @@ const FIELD_PREFIXES: readonly (readonly [string, FormatField])[] = [
 
 // Сообщения домена с техническими словами — в язык формы.
 const FRIENDLY: Readonly<Record<string, string>> = {
-  'Не задано название формата': 'Введите название формата.',
+  'Не задано название формата': 'Введи название формата.',
   'Лимит ребаев — целое число не меньше 0 или null (без лимита)':
-    'Лимит — целое число от 0. Оставьте поле пустым, если без лимита.',
+    'Лимит — целое число от 0. Оставь поле пустым, если без лимита.',
   'Уровень закрытия ребаев должен быть целым числом не меньше 0':
     'Номер уровня — целое число от 0; 0 — без ребаев и позднего входа.',
 };
@@ -218,17 +218,17 @@ export function checkDraft(draft: FormatDraft): {
   // 1. Ввод: пустые и нечисловые поля — своими словами, у самого поля.
   const requiredInt = (field: FormatField, value: string) => {
     const n = parseIntInput(value);
-    if (n === null) fields[field] = 'Заполните поле.';
-    else if (Number.isNaN(n)) fields[field] = 'Введите целое число.';
+    if (n === null) fields[field] = 'Заполни поле.';
+    else if (Number.isNaN(n)) fields[field] = 'Введи целое число.';
   };
   if (Array.from(draft.name.trim()).length > FORMAT_NAME_MAX)
-    fields.name = `Название длиннее ${FORMAT_NAME_MAX} символов. Сократите его.`;
+    fields.name = `Название длиннее ${FORMAT_NAME_MAX} символов. Сократи его.`;
   requiredInt('buyIn', draft.buyIn);
   requiredInt('chips', draft.chips);
   requiredInt('bounty', draft.bounty);
   requiredInt('rebuyUntil', draft.rebuyUntil);
   if (Number.isNaN(parseIntInput(draft.rebuyLimit)))
-    fields.rebuyLimit = 'Введите целое число или оставьте поле пустым.';
+    fields.rebuyLimit = 'Введи целое число или оставь поле пустым.';
   draft.payouts.forEach((p, i) => {
     const n = parseDecimalInput(p);
     if (n === null || Number.isNaN(n)) payoutItems.push(i);

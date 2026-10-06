@@ -87,9 +87,10 @@ export interface Candidate<P> {
 }
 
 /**
- * Кого можно назвать в прогнозе: все активные постоянные игроки и гости, отмеченные «иду».
- * Игроки из уже сохранённого прогноза остаются в списке, даже если перестали подходить.
- * Порядок: идут, под вопросом, не ответили, не идут; внутри — по имени.
+ * Кого можно назвать в прогнозе: все активные игроки — сначала постоянные (идут, под вопросом,
+ * не ответили, не идут; внутри — по имени), за ними гости по имени. Гость на анонс не отвечает
+ * (войти в приложение он не может), поэтому ставить на него можно всегда. Игроки из уже
+ * сохранённого прогноза остаются в списке, даже если перестали подходить.
  */
 export function predictionCandidates<P extends PlayerLike>(
   players: readonly P[],
@@ -100,12 +101,19 @@ export function predictionCandidates<P extends PlayerLike>(
   for (const r of rsvps) status.set(r.player_id, r.status);
   const keep = new Set(keepIds.filter((id): id is string => Boolean(id)));
   return players
-    .filter((p) => keep.has(p.id) || (p.is_active && (!p.is_guest || status.get(p.id) === 'yes')))
+    .filter((p) => p.is_active || keep.has(p.id))
     .map((player) => ({ player, rsvp: status.get(player.id) ?? null }))
     .sort(
       (a, b) =>
-        RSVP_ORDER[a.rsvp ?? 'none'] - RSVP_ORDER[b.rsvp ?? 'none'] || byName(a.player, b.player),
+        Number(a.player.is_guest) - Number(b.player.is_guest) ||
+        (a.player.is_guest ? 0 : RSVP_ORDER[a.rsvp ?? 'none'] - RSVP_ORDER[b.rsvp ?? 'none']) ||
+        byName(a.player, b.player),
     );
+}
+
+/** Подпись к кандидату в прогнозе: гость — «гость», постоянный — как ответил на анонс. */
+export function candidateHint(candidate: Candidate<PlayerLike>): string {
+  return candidate.player.is_guest ? 'гость' : rsvpHint(candidate.rsvp);
 }
 
 /** Подпись к игроку в прогнозе: как он ответил на анонс. */
@@ -154,6 +162,8 @@ export interface SettleEveningLike {
   scheduled_at: string;
   banker_id: string | null;
   format: TournamentFormat;
+  /** Закрытый расчёт открылся сам из-за правки журнала (миграция 008). */
+  settle_reopened_at?: string | null;
 }
 
 export interface MyDebt {
@@ -163,6 +173,8 @@ export interface MyDebt {
   /** owe — я должен банкиру, await — банкир должен мне. */
   kind: 'owe' | 'await';
   amountRub: number;
+  /** Расчёт уже закрывали, но журнал поправили — долг появился снова. */
+  reopened: boolean;
 }
 
 export interface BankerDuty {
@@ -177,6 +189,8 @@ export interface BankerDuty {
   selfRemainingRub: number;
   /** Все строки, включая свою, в нуле — осталось нажать «Закрыть расчёт». */
   allSettled: boolean;
+  /** Расчёт уже закрывали, но журнал поправили — закрыть заново. */
+  reopened: boolean;
 }
 
 export interface OpenSettlements {
@@ -214,6 +228,7 @@ export function openSettlements(
         pending,
         selfRemainingRub: table[meId]?.remainingRub ?? 0,
         allSettled: isSettled(table),
+        reopened: Boolean(evening.settle_reopened_at),
       });
       continue;
     }
@@ -225,6 +240,7 @@ export function openSettlements(
       bankerId: evening.banker_id,
       kind: row.status === 'owes' ? 'owe' : 'await',
       amountRub: Math.abs(row.remainingRub),
+      reopened: Boolean(evening.settle_reopened_at),
     });
   }
   return out;
@@ -269,12 +285,12 @@ export function playerName(
   return playersById.get(id)?.display_name ?? UNKNOWN_PLAYER;
 }
 
-/** «Саша (вы)» — чтобы в списках себя было видно сразу. */
+/** «Саша (ты)» — чтобы в списках себя было видно сразу. */
 export function nameWithMe(
   playersById: ReadonlyMap<string, Pick<Player, 'display_name'>>,
   id: string,
   meId: string,
 ): string {
   const name = playerName(playersById, id) ?? UNKNOWN_PLAYER;
-  return id === meId ? `${name} (вы)` : name;
+  return id === meId ? `${name} (ты)` : name;
 }

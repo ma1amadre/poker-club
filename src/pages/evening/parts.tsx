@@ -273,7 +273,7 @@ export function EventFeed({
     <Section
       title={title}
       aside={pluralWithNumber(feed.length, ['запись', 'записи', 'записей'])}
-      footer={onVoid ? 'Чтобы отменить запись, нажмите на неё.' : undefined}
+      footer={onVoid ? 'Чтобы отменить запись, нажми на неё.' : undefined}
     >
       <List aria-label={title}>
         {shown.map((event) => (

@@ -131,14 +131,20 @@ export function useEveningActions(model: EveningModel): EveningActions {
                 const l = describeEvent(e, current.nameOf, formatRub);
                 return `«${l.title}${l.detail ? `, ${l.detail}` : ''}», ${formatTime(e.at)}`;
               })
-              .join('; ')}. Если она тоже лишняя — отмените и её.`
+              .join('; ')}. Если она тоже лишняя — отмени и её.`
+          : '';
+      // Миграция 008: любая правка журнала снимает «Расчёт закрыт».
+      const settledText =
+        current.evening.status === 'settled' && event.type !== 'finish'
+          ? ' Закрытый расчёт откроется — его нужно будет закрыть заново.'
           : '';
       const ok = await confirm({
         title: copy.title ?? 'Отменить запись?',
         message:
           (copy.message ??
             `${line.title}${line.detail ? ` (${line.detail})` : ''}, ${formatTime(event.at)}. Запись останется в ленте зачёркнутой.${consequence}`) +
-          revivedText,
+          revivedText +
+          settledText,
         confirmText: copy.confirmText ?? 'Отменить запись',
         cancelText: 'Оставить',
         danger: true,
@@ -203,7 +209,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
       if (rejected) {
         toast.show(`${REJECTED_TITLE[type] ?? 'Запись не принята'}: ${rejected.message}`, {
           tone: 'caution',
-          detail: `Запись пришла на сервер в ${formatTime(record.at)} и помечена в ленте «Не принято». Если она лишняя — отмените её.`,
+          detail: `Запись пришла на сервер в ${formatTime(record.at)} и помечена в ленте «Не принято». Если она лишняя — отмени её.`,
           action: { label: 'Отменить запись', onClick: () => void undo(record.id) },
         });
         return null;
