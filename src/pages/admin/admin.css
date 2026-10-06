@@ -1,0 +1,285 @@
+/*
+ * Админка: раскладка форм и списков поверх кита и «Материи». Только её токены: цвет — семантика
+ * (surface, line, ink-muted, critical…), отступы — space-*, форма — --m-r-*, движение — --m-dur /
+ * --m-ease. Префикс adm- — только этот раздел.
+ */
+
+/* ---------- Раскладка ---------- */
+
+.adm-tab {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.adm-form {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* Поля внутри группы формы — space-4: подпись поля не должна липнуть к предыдущему полю. */
+.adm-form .ui-section {
+  gap: var(--space-4);
+}
+
+.adm-grid-2,
+.adm-grid-3,
+.adm-grid-trigger {
+  display: grid;
+  gap: var(--space-3);
+  align-items: start;
+  min-width: 0;
+}
+.adm-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.adm-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.adm-grid-trigger {
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-2);
+}
+
+/*
+ * На самых узких экранах подсказки двух колонок не помещаются — колонки встают друг под друга;
+ * четыре вкладки помещаются целиком, если сузить их поля до space-2.
+ */
+@media (max-width: 359px) {
+  .adm-grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .adm-page .m-tab {
+    padding-inline: var(--space-2);
+  }
+  .adm-page .m-tab::after {
+    left: var(--space-2);
+    right: var(--space-2);
+  }
+}
+
+/* Название и бейдж в строке списка: бейдж переносится под имя, а не сжимает подпись. */
+.adm-title-badge {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.adm-actions {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.adm-actions__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.adm-muted {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.adm-strong {
+  margin: 0;
+  font-weight: 600;
+}
+
+.adm-readonly {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border-radius: var(--m-r-control);
+}
+
+.adm-subtitle {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.adm-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--ink-muted);
+}
+.adm-note .m-icon {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* Ошибка у составного блока (строка уровня, доли призовых): иконка + текст critical. */
+.adm-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin: 0;
+  color: var(--critical);
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+}
+.adm-error .m-icon {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* ---------- Подсказка «Как узнать ID группы» ---------- */
+
+.adm-steps {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--ink);
+}
+
+.adm-code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Призовые ---------- */
+
+.adm-payouts {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.adm-payout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.adm-sum {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.adm-sum--ok {
+  color: var(--positive);
+}
+.adm-sum--bad {
+  color: var(--critical);
+}
+
+/* ---------- Уровни: строки с разделителем line, не карточки ---------- */
+
+.adm-levels {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--m-r-card);
+}
+
+.adm-levels > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.adm-level {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-4);
+}
+
+.adm-level__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--m-control-h);
+  margin-right: calc(-1 * var(--space-2));
+}
+
+.adm-level__title {
+  margin: 0;
+  font-size: var(--m-body-size);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.adm-level__meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--m-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Где закрываются ребаи — полоса между уровнями. */
+.adm-marker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+}
+.adm-marker .m-icon {
+  flex: none;
+}
+.adm-levels > .adm-marker:first-child {
+  border-radius: var(--m-r-card) var(--m-r-card) 0 0;
+}
+.adm-levels > .adm-marker:last-child {
+  border-radius: 0 0 var(--m-r-card) var(--m-r-card);
+}
+
+/* ---------- Шторка игрока ---------- */
+
+.adm-rename,
+.adm-switches,
+.adm-guest {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.adm-switches {
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.adm-guest {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+/* ---------- Загрузка списка ---------- */
+
+.adm-skeleton {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.adm-skeleton__list {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.adm-skeleton__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.adm-skeleton__text {
+  flex: 1 1 auto;
+  display: grid;
+  gap: var(--space-2);
+}

@@ -1,6 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { cn } from '../shared/lib';
-import { AlertIcon, Button } from '../shared/ui';
+import { Button } from '../shared/ui';
+import { AppScreen } from './screens';
 
 interface Props {
   children: ReactNode;
@@ -41,31 +41,36 @@ export class ErrorBoundary extends Component<Props, State> {
 
     const isChunkError = CHUNK_ERROR_RE.test(error.message);
     return (
-      <div
-        className={cn('app-screen', 'app-screen--error', this.props.inline && 'app-screen--inline')}
+      <AppScreen
         role="alert"
-      >
-        <AlertIcon className="app-screen__icon" size={48} />
-        <h1 className="app-screen__title">
-          {isChunkError ? 'Вышло обновление' : 'Что-то пошло не так'}
-        </h1>
-        <p className="app-screen__text">
-          {isChunkError
-            ? 'Приложение обновилось, пока было открыто. Перезагрузите его.'
-            : 'Экран не смог отрисоваться. Попробуйте ещё раз или вернитесь на главную.'}
-        </p>
-        {import.meta.env.DEV && <pre className="app-screen__details">{error.message}</pre>}
-        <div className="app-screen__actions">
-          <Button size="lg" block onClick={() => window.location.reload()}>
-            Перезагрузить
-          </Button>
-          {!isChunkError && (
-            <Button variant="plain" block onClick={this.goHome}>
-              На главную
+        error={!isChunkError}
+        inline={this.props.inline}
+        icon={isChunkError ? 'refresh-cw' : 'alert-triangle'}
+        title={isChunkError ? 'Вышло обновление' : 'Экран не открылся'}
+        text={
+          isChunkError
+            ? 'Приложение обновилось, пока было открыто. Перезагрузите его — данные не пропадут.'
+            : 'Сбой в интерфейсе. Перезагрузите приложение или вернитесь на главную.'
+        }
+        details={import.meta.env.DEV ? error.message : undefined}
+        actions={
+          <>
+            <Button
+              variant="primary"
+              icon="refresh-cw"
+              block
+              onClick={() => window.location.reload()}
+            >
+              Перезагрузить приложение
             </Button>
-          )}
-        </div>
-      </div>
+            {!isChunkError && (
+              <Button variant="ghost" block onClick={this.goHome}>
+                Вернуться на главную
+              </Button>
+            )}
+          </>
+        }
+      />
     );
   }
 }

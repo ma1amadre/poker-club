@@ -1,44 +1,39 @@
-import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
+import { cn } from '../lib/cn';
+import { Icon } from './Icon';
 
-export interface FieldProps {
+export interface FieldGroupProps {
+  /** Подпись над группой (legend) — всегда видна. */
   label: ReactNode;
   hint?: ReactNode;
+  /** Что не так и как исправить: «Выберите хотя бы одного игрока». */
   error?: ReactNode;
-  /** Одно поле ввода: input / select / textarea. id и aria-describedby проставляются сами. */
-  children: ReactElement<{ id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean }>;
+  className?: string;
+  children: ReactNode;
 }
 
-/** Подпись, подсказка и ошибка для поля формы (админка, имя игрока, подпись к голосу). */
-export function Field({ label, hint, error, children }: FieldProps) {
+/**
+ * Подпись, подсказка и ошибка вокруг составного контрола (PlayerPicker, ряд кнопок) — в анатомии
+ * Field «Материи». Для обычного ввода — Field, для выбора из списка — Select.
+ */
+export function FieldGroup({ label, hint, error, className, children }: FieldGroupProps) {
   const id = useId();
-  const hintId = `${id}-hint`;
-  const errorId = `${id}-error`;
-  const describedBy =
-    [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(' ') || undefined;
-  const control = isValidElement(children)
-    ? cloneElement(children, {
-        id: children.props.id ?? id,
-        'aria-describedby': describedBy,
-        'aria-invalid': error ? true : undefined,
-      })
-    : children;
-
+  const message = error || hint;
+  const messageId = message ? `${id}-msg` : undefined;
   return (
-    <div className="ui-field">
-      <label className="ui-field__label" htmlFor={children.props.id ?? id}>
-        {label}
-      </label>
-      {control}
-      {hint && (
-        <span id={hintId} className="ui-field__hint">
-          {hint}
-        </span>
+    <fieldset
+      className={cn('m-field', 'ui-fieldgroup', Boolean(error) && 'm-field--error', className)}
+      aria-describedby={messageId}
+      aria-invalid={error ? true : undefined}
+    >
+      <legend className="m-field-label">{label}</legend>
+      {children}
+      {message && (
+        <p id={messageId} className="m-field-msg" role={error ? 'alert' : undefined}>
+          {error && <Icon name="alert-circle" size={14} />}
+          <span>{message}</span>
+        </p>
       )}
-      {error && (
-        <span id={errorId} className="ui-field__error" role="alert">
-          {error}
-        </span>
-      )}
-    </div>
+    </fieldset>
   );
 }

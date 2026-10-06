@@ -1,27 +1,29 @@
 import type { ReactNode } from 'react';
 import { errorMessage } from '../api/errors';
-import { cn } from '../lib/cn';
 import { Button } from './Button';
-import { AlertIcon, ChipIcon } from './icons';
+import { EmptyState, type MateriaIconName } from './materia';
 
 export interface EmptyProps {
-  icon?: ReactNode;
+  /**
+   * zero — ещё ничего нет (заголовок-приглашение и действие, которое создаёт первый элемент),
+   * no-results — фильтр ничего не нашёл, error — не удалось загрузить (лучше ErrorView).
+   */
+  kind?: 'zero' | 'no-results' | 'error';
+  /** Иконка из набора «Материи» вместо стандартной для kind. */
+  icon?: MateriaIconName;
   title: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
+  secondaryAction?: ReactNode;
   className?: string;
 }
 
-/** Пустое состояние: «Вечеров пока не было» + что сделать дальше. */
-export function Empty({ icon, title, description, action, className }: EmptyProps) {
-  return (
-    <div className={cn('ui-empty', className)}>
-      <span className="ui-empty__icon">{icon ?? <ChipIcon size={40} />}</span>
-      <p className="ui-empty__title">{title}</p>
-      {description && <p className="ui-empty__description">{description}</p>}
-      {action && <div className="ui-empty__action">{action}</div>}
-    </div>
-  );
+/**
+ * Пустое состояние — EmptyState «Материи»: объясняет себя и предлагает следующий шаг
+ * («Вечеров ещё не было» → «Назначить вечер»). Без «Здесь пока пусто».
+ */
+export function Empty({ kind = 'zero', description, ...rest }: EmptyProps) {
+  return <EmptyState kind={kind} text={description} {...rest} />;
 }
 
 export interface ErrorViewProps {
@@ -31,27 +33,26 @@ export interface ErrorViewProps {
   className?: string;
 }
 
-/** Ошибка загрузки данных с кнопкой «Повторить» — для isError у запросов. */
+/** Ошибка загрузки данных (isError у запроса): что случилось и «Повторить загрузку». */
 export function ErrorView({
   error,
-  title = 'Не удалось загрузить',
+  title = 'Не удалось загрузить данные',
   onRetry,
   className,
 }: ErrorViewProps) {
   return (
-    <div className={cn('ui-empty', 'ui-empty--error', className)} role="alert">
-      <span className="ui-empty__icon">
-        <AlertIcon size={40} />
-      </span>
-      <p className="ui-empty__title">{title}</p>
-      <p className="ui-empty__description">{errorMessage(error)}</p>
-      {onRetry && (
-        <div className="ui-empty__action">
-          <Button variant="secondary" onClick={onRetry}>
-            Повторить
+    <EmptyState
+      kind="error"
+      title={title}
+      text={errorMessage(error)}
+      className={className}
+      action={
+        onRetry ? (
+          <Button icon="refresh-cw" onClick={onRetry}>
+            Повторить загрузку
           </Button>
-        </div>
-      )}
-    </div>
+        ) : undefined
+      }
+    />
   );
 }

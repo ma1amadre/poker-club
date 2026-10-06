@@ -145,6 +145,17 @@ export async function notifyEveningFinished(eveningId: string): Promise<NotifyOu
   return data.outcome;
 }
 
+/**
+ * Создать гостя и сразу посадить его за стол (join) — миграция 006. Права как у add_event для
+ * join: банкир вечера или админ. Возвращает id нового игрока.
+ */
+export async function addGuest(eveningId: string, name: string): Promise<string> {
+  const { data, error } = await supabase.rpc('add_guest', { p_evening: eveningId, p_name: name });
+  if (error) throw toError(error);
+  if (typeof data !== 'string') throw new Error('Сервер не вернул id гостя. Повторите попытку.');
+  return data;
+}
+
 export async function setMyName(name: string): Promise<void> {
   const { error } = await supabase.rpc('set_my_name', { p_name: name });
   if (error) throw toError(error);
@@ -185,6 +196,19 @@ export function useVoidEvent(eveningId: string) {
           e.id === eventId ? { ...e, voided: true, voidedAt: new Date().toISOString() } : e,
         ),
       );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
+  });
+}
+
+export function useAddGuest(eveningId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => addGuest(eveningId, name),
+    onSuccess: () => {
+      // Новый игрок нужен в справочнике (имя в ленте), новый join — в журнале.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.players });
       void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
       invalidateEvening(queryClient, eveningId);
     },

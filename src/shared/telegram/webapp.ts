@@ -4,24 +4,6 @@
 
 export type ColorScheme = 'light' | 'dark';
 
-export interface TelegramThemeParams {
-  bg_color?: string;
-  text_color?: string;
-  hint_color?: string;
-  link_color?: string;
-  button_color?: string;
-  button_text_color?: string;
-  secondary_bg_color?: string;
-  header_bg_color?: string;
-  bottom_bar_bg_color?: string;
-  accent_text_color?: string;
-  section_bg_color?: string;
-  section_header_text_color?: string;
-  section_separator_color?: string;
-  subtitle_text_color?: string;
-  destructive_text_color?: string;
-}
-
 export interface TelegramUser {
   id: number;
   first_name: string;
@@ -67,7 +49,6 @@ export interface TelegramWebApp {
   version: string;
   platform: string;
   colorScheme: ColorScheme;
-  themeParams: TelegramThemeParams;
   isExpanded: boolean;
   viewportHeight: number;
   viewportStableHeight: number;
@@ -77,8 +58,11 @@ export interface TelegramWebApp {
   expand(): void;
   close(): void;
   isVersionAtLeast(version: string): boolean;
+  /** '#RRGGBB' (с 6.1) или ключ темы Telegram. */
   setHeaderColor(color: string): void;
   setBackgroundColor(color: string): void;
+  /** Цвет нижней панели Telegram, с 7.10. */
+  setBottomBarColor?(color: string): void;
   disableVerticalSwipes?(): void;
   openLink(url: string, options?: { try_instant_view?: boolean }): void;
   openTelegramLink(url: string): void;
@@ -103,7 +87,7 @@ export function isInTelegram(): boolean {
 }
 
 /** Метод SDK есть в этой версии клиента (иначе SDK лишь пишет warning в консоль). */
-function supports(version: string): boolean {
+export function supports(version: string): boolean {
   const app = getWebApp();
   return Boolean(app && isInTelegram() && app.isVersionAtLeast(version));
 }
@@ -128,14 +112,10 @@ export function getStartParam(): string | null {
   }
 }
 
-/** Цветовая схема: в Telegram — схема клиента, в браузере — системная. */
+/** Цветовая схема: в Telegram — схема клиента (светлая/тёмная), в браузере — системная. */
 export function getColorScheme(): ColorScheme {
   if (isInTelegram()) return getWebApp()?.colorScheme ?? 'light';
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-export function getThemeParams(): TelegramThemeParams {
-  return isInTelegram() ? (getWebApp()?.themeParams ?? {}) : {};
 }
 
 export function ready(): void {
@@ -143,11 +123,8 @@ export function ready(): void {
   const app = getWebApp();
   app?.ready();
   app?.expand();
-  // Фон и шапка Telegram в цвет страницы, чтобы при оттягивании не мелькал чужой цвет.
-  if (supports('6.1')) {
-    app?.setBackgroundColor('secondary_bg_color');
-    app?.setHeaderColor('secondary_bg_color');
-  }
+  // Цвета шапки, фона и нижней панели Telegram выставляет src/app/useTheme.ts — из токена ground
+  // «Материи», а не из темы Telegram.
   // Свайп вниз в списках иначе сворачивает Mini App посреди ввода события.
   if (supports('7.7')) app?.disableVerticalSwipes?.();
 }

@@ -54,6 +54,9 @@ export const EVENING_STATUS_META: Record<EveningStatus, { title: string }> = {
   cancelled: { title: 'Отменён' },
 };
 
+/** Порядок ответов в списках: идут, под вопросом, не ответили, не идут. */
+export const RSVP_ORDER: Record<RsvpStatus | 'none', number> = { yes: 0, maybe: 1, none: 2, no: 3 };
+
 export const RSVP_STATUS_META: Record<RsvpStatus, { title: string }> = {
   yes: { title: 'Иду' },
   maybe: { title: 'Под вопросом' },

@@ -28,6 +28,7 @@ supabase/
     cron-tick/index.ts
 src/
   main.tsx, app/*, pages/*, shared/{supabase,telegram,auth,api,ui,lib}/*
+  vendor/materia/*               # вендоренная «Материя» (scripts/sync-materia.mjs)
 scripts/                         # node-скрипты разработки
 ```
 
@@ -181,6 +182,9 @@ export interface EveningState {
 | `predictions` | pk `(evening_id, player_id)`, `winner_id uuid → players`, `first_out_id uuid → players`, `updated_at` |
 | `votes` | pk `(evening_id, voter_id, category)`, `category text check in ('hand','bluff','badbeat')`, `nominee_id uuid → players`, `caption text check (char_length <= 200)`, `photo_path text`, `created_at`; `check (voter_id <> nominee_id)` |
 
+Индексы-ограничения: `evenings_one_per_club_day_idx` — unique по `((scheduled_at at time zone 'Europe/Moscow')::date)`
+`where status <> 'cancelled'`: не больше одного неотменённого вечера на московскую дату (вставка второго → 23505). Миграция 006.
+
 Хелперы (security definer, stable): `current_player_id() → uuid` (по `auth.uid()`, только `is_active`),
 `is_admin() → bool`, `is_banker(evening uuid) → bool`, `is_participant(evening uuid, player uuid) → bool`
 (есть не-voided join).
@@ -190,6 +194,10 @@ export interface EveningState {
   После `finished` банкир может добавлять только `payment`; остальное — только админ (правка закрытого вечера).
   Побочные эффекты: первый `timer_start` → `status='live'`, `started_at=now()`; `finish` →
   `status='finished'`, `finished_at=now()`, `voting_closes_at=now()+interval '24 hours'`.
+- `add_guest(p_evening uuid, p_name text) → uuid` — банкир вечера или админ (права как у `add_event` для `join`):
+  создаёт игрока `is_guest = true` (имя 1–40 символов, пробелы схлопываются) и сразу добавляет его `join`
+  в этот вечер (через `add_event`). Возвращает id гостя. Миграция 006. Клиент — `addGuest` / `useAddGuest`
+  в `src/shared/api/rpc.ts`.
 - `void_event(p_event bigint) → void` — те же права; отмена `finish` возвращает `status='live'`
   и обнуляет finished_at/voting_closes_at.
 - `mark_settled(p_evening uuid)` / `unmark_settled` — банкир или админ; `status='settled'`.
@@ -262,12 +270,41 @@ export interface EveningState {
   домен `ma1amadre.github.io` общий с mrgn-board. В dev-режиме вне Telegram — экран выбора тестового
   игрока: initData подписывается в браузере ключом `VITE_DEV_BOT_TOKEN` (тот же фейковый токен, что
   в `supabase/functions/.env` локально); код dev-входа существует только под `import.meta.env.DEV`.
-- Тема: CSS-переменные Telegram (`--tg-theme-*`, их выставляет telegram-web-app.js) с фолбэками.
-  Никакого `dangerouslySetInnerHTML` и сырого HTML из пользовательских данных.
+- Дизайн-система — «Материя» (собственная система пользователя, исходник вне репо: `D:/dev/materia`).
+  Её сборка **вендорится** в `src/vendor/materia/` (`materia.mjs` + `materia.d.mts`, `materia.css` —
+  шрифты Google Fonts, токены всех регистров и стили компонентов одним листом; `tokens.css` — справочно,
+  уже вшит в `materia.css`). Обновление — `node scripts/sync-materia.mjs [путь]`, руками не править.
+  Порядок стилей в `main.tsx`: `materia.css` → `styles/base.css` (safe-area Telegram `--pc-safe-*`,
+  `--pc-app-height`, на тач-экранах `--m-control-h` = 48 px) → `styles/app.css`; стили кита —
+  `src/shared/ui/ui.css`, только на переменных «Материи».
+- Тема — регистр «Материи» на `<html data-theme>` (`src/app/useTheme.ts`): всё приложение — Кобальт,
+  `kobalt` / `kobalt-dark` по `Telegram.WebApp.colorScheme` (вне Telegram — по `prefers-color-scheme`),
+  подписка на `themeChanged`; табло `/board/:token` — `yantar` (`ThemeScope` в `routes.tsx`, при уходе
+  регистр возвращается). Один экран — один регистр. Цвета Telegram-темы (`--tg-theme-*`) **не
+  используются**; наоборот, шапку, фон и нижнюю панель Telegram красим в токен `ground`
+  (`setHeaderColor` с 6.9, `setBackgroundColor` с 6.1, `setBottomBarColor` с 7.10).
+- UI-кит `src/shared/ui` (импорт только из `index.ts`): компоненты «Материи» как есть (Badge, Notice,
+  Field, Select, Switch, Checkbox, RadioGroup, Dialog, Toast, Progress, Skeleton, Spinner, DataTable,
+  Accordion, Menu, StatGroup, EmptyState…), обёртки на её анатомии (Button/IconButton/ButtonLink,
+  Card, Stat/Stats, Tabs, Segmented, Avatar/AvatarGroup, Icon, Empty/ErrorView, Confirm, Toast-провайдер,
+  Amount) и своё из её токенов (Page, Section, List/ListItem, Sheet, BottomNav, PlayerPicker, FieldGroup).
+  Текст — роли `m-*`; голос: «ёлочки», ё, неразрывные пробелы в числах, кнопка = глагол + объект, одна
+  primary на экран. Витрина кита в dev: `/#/dev/kit` (переключатель kobalt/kobalt-dark) и
+  `/#/dev/kit-yantar` (табло-цифры), в прод-сборку не попадает.
+- Общие помощники экранов — `src/shared/lib` (импорт из `index.ts`; чистые модули тесты берут напрямую):
+  `format` (деньги, числа, даты, `NBSP`), `text` (склонения, места, правило очков, `capitalize`, `joinNames`,
+  `normalizeName`/`NAME_MAX` как у `set_my_name`/`add_guest`), `season` (подписи квартала), `clubTime`
+  (Москва UTC+3 ↔ UTC для форм, `nextGameSlot`/`nextGameAt` — то же правило, что `cron-tick/schedule.ts`,
+  сверяется тестом), `voting` (`votingPhase`, `participantIds` как `is_participant`), `paths`, `useNow`,
+  `useElementWidth`. Между папками `src/pages/*` разрешены только две связи: табло берёт подписи вечера
+  из `pages/evening/lib`, карточка игрока — места и чемпиона из `pages/rating/stats`; остальное общее — здесь.
+  Статус вечера везде — `EveningStatusBadge` кита; `errorMessage` показывает русские тексты RPC как есть,
+  а английские служебные сообщения Postgres/PostgREST заменяет переводом по коду (исходник — в `cause`).
+- Никакого `dangerouslySetInnerHTML` и сырого HTML из пользовательских данных.
 - Маршруты (HashRouter): `/` главная; `/evening/:id` вечер (живой экран; у банкира — пульт);
   `/evening/:id/settle` расчёт; `/evening/:id/vote` голосование; `/board/:token` табло (публичное,
   вне AuthProvider); `/rating` (сезон / деньги / всё время / оракул / зал славы); `/player/:id`;
-  `/history`; `/admin`, `/admin/evening/new`, `/admin/evening/:id`.
+  `/history`; `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
 - Время вечера: `useNow(1000)` + `replay(format, events, now)`; события вечера — запрос + Realtime-подписка
   на `evening_events` с фильтром `evening_id=eq.<id>`; табло без авторизации опрашивает `board_state` раз в 3 с.
 

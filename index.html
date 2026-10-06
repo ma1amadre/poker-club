@@ -8,6 +8,12 @@
     <meta name="robots" content="noindex, nofollow" />
     <title>Покерный клуб</title>
     <!--
+      Шрифты «Материи» грузятся @import с Google Fonts из materia.css: соединения открываем заранее,
+      чтобы текст не ждал DNS и TLS.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!--
       SDK Telegram подключается синхронно и ДО бандла: он разбирает launch-параметры из location.hash
       (tgWebAppData и др.) при загрузке, а main.tsx затем чистит hash под HashRouter.
     -->

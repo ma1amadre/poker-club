@@ -1,12 +1,27 @@
 import { createContext, useContext } from 'react';
 
-export type ToastTone = 'info' | 'success' | 'error';
+/** Тоны Toast «Материи»: info, positive (сделано), caution, critical (не получилось). */
+export type ToastTone = 'info' | 'positive' | 'caution' | 'critical';
+
+export interface ToastOptions {
+  tone?: ToastTone;
+  /** Вторая строка под заголовком (m-toast-text). */
+  detail?: string;
+  /**
+   * Сколько держать, мс. По умолчанию 5 с; critical и тосты с действием висят, пока их не закроют
+   * (правило Toast «Материи»).
+   */
+  durationMs?: number;
+  /** Одно действие одним глаголом: «Отменить», «Повторить». */
+  action?: { label: string; onClick: () => void };
+}
 
 export interface ToastApi {
-  show: (text: string, options?: { tone?: ToastTone; durationMs?: number }) => void;
-  success: (text: string) => void;
+  /** Текст — прошедшее время без «успешно»: «Ребай записан», «Событие отменено». */
+  show: (text: string, options?: ToastOptions) => void;
+  success: (text: string, options?: Omit<ToastOptions, 'tone'>) => void;
   /** Принимает и текст, и пойманную ошибку (переводится errorMessage). */
-  error: (textOrError: unknown) => void;
+  error: (textOrError: unknown, options?: Omit<ToastOptions, 'tone'>) => void;
 }
 
 export const ToastContext = createContext<ToastApi | null>(null);

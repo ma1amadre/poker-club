@@ -1,0 +1,109 @@
+/*
+ * Голосование. Только токены «Материи»: цвет — семантика, отступы — space-*, радиусы — --m-r-*
+ * и radius-*, линии — line. Ряды — grid/flex + gap.
+ */
+
+/* Обратный отсчёт: надзаголовок, число табличными цифрами, пояснение. */
+.vote-countdown {
+  display: grid;
+  gap: var(--space-1);
+}
+.vote-countdown__value {
+  margin: 0;
+  /* Секунды меняются каждый тик — ширина не должна прыгать. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Строки номинаций: подпись к голосу — не длиннее двух строк. */
+.vote-list .ui-list-item__subtitle {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Слот 40 px под иконку номинации — на одной оси с аватаром lg в соседних строках. */
+.vote-slot {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  color: var(--ink-muted);
+}
+
+/* Голос отдан: иконка с подписью для скринридера; смысл дублирует строка с номинантом. */
+.vote-done {
+  display: inline-flex;
+  color: var(--positive);
+}
+
+/*
+ * Фото к голосу: во всю ширину карточки, кадр 4:3 до загрузки и после (место под фото занято
+ * сразу — страница не прыгает, ленивая загрузка видит картинку), не выше 360 px, без растягивания.
+ */
+.vote-photo {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  max-height: 360px;
+  object-fit: cover;
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+}
+
+.vote-photo-missing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.vote-photo-edit {
+  display: grid;
+  gap: var(--space-3);
+}
+.vote-photo-edit__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Победитель номинации. */
+.vote-winner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.vote-winner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.vote-winner__text .m-h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Голос за победителя: фото, подпись, автор. Отделён линией line, как строка списка. */
+.vote-note {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+.vote-note__caption {
+  margin: 0;
+  max-width: var(--measure);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.vote-note__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+}

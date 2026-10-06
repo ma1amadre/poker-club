@@ -436,6 +436,7 @@ export type Database = {
           isSetofReturn: false;
         };
       };
+      add_guest: { Args: { p_evening: string; p_name: string }; Returns: string };
       board_state: { Args: { p_token: string }; Returns: Json };
       cast_vote: {
         Args: {

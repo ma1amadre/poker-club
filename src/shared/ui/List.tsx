@@ -1,16 +1,20 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/cn';
-import { ChevronRightIcon } from './icons';
+import { Icon } from './Icon';
 
 export interface ListProps {
-  /** Без подложки — для списков внутри Card или Sheet. */
+  /** Без рамки и подложки — для списков внутри Card или Sheet. */
   plain?: boolean;
   className?: string;
   children?: ReactNode;
   'aria-label'?: string;
 }
 
+/**
+ * Однородный список (игроки, вечера, события журнала) — по «Материи» это строки с разделителем
+ * line, а не карточки. По умолчанию — одна панель surface с рамкой line, как у DataTable.
+ */
 export function List({ plain, className, children, ...rest }: ListProps) {
   return (
     <ul className={cn('ui-list', plain && 'ui-list--plain', className)} {...rest}>
@@ -20,24 +24,26 @@ export function List({ plain, className, children, ...rest }: ListProps) {
 }
 
 export interface ListItemProps {
-  /** Слева: аватар, иконка, место. */
+  /** Слева: Avatar, Icon, место. */
   before?: ReactNode;
   title: ReactNode;
+  /** Вторая строка m-small: «2 ребая · вылетел на 4-м уровне». */
   subtitle?: ReactNode;
-  /** Справа: значение, бейдж, переключатель. */
+  /** Справа: Amount, Badge, Switch, число (m-mono). */
   after?: ReactNode;
-  /** Ссылка внутри приложения (маршрут HashRouter). */
+  /** Маршрут приложения (HashRouter) — строка становится ссылкой. */
   to?: string;
   onClick?: () => void;
-  /** Стрелка «перейти»; по умолчанию — у ссылок. */
+  /** Шеврон «перейти»; по умолчанию — у ссылок. */
   chevron?: boolean;
   disabled?: boolean;
   className?: string;
 }
 
 /**
- * Строка списка. Становится ссылкой (to), кнопкой (onClick) или просто строкой — так у каждой
- * интерактивной строки правильная семантика и тач-цель не меньше 44px.
+ * Строка списка. Становится ссылкой (to), кнопкой (onClick) или просто строкой — у каждой
+ * интерактивной строки правильная семантика и тач-цель не ниже 48 px. Наведение — surface-sunken,
+ * как у строки таблицы «Материи».
  */
 export function ListItem({
   before,
@@ -65,7 +71,9 @@ export function ListItem({
         {subtitle && <span className="ui-list-item__subtitle">{subtitle}</span>}
       </span>
       {after !== undefined && <span className="ui-list-item__after">{after}</span>}
-      {(chevron ?? Boolean(to)) && <ChevronRightIcon className="ui-list-item__chevron" size={20} />}
+      {(chevron ?? Boolean(to)) && (
+        <Icon name="chevron-right" size={20} className="ui-list-item__chevron" />
+      )}
     </>
   );
 
@@ -85,9 +93,5 @@ export function ListItem({
   } else {
     inner = <div className={classes}>{content}</div>;
   }
-  return (
-    <li className={cn('ui-list-row', before !== undefined && 'ui-list-row--with-before')}>
-      {inner}
-    </li>
-  );
+  return <li className="ui-list-row">{inner}</li>;
 }

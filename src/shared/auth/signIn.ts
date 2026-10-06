@@ -15,6 +15,8 @@ export type AuthErrorKind =
   | 'signature'
   /** tg-auth: 403, не участник группы клуба. */
   | 'not_member'
+  /** tg-auth: 403 no_group — клуб ещё не подключил группу, войти может только админ. */
+  | 'no_group'
   /** Вход прошёл, но RLS не видит игрока: он отключён админом (is_active = false). */
   | 'inactive'
   /** Не заданы VITE_SUPABASE_URL / ключ. */
@@ -27,6 +29,7 @@ export const DENIED_KINDS: ReadonlySet<AuthErrorKind> = new Set([
   'no_telegram',
   'signature',
   'not_member',
+  'no_group',
   'inactive',
 ]);
 
@@ -95,7 +98,7 @@ async function callTgAuth(initData: string): Promise<string> {
       }
       if (status === 403 && code === 'no_group') {
         throw new AuthError(
-          'not_member',
+          'no_group',
           'Клуб ещё не подключил группу — вход пока только у админа.',
           details,
         );

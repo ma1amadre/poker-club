@@ -1,6 +1,6 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { useAuth } from '../shared/auth';
-import { Button, PageSpinner } from '../shared/ui';
+import { Button, PageSkeleton } from '../shared/ui';
 import { AuthErrorScreen, DeniedScreen, SplashScreen } from './screens';
 
 // Экран выбора тестового игрока существует только в dev: в прод-сборке import.meta.env.DEV —
@@ -16,7 +16,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (auth.status === 'denied') {
     if (DevLoginPage && auth.error?.kind === 'no_telegram') {
       return (
-        <Suspense fallback={<PageSpinner />}>
+        <Suspense fallback={<PageSkeleton />}>
           <DevLoginPage />
         </Suspense>
       );
@@ -31,7 +31,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         onRetry={auth.retry}
         extraActions={
           import.meta.env.DEV ? (
-            <Button variant="plain" block onClick={() => void auth.signOut()}>
+            <Button variant="ghost" block onClick={() => void auth.signOut()}>
               Сменить тестового игрока
             </Button>
           ) : undefined

@@ -1,0 +1,254 @@
+/*
+ * Экраны вечера и расчёта (Кобальт). Только токены и роли «Материи»: цвета — семантика,
+ * отступы — space-N, радиусы и тени — роли регистра, движение — токены dur и ease.
+ */
+
+/* ---------- Табло уровня на телефоне ---------- */
+
+.ev-clock {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ev-clock__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+/* Главное число экрана: m-figure регистра на ступень крупнее (64 px из 40), табличные цифры. */
+.ev-clock__time {
+  font-size: calc(var(--m-figure-size) * 1.6);
+  color: var(--ink);
+}
+
+.ev-clock__time--paused {
+  color: var(--ink-muted);
+}
+
+.ev-clock__blinds {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.ev-clock__blind {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ev-clock__blind-now {
+  font-size: var(--m-h2-size);
+}
+
+.ev-clock__blind-next {
+  font-size: var(--m-h3-size);
+  color: var(--ink-muted);
+}
+
+.ev-clock__rebuy {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+}
+
+.ev-clock__rebuy .m-icon {
+  flex: none;
+  margin-top: 3px;
+}
+
+/* ---------- Пульт банкира ---------- */
+
+.ev-pult {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ev-pult__row {
+  display: grid;
+  /* 200 px: две кнопки в ряд только там, где подписи помещаются целиком. */
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--space-2);
+}
+
+.ev-pult__levels {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ev-pult__levels-label {
+  text-align: center;
+}
+
+/* ---------- Строки ---------- */
+
+.ev-place {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  font-weight: 500;
+}
+
+.ev-voided {
+  text-decoration: line-through;
+  color: var(--ink-muted);
+}
+
+.ev-row-after {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+}
+
+.ev-feed-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+}
+
+.ev-feed-icon--bust {
+  color: var(--ink);
+}
+
+/* ---------- Формат ---------- */
+
+.ev-facts {
+  display: grid;
+  margin: 0;
+}
+
+.ev-facts__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.ev-facts__row + .ev-facts__row {
+  border-top: 1px solid var(--line);
+}
+
+.ev-facts dt {
+  color: var(--ink-muted);
+}
+
+.ev-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Итог ---------- */
+
+.ev-winner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ev-winner__text {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ev-winner__name {
+  overflow-wrap: anywhere;
+}
+
+.ev-actions {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* ---------- Шторки ---------- */
+
+.ev-sheet-body {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.ev-guest {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.ev-guest > .m-field {
+  width: 100%;
+}
+
+.ev-sheet-actions {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* QR на табло: всегда тёмный код на светлом поле (токены светлого Кобальта) — так его читает любая камера. */
+.ev-qr {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+}
+
+.ev-qr__image {
+  display: block;
+  width: min(240px, 100%);
+  aspect-ratio: 1;
+  border-radius: var(--m-r-control);
+  border: 1px solid var(--line);
+  image-rendering: pixelated;
+}
+
+.ev-qr__link {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+  font-size: var(--m-small-size);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Расчёт ---------- */
+
+.ev-pay-summary {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+}
+
+.ev-subline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 0;
+}
+
+.ev-settle-sub {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.ev-subline > span {
+  white-space: nowrap;
+}
+
+.ev-sep {
+  color: var(--line-strong);
+}

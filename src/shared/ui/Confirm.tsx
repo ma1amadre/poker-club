@@ -1,13 +1,18 @@
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useBackButton } from '../telegram';
 import { Button } from './Button';
-import { Sheet } from './Sheet';
+import { Dialog } from './materia';
 
 export interface ConfirmOptions {
+  /** Вопрос с объектом: «Отменить вылет Саши?». Не «Вы уверены?». */
   title: ReactNode;
+  /** Последствия: что пропадёт и можно ли вернуть. */
   message?: ReactNode;
+  /** Тот же глагол, что в заголовке: «Отменить вылет». Не «ОК». */
   confirmText?: string;
   cancelText?: string;
-  /** Опасное действие (отмена события, удаление) — красная кнопка. */
+  /** Необратимое действие: alertdialog и кнопка danger. */
   danger?: boolean;
 }
 
@@ -15,11 +20,14 @@ export interface ConfirmProps extends ConfirmOptions {
   open: boolean;
   onConfirm: () => void;
   onCancel: () => void;
-  /** Подтверждение уже выполняется — кнопки заблокированы, шторку не закрыть. */
+  /** Подтверждение уже выполняется — кнопки заблокированы, окно не закрыть. */
   loading?: boolean;
 }
 
-/** Подтверждение необратимого или заметного действия — шторкой, чтобы палец не промахнулся. */
+/**
+ * Подтверждение — Dialog «Материи» (ловушка фокуса, Esc, возврат фокуса) + кнопка «Назад»
+ * Telegram закрывает окно. Обратимое действие не подтверждают: выполняют и дают тост «Отменить».
+ */
 export function Confirm({
   open,
   title,
@@ -31,23 +39,33 @@ export function Confirm({
   onConfirm,
   onCancel,
 }: ConfirmProps) {
-  return (
-    <Sheet open={open} onClose={onCancel} title={title} dismissible={!loading}>
-      {message && <div className="ui-confirm__message">{message}</div>}
-      <div className="ui-confirm__actions">
+  useBackButton({ enabled: open, onBack: () => !loading && onCancel() });
+  if (!open) return null;
+  // Портал: position: fixed слоя Dialog не должен зависеть от трансформаций предков.
+  return createPortal(
+    <Dialog
+      open
+      size="sm"
+      alert={danger}
+      title={title}
+      description={message}
+      dismissible={!loading}
+      onClose={loading ? undefined : onCancel}
+      className="ui-confirm"
+      actions={[
+        <Button key="cancel" variant="ghost" disabled={loading} onClick={onCancel}>
+          {cancelText}
+        </Button>,
         <Button
+          key="confirm"
           variant={danger ? 'danger' : 'primary'}
-          size="lg"
-          block
           loading={loading}
           onClick={onConfirm}
         >
           {confirmText}
-        </Button>
-        <Button variant="plain" block disabled={loading} onClick={onCancel}>
-          {cancelText}
-        </Button>
-      </div>
-    </Sheet>
+        </Button>,
+      ]}
+    />,
+    document.body,
   );
 }

@@ -1,18 +1,20 @@
-// Порядок стилей важен: токены → база → каркас; стили кита подключает src/shared/ui/index.ts.
-import './styles/tokens.css';
+// Порядок стилей важен: «Материя» (шрифты, токены всех регистров, компоненты — один лист, в нём
+// уже есть tokens.css) → база приложения → каркас; стили кита подключает src/shared/ui/index.ts.
+import './vendor/materia/materia.css';
 import './styles/base.css';
 import './styles/app.css';
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './app/App';
-import { applyColorScheme } from './app/useTheme';
+import { applyTheme, isBoardHash } from './app/useTheme';
 import { cleanLaunchHash, ready } from './shared/telegram';
 
 // До монтирования роутера: Telegram кладёт launch-параметры в hash, HashRouter принял бы их за путь.
 cleanLaunchHash();
-// Тема до первого кадра — без вспышки светлой темы у тех, у кого Telegram тёмный.
-applyColorScheme();
+// Регистр до первого кадра: без вспышки светлого Кобальта у тех, у кого Telegram тёмный, и без
+// кадра в Кобальте на табло (Янтарь).
+applyTheme(isBoardHash() ? 'yantar' : undefined);
 // ready() как можно раньше: Telegram убирает свою заглушку загрузки и показывает приложение.
 ready();
 

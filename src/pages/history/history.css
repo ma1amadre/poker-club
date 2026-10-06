@@ -1,0 +1,13 @@
+/* Экран истории. Только токены «Материи». Префикс hs-. */
+
+/* Дата и статус в одной строке; на узком экране бейдж переносится под дату. */
+.hs-title {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.hs-title__date {
+  overflow-wrap: anywhere;
+}

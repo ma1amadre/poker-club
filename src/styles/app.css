@@ -1,4 +1,4 @@
-/* Каркас приложения: раскладка, нижняя навигация, экраны входа. */
+/* Каркас приложения: раскладка и экраны входа (загрузка, нет доступа, ошибка). Токены «Материи». */
 
 .app-layout {
   flex: 1 0 auto;
@@ -6,68 +6,21 @@
   flex-direction: column;
 }
 
-/* ---------- Нижняя навигация ---------- */
-
-.app-nav {
-  position: fixed;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 50;
-  display: flex;
-  justify-content: center;
-  padding: 0 var(--safe-right) var(--safe-bottom) var(--safe-left);
-  border-top: 1px solid var(--color-separator);
-  background: var(--color-bottom-bar);
-}
-
-.app-nav__inner {
-  display: flex;
-  width: 100%;
-  max-width: 480px;
-}
-
-.app-nav__link {
-  flex: 1 1 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  min-width: 0;
-  height: var(--nav-height);
-  color: var(--color-hint);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.1;
-  text-decoration: none;
-  transition: color var(--duration-fast);
-}
-
-.app-nav__link.active {
-  color: var(--color-accent);
-}
-
-.app-nav__link:active {
-  opacity: 0.7;
-}
-
-/* ---------- Экраны входа (загрузка, нет доступа, ошибка) ---------- */
-
+/*
+ * Экран входа — анатомия EmptyState «Материи», но с h1: значок, заголовок, пояснение, действия.
+ * По левому краю (центрирование — только для коротких призывов), по вертикали — середина вьюпорта.
+ */
 .app-screen {
   flex: 1 0 auto;
   display: flex;
   flex-direction: column;
-  align-items: center;
   justify-content: center;
-  gap: var(--space-3);
   width: 100%;
-  max-width: 400px;
-  min-height: var(--app-height);
+  max-width: 440px;
+  min-height: var(--pc-app-height);
   margin: 0 auto;
-  padding: calc(var(--space-6) + var(--safe-top)) var(--space-6)
-    calc(var(--space-6) + var(--safe-bottom));
-  text-align: center;
+  padding: calc(var(--space-7) + var(--pc-safe-top)) calc(var(--space-5) + var(--pc-safe-right))
+    calc(var(--space-7) + var(--pc-safe-bottom)) calc(var(--space-5) + var(--pc-safe-left));
 }
 
 /* Ошибка экрана внутри раскладки: навигация снизу остаётся видна. */
@@ -75,45 +28,51 @@
   min-height: 60vh;
 }
 
+.app-screen__body {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+}
+
 .app-screen__icon {
-  color: var(--color-accent);
+  line-height: 0;
+  color: var(--ink-muted);
 }
 
 .app-screen--error .app-screen__icon {
-  color: var(--color-danger);
+  color: var(--critical);
 }
 
 .app-screen__title {
-  font-size: var(--text-xl);
-  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .app-screen__text {
-  color: var(--color-hint);
+  color: var(--ink-muted);
   overflow-wrap: anywhere;
 }
 
 .app-screen__details {
   max-width: 100%;
+  margin: 0;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--color-fill);
-  color: var(--color-hint);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  text-align: left;
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  font-size: var(--m-small-size);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .app-screen__actions {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: var(--space-2);
   width: 100%;
-  margin-top: var(--space-2);
+  margin-top: var(--space-3);
 }
 
-.app-splash__spinner {
-  color: var(--color-hint);
+.app-splash {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }

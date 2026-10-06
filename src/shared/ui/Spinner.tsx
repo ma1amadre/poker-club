@@ -1,34 +1,33 @@
-import { cn } from '../lib/cn';
+import { Skeleton } from './materia';
 
-export interface SpinnerProps {
-  size?: number;
-  className?: string;
-  /** Подпись для скринридера; по умолчанию «Загрузка». */
+export interface PageSkeletonProps {
+  /** Подпись для скринридера; по умолчанию «Загрузка экрана». */
   label?: string;
 }
 
-export function Spinner({ size = 20, className, label = 'Загрузка' }: SpinnerProps) {
+/**
+ * Загрузка экрана: по «Материи» на месте контента — Skeleton его формы (заголовок, строки списка),
+ * а не спиннер посреди пустоты. Появляется с задержкой: если экран открылся быстрее, мигания нет
+ * («меньше секунды — ничего не показывайте»).
+ */
+export function PageSkeleton({ label = 'Загрузка экрана' }: PageSkeletonProps) {
   return (
-    <svg
-      className={cn('ui-spinner', className)}
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      role="img"
-      aria-label={label}
-    >
-      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="3" />
-      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-/** Индикатор загрузки на весь экран страницы. */
-export function PageSpinner({ label }: { label?: string }) {
-  return (
-    <div className="ui-page-spinner" aria-busy="true">
-      <Spinner size={32} label={label} />
+    <div className="ui-page ui-page-skeleton" role="status" aria-busy="true" aria-label={label}>
+      <Skeleton width="55%" height={32} />
+      <div className="ui-page-skeleton__rows">
+        {[0, 1, 2, 3].map((row) => (
+          <div key={row} className="ui-page-skeleton__row">
+            <Skeleton circle width={40} height={40} />
+            <div className="ui-page-skeleton__text">
+              <Skeleton width="60%" height={12} />
+              <Skeleton width="35%" height={10} />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
+
+/** Старое имя: загрузка экрана теперь — скелетон, см. PageSkeleton. */
+export const PageSpinner = PageSkeleton;

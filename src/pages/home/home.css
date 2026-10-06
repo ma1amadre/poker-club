@@ -1,0 +1,154 @@
+/*
+ * Главная. Только токены «Материи»: цвет — семантика, отступы — space-*, линии — line,
+ * движение — --m-dur / --m-ease. Ряды — grid/flex + gap, без внешних отступов элементов.
+ */
+
+/* Незакрытые расчёты сверху — группа сообщений с шагом внутри компонента. */
+.home-notices {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Факты вечера: иконка 16 px + строка m-small цветом текста. */
+.home-facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.home-facts > li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.home-facts .m-icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-muted);
+}
+
+/* Разделитель частей одной карточки — линия line, как между строками списка. */
+.home-rule {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/*
+ * Ответ на анонс во всю ширину: сегменты поровну, но не уже своей подписи — «Под вопросом»
+ * не переносится на вторую строку и на 320 px (короткие сегменты отдают ему место).
+ */
+.home-rsvp.ui-seg--block .m-seg-item {
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+/* Кто идёт: стопка аватаров со счётчиком, ниже — состав по группам во всю ширину. */
+.home-going {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.home-going__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-bottom: var(--space-1);
+}
+.home-going__count {
+  margin: 0;
+  font-size: var(--m-body-size);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+/* Слот слева в строке прогноза — ширина аватара lg, чтобы иконка и фото стояли по одной оси. */
+.home-slot {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  color: var(--ink-muted);
+}
+
+/* Идущая игра. */
+.home-live__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.home-clock {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+/* Подпись-указатель внутри кликабельной карточки (кнопок в ней быть не должно). */
+.home-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--m-small-size);
+  font-weight: 500;
+  color: var(--link);
+}
+
+.home-skeleton {
+  display: grid;
+  gap: var(--space-3);
+}
+
+/*
+ * Метрики внутри карточки: у кита колонка от 132 px, и на 320 px (внутри карточки 248 px)
+ * метрики вставали в один столбец. С 104 px помещаются две — числа уже идут ступенью m-h2.
+ */
+.home-stats.ui-stats {
+  grid-template-columns: repeat(auto-fit, minmax(min(104px, 100%), 1fr));
+}
+
+/* Победитель последнего вечера. */
+.home-winner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.home-winner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.home-winner__text .m-h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.home-winner__icon {
+  flex: none;
+  color: var(--ink-muted);
+}
+
+.home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.home-season-empty {
+  display: grid;
+  gap: var(--space-1);
+}
+.home-season-empty .m-h3 {
+  margin: 0;
+}

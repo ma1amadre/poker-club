@@ -1,10 +1,188 @@
-// ЗАГЛУШКА каркаса: страницу пишет агент страниц. Маршрут и lazy-импорт — в src/app/routes.tsx.
-import { Empty, Page } from '../../shared/ui';
+import { useMemo } from 'react';
+import {
+  type ClubHistory,
+  type Evening,
+  type EveningStatus,
+  useClubHistory,
+  useEveningEvents,
+  useEvenings,
+} from '../../shared/api';
+import { useAuth } from '../../shared/auth';
+import {
+  eveningsCount,
+  formatDate,
+  formatRub,
+  formatSeason,
+  NBSP,
+  paths,
+  playersCount,
+} from '../../shared/lib';
+import {
+  ButtonLink,
+  Empty,
+  ErrorView,
+  EveningStatusBadge,
+  List,
+  ListItem,
+  Page,
+  PageSkeleton,
+  Section,
+} from '../../shared/ui';
+import './history.css';
+import { eveningTotals, groupHistory, type EveningTotals } from './stats';
 
+/** В истории — идущий вечер и прошедшие; анонсы показывает главная. */
+const HISTORY_STATUSES = [
+  'live',
+  'finished',
+  'settled',
+  'cancelled',
+] as const satisfies readonly EveningStatus[];
+
+/** /history — вечера клуба по сезонам, новые сверху; идущий — отдельно сверху. */
 export default function HistoryPage() {
+  const evenings = useEvenings({ status: HISTORY_STATUSES });
+  const history = useClubHistory();
+
+  if (evenings.isPending || history.isPending) return <PageSkeleton label="Загружаем историю" />;
+  if (evenings.isError || history.isError) {
+    return (
+      <Page title="История">
+        <ErrorView
+          error={evenings.error ?? history.error}
+          title="История не загрузилась"
+          onRetry={() => {
+            if (evenings.isError) void evenings.refetch();
+            if (history.isError) void history.refetch();
+          }}
+        />
+      </Page>
+    );
+  }
+  return <History evenings={evenings.data} history={history.data} />;
+}
+
+function History({ evenings, history }: { evenings: Evening[]; history: ClubHistory }) {
+  const { isAdmin } = useAuth();
+  const layout = useMemo(() => groupHistory(evenings), [evenings]);
+  const names = useMemo(
+    () => new Map(history.players.map((p) => [p.id, p.display_name])),
+    [history.players],
+  );
+  // Фонд и состав завершённых вечеров — replay домена по журналу из истории клуба.
+  const totals = useMemo(() => {
+    const map = new Map<string, EveningTotals>();
+    for (const e of evenings) {
+      const events = history.eventsByEvening.get(e.id);
+      if (events) map.set(e.id, eveningTotals(e.format, events));
+    }
+    return map;
+  }, [evenings, history.eventsByEvening]);
+
+  const empty = layout.live.length === 0 && layout.seasons.length === 0;
+
   return (
-    <Page title="История">
-      <Empty title="Экран в разработке" description="Прошедшие вечера клуба." />
+    <Page title="История" subtitle="Вечера клуба по сезонам, новые сверху">
+      {empty ? (
+        <Empty
+          icon="calendar"
+          title="Вечеров ещё не было"
+          description="Вечер появится здесь, когда банкир запустит таймер, а после игры — с победителем и фондом."
+          action={
+            isAdmin ? (
+              <ButtonLink to={paths.adminEveningNew} icon="plus">
+                Назначить вечер
+              </ButtonLink>
+            ) : undefined
+          }
+        />
+      ) : (
+        <>
+          {layout.live.length > 0 && (
+            <Section title="Сейчас">
+              <List aria-label="Идущие вечера">
+                {layout.live.map((e) => (
+                  <LiveRow key={e.id} evening={e} />
+                ))}
+              </List>
+            </Section>
+          )}
+
+          {layout.seasons.map((group) => {
+            const played = group.evenings.filter((e) => e.status !== 'cancelled').length;
+            return (
+              <Section
+                key={group.seasonKey}
+                title={formatSeason(group.seasonKey)}
+                aside={played > 0 ? eveningsCount(played) : undefined}
+              >
+                <List aria-label={`Вечера сезона «${formatSeason(group.seasonKey)}»`}>
+                  {group.evenings.map((e) => (
+                    <ListItem
+                      key={e.id}
+                      to={paths.evening(e.id)}
+                      title={<EveningTitle evening={e} />}
+                      subtitle={pastDetails(e, history, names, totals.get(e.id))}
+                    />
+                  ))}
+                </List>
+              </Section>
+            );
+          })}
+        </>
+      )}
     </Page>
+  );
+}
+
+function EveningTitle({ evening }: { evening: Evening }) {
+  return (
+    <span className="hs-title">
+      <span className="hs-title__date">{formatDate(evening.scheduled_at)}</span>
+      <EveningStatusBadge status={evening.status} />
+    </span>
+  );
+}
+
+/** Строка прошедшего вечера: победитель, участники, фонд; у отменённого — заметка админа. */
+function pastDetails(
+  evening: Evening,
+  history: ClubHistory,
+  names: ReadonlyMap<string, string>,
+  totals: EveningTotals | undefined,
+): string {
+  if (evening.status === 'cancelled') return evening.note?.trim() || 'Вечер не состоялся';
+  const summary = history.summaryById.get(evening.id);
+  const parts: string[] = [];
+  const winner = summary?.places[0];
+  if (winner) parts.push(`Победитель${NBSP}— ${names.get(winner) ?? 'игрок не найден'}`);
+  else parts.push('Итог не подсчитан: журнал вечера не сходится');
+  const players = summary?.entrants.length ?? totals?.players;
+  if (players !== undefined) parts.push(playersCount(players));
+  if (totals) parts.push(`фонд${NBSP}${formatRub(totals.prizePoolRub)}`);
+  return parts.join(' · ');
+}
+
+/** Идущий вечер: состав и фонд по живому журналу (Realtime), чтобы цифры не отставали. */
+function LiveRow({ evening }: { evening: Evening }) {
+  const events = useEveningEvents(evening.id);
+  const totals = useMemo(
+    () => (events.data ? eveningTotals(evening.format, events.data) : null),
+    [events.data, evening.format],
+  );
+
+  let details: string;
+  if (events.isError) details = 'Состав не загрузился — откройте вечер';
+  else if (!totals) details = 'Загружаем состав';
+  else if (totals.players === 0) details = 'Игроков ещё нет';
+  else
+    details = `В игре ${totals.alive} из${NBSP}${totals.players} · фонд${NBSP}${formatRub(totals.prizePoolRub)}`;
+
+  return (
+    <ListItem
+      to={paths.evening(evening.id)}
+      title={<EveningTitle evening={evening} />}
+      subtitle={evening.location ? `${evening.location} · ${details}` : details}
+    />
   );
 }

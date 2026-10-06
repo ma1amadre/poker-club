@@ -1,11 +1,12 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from '../shared/auth';
-import { PageSpinner } from '../shared/ui';
+import { PageSkeleton } from '../shared/ui';
 import { AuthGate } from './AuthGate';
 import { ErrorBoundary } from './ErrorBoundary';
 import { Layout } from './Layout';
 import { AdminOnlyDenied, NotFoundPage } from './screens';
+import { ThemeScope } from './useTheme';
 
 // Страницы грузятся лениво: Telegram открывает Mini App на мобильном интернете, и первый экран
 // не должен ждать код админки и табло.
@@ -20,14 +21,29 @@ const HistoryPage = lazy(() => import('../pages/history/HistoryPage'));
 const AdminPage = lazy(() => import('../pages/admin/AdminPage'));
 const EveningEditPage = lazy(() => import('../pages/admin/EveningEditPage'));
 
+// Витрина кита — только в dev: в прод-сборке import.meta.env.DEV — литерал false, ветки с
+// динамическим импортом вырезаются, и чанки витрины не собираются.
+const KitPage = import.meta.env.DEV ? lazy(() => import('./dev/KitPage')) : null;
+const KitYantarPage = import.meta.env.DEV ? lazy(() => import('./dev/KitYantarPage')) : null;
+
 function AdminOnly({ children }: { children: ReactNode }) {
   const { isAdmin } = useAuth();
   return isAdmin ? children : <AdminOnlyDenied />;
 }
 
+/** Экран вне AuthProvider: своя граница ошибок и загрузка. */
+function Standalone({ children }: { children: ReactNode }) {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<PageSkeleton />}>{children}</Suspense>
+    </ErrorBoundary>
+  );
+}
+
 /**
  * Маршруты из контракта (ARCHITECTURE.md → «Фронт»). Табло /board/:token — публичное, вне
- * AuthProvider: на ТВ нет Telegram, и попытка входа там не нужна. Остальное — под AuthGate.
+ * AuthProvider: на ТВ нет Telegram, и попытка входа там не нужна. Регистр табло — Янтарь
+ * (ThemeScope), при уходе с табло регистр возвращается к Кобальту. Остальное — под AuthGate.
  */
 export function AppRoutes() {
   return (
@@ -35,13 +51,35 @@ export function AppRoutes() {
       <Route
         path="/board/:token"
         element={
-          <ErrorBoundary>
-            <Suspense fallback={<PageSpinner />}>
+          <ThemeScope theme="yantar">
+            <Standalone>
               <BoardPage />
-            </Suspense>
-          </ErrorBoundary>
+            </Standalone>
+          </ThemeScope>
         }
       />
+      {KitPage && (
+        <Route
+          path="/dev/kit"
+          element={
+            <Standalone>
+              <KitPage />
+            </Standalone>
+          }
+        />
+      )}
+      {KitYantarPage && (
+        <Route
+          path="/dev/kit-yantar"
+          element={
+            <ThemeScope theme="yantar">
+              <Standalone>
+                <KitYantarPage />
+              </Standalone>
+            </ThemeScope>
+          }
+        />
+      )}
       <Route
         element={
           <AuthProvider>

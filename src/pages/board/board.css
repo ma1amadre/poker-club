@@ -1,0 +1,235 @@
+/*
+ * Табло для ТВ — регистр Янтарь (всегда тёмный): плакатные заголовки, крупные цифры, разделы через
+ * space-9. Единственный градиент — мягкое радиальное свечение accent до 16 % за главным числом
+ * (исключение из правил «Материи» именно для Янтаря). Раскладка: телефон вертикально — колонка;
+ * от 1024 px в горизонтали — таймер слева, стол и деньги справа (ТВ 1280–1920).
+ */
+
+.bd {
+  display: grid;
+  align-content: start;
+  gap: var(--space-7);
+  width: 100%;
+  max-width: var(--container-wide);
+  min-height: var(--pc-app-height);
+  margin: 0 auto;
+  padding: calc(var(--space-5) + var(--pc-safe-top)) calc(var(--space-4) + var(--pc-safe-right))
+    calc(var(--space-6) + var(--pc-safe-bottom)) calc(var(--space-4) + var(--pc-safe-left));
+  background: var(--ground);
+  color: var(--ink);
+}
+
+.bd--message {
+  align-content: center;
+  justify-items: start;
+  gap: var(--space-4);
+  max-width: var(--container-text);
+}
+
+.bd-muted {
+  color: var(--ink-muted);
+}
+
+.bd-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.bd-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.bd-tools .m-badge,
+.bd-clock__head .m-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.bd-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+}
+
+/* ---------- Таймер ---------- */
+
+.bd-clock {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.bd-clock__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.bd-glow {
+  position: relative;
+  isolation: isolate;
+  max-width: 100%;
+}
+
+.bd-glow::before {
+  content: '';
+  position: absolute;
+  inset: -40% -20%;
+  z-index: -1;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--accent) 16%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+
+/* Главное число: m-display регистра, растянутое под экран; табличные цифры, чтобы не прыгало. */
+.bd-time {
+  font-size: clamp(96px, 26vw, 200px);
+  line-height: 0.9;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  white-space: nowrap;
+  transition: color var(--dur-calm) var(--ease-stage);
+}
+
+.bd-time--paused {
+  color: var(--ink-muted);
+}
+
+.bd-blinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5) var(--space-8);
+}
+
+.bd-blinds__now,
+.bd-blinds__next {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.bd-blinds__value {
+  color: var(--ink);
+}
+
+.bd-rebuy {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: none;
+  color: var(--ink-muted);
+}
+
+.bd-rebuy .m-icon {
+  flex: none;
+  margin-top: 3px;
+}
+
+/* ---------- Стол и деньги ---------- */
+
+.bd-side {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+.bd-block {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.bd-amount {
+  font-size: var(--m-h3-size);
+}
+
+.bd-names {
+  max-width: none;
+  overflow-wrap: anywhere;
+}
+
+.bd-place {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+}
+
+.bd-wait {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-5);
+}
+
+.bd-wait .ui-list {
+  width: 100%;
+  max-width: var(--container-text);
+}
+
+.bd-foot {
+  max-width: var(--measure);
+}
+
+/* ТВ и ноутбук в горизонтали: таймер слева крупно, справа колонка со столом. */
+@media (min-width: 1024px) and (orientation: landscape) {
+  .bd {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    padding-left: calc(var(--space-7) + var(--pc-safe-left));
+    padding-right: calc(var(--space-7) + var(--pc-safe-right));
+    gap: var(--space-6);
+  }
+
+  /* Табло смотрят с дивана: основной блок — по центру экрана по вертикали. */
+  .bd-main,
+  .bd-wait {
+    align-self: center;
+  }
+
+  .bd-main {
+    grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+    align-items: center;
+    gap: var(--space-9);
+  }
+
+  /* Правая колонка читается с расстояния: текст на ступень крупнее. */
+  .bd-side .m-h3 {
+    font-size: var(--m-h2-size);
+    line-height: 1.1;
+  }
+
+  .bd-side .m-body,
+  .bd-rebuy {
+    font-size: var(--m-lede-size);
+    line-height: var(--m-lede-lh);
+  }
+
+  .bd-side .ui-list-item__title,
+  .bd-amount {
+    font-size: var(--m-h3-size);
+  }
+
+  .bd-time {
+    font-size: clamp(160px, 17vw, 340px);
+  }
+
+  .bd-blinds__value,
+  .bd-blinds__next .m-figure {
+    font-size: calc(var(--m-figure-size) * 1.5);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bd-time {
+    transition: none;
+  }
+}

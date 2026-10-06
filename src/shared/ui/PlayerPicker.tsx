@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { haptic } from '../telegram';
 import { Avatar } from './Avatar';
-import { CheckIcon } from './icons';
+import { Icon } from './Icon';
 
 export interface PickerPlayer {
   id: string;
@@ -26,11 +26,16 @@ export interface PlayerPickerProps {
   hints?: Readonly<Record<string, ReactNode>>;
   /** Подпись над сеткой (озвучивается как имя группы). */
   label?: string;
-  /** Показывать «Выбрано N из M» (для набора). */
+  /** Показывать «N из M» (для набора). */
   showCount?: boolean;
 }
 
-/** Выбор от 1 до n игроков сеткой аватаров — крупные цели для пальца, без выпадающих списков. */
+/**
+ * Выбор от 1 до n игроков сеткой аватаров — крупные цели для пальца, без выпадающих списков.
+ * В «Материи» такого компонента нет: плитки — контролы регистра (m-r-control, рамка line →
+ * line-strong при наведении), выбранная — accent-soft, рамка accent и галочка (не только цветом),
+ * нажатие — scale-press.
+ */
 export function PlayerPicker({
   players,
   value,
@@ -63,18 +68,18 @@ export function PlayerPicker({
   const full = max > 1 && value.length >= max;
 
   return (
-    <div className="stack" role="group" aria-label={label}>
+    <div className="ui-picker" role="group" aria-label={label}>
       {(label || showCount) && (
         <div className="ui-picker__meta">
           {label && <span>{label}</span>}
           {showCount && (
-            <span>
+            <span className="m-mono">
               {value.length} из {max === Number.POSITIVE_INFINITY ? players.length : max}
             </span>
           )}
         </div>
       )}
-      <div className="ui-picker">
+      <div className="ui-picker__grid">
         {players.map((player) => {
           const isSelected = selected.has(player.id);
           const isDisabled = disabled.has(player.id) || (!isSelected && full);
@@ -89,10 +94,10 @@ export function PlayerPicker({
             >
               {isSelected && (
                 <span className="ui-picker__check" aria-hidden="true">
-                  <CheckIcon size={14} strokeWidth={3} />
+                  <Icon name="check" size={14} />
                 </span>
               )}
-              <Avatar name={player.display_name} photoUrl={player.photo_url} size={44} />
+              <Avatar name={player.display_name} photoUrl={player.photo_url} size="xl" />
               <span className="ui-picker__name">{player.display_name}</span>
               {hints?.[player.id] && <span className="ui-picker__hint">{hints[player.id]}</span>}
             </button>

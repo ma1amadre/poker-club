@@ -1,0 +1,297 @@
+/*
+ * Экран рейтинга. Только токены «Материи»: цвет — семантика, отступы — space-*, форма — --m-r-*,
+ * движение — --m-dur / --m-ease. Префикс rt-. Строки таблиц — на List кита (surface, рамка line,
+ * разделители line), раскрывающиеся строки сезона — свои, в той же анатомии.
+ */
+
+.rt-panel {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* ---------- Начало строки: место + аватар ---------- */
+
+.rt-rank {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.rt-place {
+  min-width: 2ch;
+  font-size: var(--m-small-size);
+  text-align: right;
+  color: var(--ink-muted);
+}
+
+.rt-place--top {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---------- Имя, строка сыгранного, очки ---------- */
+
+.rt-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  font-size: var(--m-body-size);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.rt-name__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rt-name__crown {
+  flex: none;
+  color: var(--ink-muted);
+}
+
+.rt-meta {
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-score {
+  flex: none;
+  display: grid;
+  justify-items: end;
+  line-height: 1.2;
+}
+
+.rt-score__num {
+  font-size: var(--m-h3-size);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.rt-score__unit {
+  font-size: var(--m-small-size);
+  color: var(--ink-muted);
+}
+
+.rt-money {
+  font-size: var(--m-body-size);
+  font-weight: 500;
+}
+
+/* ---------- Раскрывающиеся строки сезона ---------- */
+
+.rt-row + .rt-row {
+  border-top: 1px solid var(--line);
+}
+
+.rt-row__btn {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--control-h-lg);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--m-dur) var(--m-ease);
+}
+
+.rt-row__btn:hover {
+  background: var(--surface-sunken);
+}
+
+.rt-row__btn:active {
+  background: var(--fill-pressed);
+}
+
+.rt-row__btn:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+.rt-row__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.rt-row__chevron {
+  flex: none;
+  color: var(--ink-muted);
+  transition: transform var(--m-dur) var(--m-ease);
+}
+
+.rt-row__btn[aria-expanded='true'] .rt-row__chevron {
+  transform: rotate(180deg);
+}
+
+.rt-detail {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  background: var(--surface-sunken);
+  border-top: 1px solid var(--line);
+  animation: m-rise var(--m-dur) var(--m-ease);
+}
+
+.rt-detail[hidden] {
+  display: none;
+}
+
+.rt-evenings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rt-evenings > li + li {
+  border-top: 1px solid var(--line);
+}
+
+/* Вечер в разборе зачёта: дата и очки в первой строке, место и отметка — во второй. */
+.rt-ev {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: var(--space-3);
+  row-gap: 2px;
+  min-height: 44px;
+  padding: var(--space-2) 0;
+  color: var(--ink);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rt-ev:hover .rt-ev__date {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.rt-ev:focus-visible {
+  outline: none;
+  border-radius: var(--m-r-control);
+  box-shadow: var(--focus-ring);
+}
+
+.rt-ev__date {
+  font-size: var(--m-body-size);
+  font-weight: 500;
+}
+
+.rt-ev__points {
+  font-size: var(--m-body-size);
+  text-align: right;
+}
+
+.rt-ev__place,
+.rt-ev__mark {
+  font-size: var(--m-small-size);
+  color: var(--ink-muted);
+}
+
+.rt-ev__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+/* В зачёте: галочка и слово, цвет только подкрепляет. Вне зачёта: зачёркнутые очки и слово. */
+.rt-ev--in .rt-ev__mark {
+  color: var(--positive);
+}
+
+.rt-ev--out .rt-ev__points {
+  color: var(--ink-muted);
+  text-decoration: line-through;
+}
+
+.rt-detail__link {
+  justify-self: start;
+  margin-left: calc(-1 * var(--space-3));
+}
+
+/* ---------- Звание «Форма» ---------- */
+
+.rt-form__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.rt-form__text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.rt-form__name {
+  margin: 0;
+  font-size: var(--m-body-size);
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Зал славы ---------- */
+
+.rt-trophy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.rt-trophy__avatars {
+  flex: none;
+  display: flex;
+}
+
+.rt-trophy__avatars > * + * {
+  margin-left: calc(-1 * var(--space-3));
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.rt-trophy__text {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.rt-trophy__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.rt-trophy__name {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.rt-fame__icon {
+  color: var(--ink-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rt-detail {
+    animation-name: m-fade;
+  }
+  .rt-row__chevron {
+    transition: none;
+  }
+}

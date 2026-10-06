@@ -1,0 +1,105 @@
+/* Витрина кита (только dev). Токены «Материи». */
+
+.kit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.kit-skeleton {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kit-skeleton__text {
+  flex: 1 1 auto;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.kit-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: var(--space-4) var(--space-2);
+}
+
+.kit-icon {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  color: var(--ink);
+}
+
+.kit-icon .m-mono {
+  max-width: 100%;
+  font-size: var(--m-eyebrow-size);
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+/* --- Табло в Янтаре: экран ТВ/ноутбука, всё крупно, раздел от раздела — space-9 регистра --- */
+
+.kit-board {
+  box-sizing: border-box;
+  display: grid;
+  gap: var(--space-7);
+  width: 100%;
+  max-width: var(--container-wide);
+  min-height: var(--pc-app-height);
+  margin: 0 auto;
+  padding: calc(var(--space-6) + var(--pc-safe-top)) var(--space-5)
+    calc(var(--space-6) + var(--pc-safe-bottom));
+}
+
+.kit-board__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.kit-board__main {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+}
+
+/* Одно мягкое радиальное свечение accent до 16 % за главным числом — единственный градиент. */
+.kit-board__clock {
+  position: relative;
+  isolation: isolate;
+}
+.kit-board__clock::before {
+  content: '';
+  position: absolute;
+  inset: -40% -20%;
+  z-index: -1;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--accent) 16%, transparent),
+    transparent
+  );
+  pointer-events: none;
+}
+
+.kit-board__time {
+  font-size: clamp(96px, 16vw, 220px);
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.kit-board__next {
+  color: var(--ink-muted);
+  max-width: none;
+}
+
+.kit-board__players {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
+  gap: var(--space-5);
+}

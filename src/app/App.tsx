@@ -5,7 +5,7 @@ import { ToastProvider, useToast } from '../shared/ui';
 import { ErrorBoundary } from './ErrorBoundary';
 import { queryClient, setMutationErrorHandler } from './queryClient';
 import { AppRoutes } from './routes';
-import { useColorSchemeSync } from './useTheme';
+import { useThemeSync } from './useTheme';
 
 /** Ошибки всех мутаций — тостом (см. queryClient.ts). */
 function GlobalMutationErrors() {
@@ -18,7 +18,7 @@ function GlobalMutationErrors() {
 }
 
 export function App() {
-  useColorSchemeSync();
+  useThemeSync();
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

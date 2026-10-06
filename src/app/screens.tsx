@@ -1,53 +1,123 @@
 import type { ReactNode } from 'react';
-import type { AuthError } from '../shared/auth';
-import { paths } from '../shared/lib';
+import type { AuthError, AuthErrorKind } from '../shared/auth';
+import { cn, paths } from '../shared/lib';
 import { closeApp, isInTelegram } from '../shared/telegram';
-import { AlertIcon, Button, ChipIcon, Empty, Page, Spinner } from '../shared/ui';
+import { Button, ButtonLink, Empty, Icon, Page, Spinner, type IconName } from '../shared/ui';
 
-/** Пока идёт вход: тот же фон, что у Telegram-заглушки, — без белой вспышки. */
-export function SplashScreen() {
-  return (
-    <div className="app-screen" aria-busy="true">
-      <ChipIcon className="app-screen__icon" size={48} />
-      <p className="app-screen__title">Покерный клуб</p>
-      <Spinner className="app-splash__spinner" size={24} label="Вход" />
-    </div>
-  );
+interface ScreenProps {
+  icon: IconName;
+  title: ReactNode;
+  text?: ReactNode;
+  details?: string;
+  actions?: ReactNode;
+  error?: boolean;
+  inline?: boolean;
+  role?: 'alert' | 'status';
 }
 
-const DENIED_TITLES: Partial<Record<AuthError['kind'], string>> = {
-  no_telegram: 'Откройте в Telegram',
-  signature: 'Не удалось подтвердить вход',
-  not_member: 'Только для участников клуба',
-  inactive: 'Профиль отключён',
-};
-
-/** Нет доступа: не из Telegram, не участник группы, профиль отключён. */
-export function DeniedScreen({ error, onRetry }: { error: AuthError | null; onRetry: () => void }) {
-  const kind = error?.kind ?? 'not_member';
+/**
+ * Экран вне раскладки (вход, отказ, сбой) — анатомия EmptyState «Материи» с заголовком h1:
+ * значок → m-h2 → m-body (ink-muted) → действия. Одна primary на экран.
+ */
+export function AppScreen({
+  icon,
+  title,
+  text,
+  details,
+  actions,
+  error,
+  inline,
+  role,
+}: ScreenProps) {
   return (
-    <div className="app-screen" role="alert">
-      <ChipIcon className="app-screen__icon" size={48} />
-      <h1 className="app-screen__title">{DENIED_TITLES[kind] ?? 'Нет доступа'}</h1>
-      <p className="app-screen__text">{error?.message ?? 'Доступ к клубу закрыт.'}</p>
-      <div className="app-screen__actions">
-        {/* Подпись могла не сойтись из-за устаревшего initData — повтор иногда помогает. */}
-        {kind === 'signature' && (
-          <Button size="lg" block onClick={onRetry}>
-            Попробовать снова
-          </Button>
-        )}
-        {isInTelegram() && (
-          <Button variant={kind === 'signature' ? 'plain' : 'secondary'} block onClick={closeApp}>
-            Закрыть
-          </Button>
-        )}
+    <div
+      className={cn('app-screen', error && 'app-screen--error', inline && 'app-screen--inline')}
+      role={role}
+    >
+      <div className="app-screen__body">
+        <span className="app-screen__icon">
+          <Icon name={icon} size={24} />
+        </span>
+        <h1 className="m-h2 app-screen__title">{title}</h1>
+        {text && <p className="m-body app-screen__text">{text}</p>}
+        {details && <pre className="m-mono app-screen__details">{details}</pre>}
+        {actions && <div className="app-screen__actions">{actions}</div>}
       </div>
     </div>
   );
 }
 
-/** Сбой входа (сеть, сервер, конфигурация) — с повтором. */
+/** Пока идёт вход (обычно 1–3 с): название клуба и спиннер — на фоне ground, без белой вспышки. */
+export function SplashScreen() {
+  return (
+    <div className="app-screen" aria-busy="true">
+      <div className="app-screen__body">
+        <p className="m-eyebrow">Покерный клуб</p>
+        <div className="app-splash">
+          <Spinner size={20} label="Входим в клуб" />
+          <p className="m-body app-screen__text">Входим в клуб</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DENIED: Record<
+  Extract<AuthErrorKind, 'no_telegram' | 'signature' | 'not_member' | 'no_group' | 'inactive'>,
+  { icon: IconName; title: string; text?: string }
+> = {
+  no_telegram: {
+    icon: 'send',
+    title: 'Откройте приложение в Telegram',
+    text: 'Вход работает только через Telegram: откройте приложение кнопкой в группе клуба.',
+  },
+  signature: { icon: 'shield', title: 'Telegram не подтвердил вход' },
+  not_member: { icon: 'user', title: 'Вход только для участников клуба' },
+  no_group: {
+    icon: 'bell',
+    title: 'Клуб ещё не подключил группу',
+    text: 'Пока группа не подключена, войти может только админ. Когда он подключит её, вход откроется всем участникам.',
+  },
+  inactive: { icon: 'user', title: 'Профиль отключён' },
+};
+
+/** Нет доступа: не из Telegram, подпись не сошлась, не участник группы, группа не подключена, профиль отключён. */
+export function DeniedScreen({ error, onRetry }: { error: AuthError | null; onRetry: () => void }) {
+  const kind = error?.kind ?? 'not_member';
+  const screen = DENIED[kind as keyof typeof DENIED] ?? DENIED.not_member;
+  const canClose = isInTelegram();
+  return (
+    <AppScreen
+      role="alert"
+      icon={screen.icon}
+      title={screen.title}
+      text={screen.text ?? error?.message ?? 'Доступ к клубу закрыт. Обратитесь к админу клуба.'}
+      actions={
+        <>
+          {/* Подпись могла не сойтись из-за устаревшего initData — повтор иногда помогает. */}
+          {kind === 'signature' && (
+            <Button variant="primary" block onClick={onRetry}>
+              Повторить вход
+            </Button>
+          )}
+          {canClose && (
+            <Button variant={kind === 'signature' ? 'ghost' : 'secondary'} block onClick={closeApp}>
+              Закрыть приложение
+            </Button>
+          )}
+        </>
+      }
+    />
+  );
+}
+
+const ERROR_TITLES: Partial<Record<AuthErrorKind, string>> = {
+  network: 'Нет связи с сервером',
+  config: 'Приложение не настроено',
+  server: 'Не удалось войти',
+};
+
+/** Сбой входа (сеть, сервер, конфигурация): что случилось и «Повторить вход». */
 export function AuthErrorScreen({
   error,
   onRetry,
@@ -57,40 +127,40 @@ export function AuthErrorScreen({
   onRetry: () => void;
   extraActions?: ReactNode;
 }) {
+  const kind = error?.kind ?? 'server';
   return (
-    <div className="app-screen app-screen--error" role="alert">
-      <AlertIcon className="app-screen__icon" size={48} />
-      <h1 className="app-screen__title">
-        {error?.kind === 'network'
-          ? 'Нет связи'
-          : error?.kind === 'config'
-            ? 'Ошибка настройки'
-            : 'Не удалось войти'}
-      </h1>
-      <p className="app-screen__text">{error?.message ?? 'Попробуйте ещё раз.'}</p>
-      {error?.details && <pre className="app-screen__details">{error.details}</pre>}
-      <div className="app-screen__actions">
-        {error?.kind !== 'config' && (
-          <Button size="lg" block onClick={onRetry}>
-            Повторить
-          </Button>
-        )}
-        {extraActions}
-      </div>
-    </div>
+    <AppScreen
+      role="alert"
+      error
+      icon={kind === 'network' ? 'globe' : 'alert-triangle'}
+      title={ERROR_TITLES[kind] ?? 'Не удалось войти'}
+      text={error?.message ?? 'Повторите вход через минуту.'}
+      details={error?.details}
+      actions={
+        <>
+          {kind !== 'config' && (
+            <Button variant="primary" icon="refresh-cw" block onClick={onRetry}>
+              Повторить вход
+            </Button>
+          )}
+          {extraActions}
+        </>
+      }
+    />
   );
 }
 
 export function NotFoundPage() {
   return (
-    <Page title="Не найдено" back>
+    <Page title="Страница не найдена" back>
       <Empty
+        kind="no-results"
         title="Такой страницы нет"
-        description="Возможно, ссылка устарела или вечер удалён."
+        description="Ссылка устарела или вечер удалён."
         action={
-          <Button variant="secondary" onClick={() => (window.location.hash = `#${paths.home}`)}>
-            На главную
-          </Button>
+          <ButtonLink to={paths.home} icon="arrow-left">
+            Вернуться на главную
+          </ButtonLink>
         }
       />
     </Page>
@@ -102,8 +172,9 @@ export function AdminOnlyDenied() {
   return (
     <Page title="Админка" back>
       <Empty
-        title="Только для админа клуба"
-        description="Этот раздел доступен админу. Обратитесь к нему, если нужно что-то поменять."
+        icon="shield"
+        title="Раздел только для админа клуба"
+        description="Если нужно что-то изменить в расписании или составе, напишите админу."
       />
     </Page>
   );

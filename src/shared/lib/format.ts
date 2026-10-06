@@ -3,7 +3,8 @@
 
 export const CLUB_TZ = 'Europe/Moscow';
 
-const NBSP = ' ';
+/** Неразрывный пробел: между числом и словом, перед тире, в разрядах. */
+export const NBSP = ' ';
 const MINUS = '−';
 
 const intFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
@@ -127,56 +128,4 @@ export function formatDateTime(value: DateInput, now: DateInput = Date.now()): s
 /** «08.10.2026» — для плотных таблиц. */
 export function formatDateNumeric(value: DateInput): string {
   return numericDate.format(toDate(value));
-}
-
-// --- Поле datetime-local в админке: значение — «стенные» часы Москвы, в БД — UTC. ---
-
-const partsFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: CLUB_TZ,
-  hourCycle: 'h23',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-});
-
-function clubParts(
-  date: Date,
-): Record<'year' | 'month' | 'day' | 'hour' | 'minute' | 'second', number> {
-  const out = { year: 0, month: 0, day: 0, hour: 0, minute: 0, second: 0 };
-  for (const part of partsFormatter.formatToParts(date)) {
-    if (part.type in out) out[part.type as keyof typeof out] = Number(part.value);
-  }
-  return out;
-}
-
-/** Смещение клубного пояса от UTC в момент date (мс). Без хардкода +3 — на случай смены правил. */
-function clubOffsetMs(date: Date): number {
-  const p = clubParts(date);
-  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-  return asUtc - Math.floor(date.getTime() / 1000) * 1000;
-}
-
-/** ISO (UTC) → «2026-10-08T19:00» для <input type="datetime-local">. */
-export function toClubInputValue(value: DateInput): string {
-  const p = clubParts(toDate(value));
-  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}`;
-}
-
-/** «2026-10-08T19:00» (время Москвы) → ISO UTC. */
-export function fromClubInputValue(value: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
-  if (!match) throw new Error(`Некорректная дата: ${value}`);
-  const [, y, mo, d, h, mi] = match.map(Number) as [number, number, number, number, number, number];
-  const naiveUtc = Date.UTC(y, mo - 1, d, h, mi);
-  // Смещение берём в точке «наивного» UTC — для пояса без перевода часов этого достаточно.
-  return new Date(naiveUtc - clubOffsetMs(new Date(naiveUtc))).toISOString();
-}
-
-/** Ключ дня по Москве «2026-10-08» — для группировки и сравнения дат. */
-export function clubDateKey(value: DateInput): string {
-  const p = clubParts(toDate(value));
-  return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
 }
