@@ -21,7 +21,11 @@ max_rows = 1000
 # `postgres` are reachable through the Data API roles (`anon`, `authenticated`, `service_role`)
 # without explicit GRANTs, matching the cloud default. Set to `false` to require explicit GRANTs
 # instead. Left unset, a fresh project falls back to `true`.
-# auto_expose_new_tables = true
+# poker-club: false — как в облачном проекте (создан после 30.05.2026, когда Supabase перестал
+# выдавать права по умолчанию, changelog «Tables not exposed to Data and GraphQL API automatically»).
+# Права на таблицы раздают миграции явно (002 — authenticated, 011 — service_role); с true локально
+# забытый grant не виден, а в облаке функции падают с «permission denied».
+auto_expose_new_tables = false
 
 [api.tls]
 # Enable HTTPS endpoints locally using a self-signed certificate.
@@ -383,6 +387,14 @@ verify_jwt = false
 
 [functions.cron-tick]
 verify_jwt = false
+
+# notify и bot-setup — только с JWT игрока (права проверяет сама функция). Явно, чтобы деплой
+# (supabase functions deploy) не зависел от умолчаний CLI.
+[functions.notify]
+verify_jwt = true
+
+[functions.bot-setup]
+verify_jwt = true
 
 [edge_runtime]
 enabled = true

@@ -28,13 +28,13 @@ import {
   useToast,
 } from '../../shared/ui';
 import { useClosingConfirmation } from '../../shared/telegram';
+import { BotUsernameAction, GroupActions, GroupHelp } from './BotSetup';
 import { adminErrorText } from './lib';
 import { ListSkeleton } from './parts';
 import { useFocusInvalid } from './useFocusInvalid';
 import {
   ANNOUNCE_HOURS_MAX,
   draftFromSettings,
-  normalizeBotUsername,
   parseSettingsDraft,
   settingsDirty,
   type SettingsDraft,
@@ -144,7 +144,6 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
   };
 
   // --- Пояснения из того, что сейчас в форме ---
-  const bot = normalizeBotUsername(draft.botUsername);
   const groupConnected = patch.group_chat_id !== null && !errors.groupChatId;
   const scheduleOk = !errors.weekday && !errors.time;
   const slot = scheduleOk ? nextGameSlot(now, patch.game_weekday, patch.game_time) : null;
@@ -173,50 +172,6 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
           </Notice>
         )}
         <Field
-          label="ID группы"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="-1001234567890"
-          hint="Отрицательное число. Без него в клуб пускают только админа."
-          {...bind('groupChatId')}
-        />
-        <Accordion
-          headingLevel="h3"
-          items={[
-            {
-              id: 'chat-id',
-              title: 'Как узнать ID группы',
-              content: (
-                <ol className="m-small adm-steps">
-                  <li>
-                    Добавь бота клуба в группу и сделай его администратором: иначе Telegram может не
-                    отвечать боту, кто состоит в группе.
-                  </li>
-                  <li>
-                    Открой в браузере{' '}
-                    <span className="m-mono adm-code">
-                      api.telegram.org/bot&lt;токен&gt;/getUpdates
-                    </span>
-                    {' — токен выдал BotFather. Сюда его не вставляй.'}
-                  </li>
-                  <li>
-                    Найди в ответе{' '}
-                    <span className="m-mono adm-code">
-                      &quot;chat&quot;:{'{'}&quot;id&quot;:-100…
-                    </span>{' '}
-                    с названием твоей группы — это число и есть ID.
-                  </li>
-                  <li>
-                    Ответ пустой — напиши в группе{' '}
-                    <span className="m-mono adm-code">/start@{bot || 'имя_бота'}</span> и обнови
-                    страницу.
-                  </li>
-                </ol>
-              ),
-            },
-          ]}
-        />
-        <Field
           label="Имя бота"
           prefix="@"
           autoComplete="off"
@@ -225,6 +180,28 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
           placeholder="poker_club_bot"
           hint="Без @, как в BotFather. По нему строятся кнопки «Открыть» в постах; без имени посты уйдут без кнопки."
           {...bind('botUsername')}
+        />
+        <div className="adm-actions__row adm-bot-actions">
+          <BotUsernameAction settings={settings} draft={lifted} onDraftChange={onDraftChange} />
+        </div>
+        <Field
+          label="ID группы"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="-1001234567890"
+          hint="Найди группу кнопкой ниже — ID подставится сам. Без группы в клуб пускают только админа."
+          {...bind('groupChatId')}
+        />
+        <GroupActions settings={settings} draft={lifted} onDraftChange={onDraftChange} />
+        <Accordion
+          headingLevel="h3"
+          items={[
+            {
+              id: 'chat-id',
+              title: 'Если группа не находится',
+              content: <GroupHelp />,
+            },
+          ]}
         />
       </Section>
 

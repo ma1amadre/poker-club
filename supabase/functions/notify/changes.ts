@@ -5,7 +5,7 @@
 // Защита от дублей — тот же приём «застолбить → отправить → при ошибке снять», что у итогов:
 // announce_snapshot переставляется на новое значение, только если в БД всё ещё лежит прочитанное.
 // Два одновременных вызова (фронт и cron-tick) прочитают один снимок — застолбит один.
-import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.117.2'; // версия — как в _shared/admin.ts
 import { describeError } from '../_shared/admin.ts';
 import {
   announceSnapshot,

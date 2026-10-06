@@ -1,0 +1,331 @@
+# Деплой клуба: сайт Mini App на GitHub Pages и бэкенд в облачный Supabase. Порядок и ручные шаги —
+# DEPLOY.md.
+#
+# Репозиторий публичный, поэтому триггеры только push в main и ручной запуск: никаких pull_request /
+# pull_request_target — код из чужого форка не должен выполняться рядом с секретами.
+# Секреты не печатаются: их нет ни в echo, ни в аргументах команд (токен бота уходит через файл
+# с правами 600), set -x не используется; GitHub дополнительно маскирует значения secrets.* в логе.
+# Все actions закреплены SHA коммита (комментарий — версия): тег можно переписать, а сторонний
+# action в job backend выполняется рядом с секретами. Обновления SHA предлагает Dependabot
+# (.github/dependabot.yml).
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# По умолчанию — никаких прав; каждый job берёт только своё.
+permissions: {}
+
+# Один деплой за раз. Не обрываем идущий: db push посередине оборвать хуже, чем подождать.
+# Из ожидающих GitHub оставляет только последний запуск.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Проверки
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  pages-build:
+    name: Сборка сайта
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # URL и publishable-ключ облака — из .env.production (публичные). Сайт живёт в подпути.
+      - run: npm run build
+        env:
+          BASE_PATH: /poker-club/
+      - name: Dev-вход не попал в бандл
+        run: |
+          if grep -rlE 'VITE_DEV_BOT_TOKEN|LOCAL_FAKE_TOKEN|Вход тестовым игроком|zhenya_local' dist; then
+            echo "::error::В прод-сборке остался код dev-входа (файлы выше)"
+            exit 1
+          fi
+          grep -rlq 'rgykkewfrefdeyxltzwp.supabase.co' dist/assets || {
+            echo "::error::В бандле нет адреса облачного Supabase — .env.production не подхватился"
+            exit 1
+          }
+      # HashRouter: 404.html — страховка для прямых ссылок без #, .nojekyll — на случай Pages из ветки.
+      - run: cp dist/index.html dist/404.html && touch dist/.nojekyll
+      # enablement сработает только с токеном администратора; с GITHUB_TOKEN Pages включают руками
+      # один раз (Settings → Pages → Source: GitHub Actions, см. DEPLOY.md).
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: dist
+
+  pages-deploy:
+    name: Публикация сайта
+    needs: pages-build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
+  backend:
+    name: Бэкенд Supabase
+    needs: checks
+    # Только main: Run workflow позволяет выбрать любую ветку, а db push необратим — миграции
+    # невлитой ветки не должны попасть в облако.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Ref проекта и адрес Mini App публичны (переменные). tg id админа — секрет: не секретен
+      # по сути, но так GitHub маскирует его в публичных логах.
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      ADMIN_TG_ID: ${{ secrets.ADMIN_TG_ID }}
+      APP_URL: ${{ vars.APP_URL }}
+    steps:
+      - name: Есть ли доступ к Supabase
+        id: gate
+        env:
+          HAS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+          HAS_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ] || [ "$HAS_PASSWORD" != "true" ]; then
+            echo "::notice title=Бэкенд не деплоился::Нет секретов SUPABASE_ACCESS_TOKEN и/или SUPABASE_DB_PASSWORD (Settings → Secrets and variables → Actions). Сайт деплоится и без них; после добавления секретов запусти workflow deploy вручную."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          problems=0
+          if ! printf '%s' "$SUPABASE_PROJECT_REF" | grep -Eq '^[a-z]{20}$'; then
+            echo "::error::Переменная SUPABASE_PROJECT_REF не задана или не похожа на ref проекта (20 строчных латинских букв)"
+            problems=1
+          fi
+          if ! printf '%s' "$ADMIN_TG_ID" | grep -Eq '^[0-9]{1,20}$'; then
+            echo "::error::Секрет ADMIN_TG_ID не задан или не число (tg id админа клуба)"
+            problems=1
+          fi
+          if ! printf '%s' "$APP_URL" | grep -Eq '^https://'; then
+            echo "::error::Переменная APP_URL не задана или не https:// (адрес Mini App)"
+            problems=1
+          fi
+          [ "$problems" = 0 ] || exit 1
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - if: steps.gate.outputs.ready == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Та же версия CLI, что в package.json (devDependencies.supabase) — локально проверено на ней.
+      - if: steps.gate.outputs.ready == 'true'
+        uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
+        with:
+          version: 2.119.0
+
+      # link без вопросов: ref — флагом, пароль БД — из SUPABASE_DB_PASSWORD. По умолчанию link
+      # подключается через пулер (IPv4): у раннеров GitHub нет IPv6, а прямой адрес БД на Free — только IPv6.
+      - name: supabase link
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      # Только миграции: seed.sql (локальные тестовые данные) в облако не идёт — без --include-seed.
+      # Без --include-all: миграция, вставленная «в прошлое» перед уже применёнными, — ошибка, а не
+      # тихое применение. --skip-vault: секреты Vault ставит не config.toml, а миграция 011 и шаг ниже.
+      - name: supabase db push
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase db push --linked --skip-vault --yes
+
+      # Все папки supabase/functions, кроме _shared (папки с «_» CLI функциями не считает);
+      # verify_jwt каждой функции — из config.toml.
+      - name: supabase functions deploy
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Секреты функций
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          env_file="$RUNNER_TEMP/functions.env"
+          umask 077
+          {
+            printf 'ADMIN_TG_ID=%s\n' "$ADMIN_TG_ID"
+            printf 'APP_URL=%s\n' "$APP_URL"
+            if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+              printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN"
+            fi
+          } > "$env_file"
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "::warning title=Нет токена бота::Секрет TELEGRAM_BOT_TOKEN не задан — вход в Mini App и посты не заработают. Добавь его и запусти deploy снова."
+          fi
+          supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" --env-file "$env_file"
+          rm -f "$env_file"
+
+      # Адрес проекта для pg_cron (private.invoke_cron_tick) — в Vault через Management API.
+      # Идемпотентно: есть секрет — обновить, нет — создать. Ref проверен шагом gate (только a-z),
+      # поэтому подставлять его в SQL безопасно; тело запроса собирает jq.
+      - name: project_url в Vault
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          url="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          sql="do \$\$
+          declare v_id uuid;
+          begin
+            select id into v_id from vault.secrets where name = 'project_url';
+            if v_id is null then
+              perform vault.create_secret('${url}', 'project_url', 'Адрес API для cron-tick (ставит деплой)');
+            else
+              perform vault.update_secret(v_id, '${url}');
+            end if;
+          end
+          \$\$;"
+          body="$(jq -n --arg q "$sql" '{query: $q}')"
+          response="$RUNNER_TEMP/vault-response.json"
+          status="$(curl -sS -o "$response" -w '%{http_code}' \
+            -X POST "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data "$body")"
+          if [ "${status:0:1}" != "2" ]; then
+            echo "::error::Management API ответил $status при записи project_url в Vault"
+            cat "$response"
+            exit 1
+          fi
+          echo "project_url = $url"
+
+      # Проверка после деплоя, три ступени — от «функция жива» до «клуб работает»:
+      # 1) cron-tick с заведомо неверным x-cron-secret → 401 (функция отвечает, RPC verify_cron_secret
+      #    на месте; 500 — миграции 011 нет или функция не видит базу);
+      # 2) SQL через Management API: у service_role есть права на все таблицы и sequences public
+      #    (без них функции падают с «permission denied», а шаг 1 этого не видит — RPC выдана явно),
+      #    в Vault есть cron_secret и project_url, задание pg_cron активно;
+      # 3) вся цепочка как у будильника: private.invoke_cron_tick() → pg_net → cron-tick с секретом из
+      #    Vault → таблицы; ответ из net._http_response — 200 без errors. Это обычный тик (тот же, что
+      #    pg_cron делает раз в 15 минут; все шаги cron-tick идемпотентны), и если пора — он и запостит.
+      # В лог идут только коды, флаги и список errors, не тело ответа целиком.
+      - name: Проверка после деплоя
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -o pipefail
+          base="https://${SUPABASE_PROJECT_REF}.supabase.co"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$base/functions/v1/cron-tick" \
+            -H 'x-cron-secret: deploy-smoke-check')"
+          if [ "$code" != "401" ]; then
+            echo "::error::cron-tick с неверным секретом ответил $code, ожидался 401"
+            exit 1
+          fi
+          echo "1/3 cron-tick: 401 на неверный секрет — как и должно быть"
+
+          # SQL через Management API; ответ — JSON-массив строк. Ошибки — в stderr (иначе их
+          # проглотит $(…)), тело ответа при ошибке — без секретов (текст ошибки SQL).
+          run_sql() {
+            local body status out="$RUNNER_TEMP/sql-response.json"
+            body="$(jq -n --arg q "$1" '{query: $q}')"
+            status="$(curl -sS -o "$out" -w '%{http_code}' \
+              -X POST "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query" \
+              -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              --data "$body")"
+            if [ "${status:0:1}" != "2" ]; then
+              echo "::error::Management API ответил $status" >&2
+              head -c 2000 "$out" >&2
+              return 1
+            fi
+            cat "$out"
+          }
+
+          checks="$(run_sql "
+            select
+              coalesce((select bool_and(has_table_privilege('service_role', c.oid, p))
+                        from pg_class c
+                        cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']) p
+                        where c.relnamespace = 'public'::regnamespace and c.relkind in ('r','p')),
+                       false) as tables_ok,
+              coalesce((select bool_and(has_sequence_privilege('service_role', c.oid, 'USAGE'))
+                        from pg_class c
+                        where c.relnamespace = 'public'::regnamespace and c.relkind = 'S'),
+                       true) as sequences_ok,
+              exists(select 1 from vault.secrets where name = 'cron_secret') as cron_secret_ok,
+              exists(select 1 from vault.secrets where name = 'project_url') as project_url_ok,
+              exists(select 1 from cron.job where jobname = 'poker-club-cron-tick' and active) as cron_job_ok
+          ")"
+          echo "2/3 $(jq -c '.[0]' <<<"$checks")"
+          if [ "$(jq -r '.[0] | [.[]] | all' <<<"$checks")" != "true" ]; then
+            echo "::error::Облако настроено не полностью (false выше): tables_ok/sequences_ok — гранты service_role (миграция 011 и следующие), cron_secret_ok — миграция 011, project_url_ok — шаг «project_url в Vault», cron_job_ok — миграция 005"
+            exit 1
+          fi
+
+          request_id="$(run_sql 'select private.invoke_cron_tick() as id' | jq -r '.[0].id // empty')"
+          if [ -z "$request_id" ]; then
+            echo "::error::private.invoke_cron_tick() вернула null — в Vault нет project_url или cron_secret"
+            exit 1
+          fi
+          # pg_net отправляет запрос фоном; таймаут запроса — 30 с (миграция 005), ждём с запасом.
+          result=""
+          for _ in $(seq 1 20); do
+            sleep 3
+            result="$(run_sql "select status_code, timed_out, error_msg, content
+                               from net._http_response where id = ${request_id}")"
+            [ "$(jq 'length' <<<"$result")" = "0" ] || break
+            result=""
+          done
+          if [ -z "$result" ]; then
+            echo "::error::cron-tick через pg_net не ответил за 60 с (запрос $request_id)"
+            exit 1
+          fi
+          status="$(jq -r '.[0].status_code // "нет"' <<<"$result")"
+          errors="$(jq -c '.[0].content | (try fromjson catch null) | .errors // null' <<<"$result")"
+          if [ "$status" != "200" ]; then
+            echo "::error::Тик через pg_net: статус $status, timed_out=$(jq -r '.[0].timed_out' <<<"$result"), error_msg=$(jq -r '.[0].error_msg // ""' <<<"$result")"
+            jq -r '.[0].content // ""' <<<"$result" | head -c 1000
+            exit 1
+          fi
+          if [ "$errors" != "[]" ]; then
+            echo "::error::Тик через pg_net ответил 200, но с ошибками (Edge Functions → cron-tick → Logs): $errors"
+            exit 1
+          fi
+          echo "3/3 pg_cron-обёртка → cron-tick → таблицы: 200, ошибок нет"

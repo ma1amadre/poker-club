@@ -1,6 +1,9 @@
 // Общее для Edge Functions: service-клиент Supabase, CORS и JSON-ответы.
 // supabase-js — через npm-спецификатор (стиль Deno 2): без import map и deno.json.
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+// Версия закреплена точно (та же, что у фронта в package-lock): каждый деплой собирает функции
+// заново, и плавающая @2 подтянула бы любую свежую 2.x из npm в код с service_role и токеном бота.
+// Обновлять вместе с фронтом, во всех трёх импортах (admin.ts, notify/changes.ts, notify/results.ts).
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.117.2';
 import { readEnv } from './telegram.ts';
 
 export { readEnv };
@@ -105,6 +108,42 @@ export function bearerToken(req: Request): string | null {
   const header = req.headers.get('authorization') ?? '';
   const m = /^Bearer\s+(\S+)$/i.exec(header);
   return m?.[1] ?? null;
+}
+
+/** Игрок, который вызвал функцию со своим JWT. */
+export interface Caller {
+  id: string;
+  is_admin: boolean;
+  /** tg id игрока; у гостей null (но гость не входит в приложение и вызывающим не бывает). */
+  tg_id: number | null;
+}
+
+/**
+ * Кто вызывает: JWT проверяем через Auth (getUser), а не только на шлюзе — шлюз пропустил бы
+ * и anon-ключ, который тоже JWT. Дальше — активный игрок клуба с этим auth-пользователем.
+ * Возвращает игрока или готовый ответ-отказ (401/403).
+ */
+export async function resolveCaller(
+  db: SupabaseClient,
+  req: Request,
+): Promise<{ caller: Caller } | { response: Response }> {
+  const token = bearerToken(req);
+  if (!token) return { response: errorResponse(401, 'no_token', 'Нужен вход в приложение') };
+  const { data: userData, error: userError } = await db.auth.getUser(token);
+  if (userError || !userData.user) {
+    return {
+      response: errorResponse(401, 'bad_token', 'Сессия недействительна, открой приложение заново'),
+    };
+  }
+  const { data: caller, error: callerError } = await db
+    .from('players')
+    .select('id, is_admin, tg_id')
+    .eq('auth_user_id', userData.user.id)
+    .eq('is_active', true)
+    .maybeSingle<Caller>();
+  if (callerError) throw new Error(describeError(callerError));
+  if (!caller) return { response: errorResponse(403, 'not_player', 'Ты не участник клуба') };
+  return { caller };
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -1,6 +1,6 @@
 // Сбор итога вечера из БД доменными функциями и публикация постов с защитой от дублей.
 // Общий код notify (банкир завершил вечер) и cron-tick (добивка неотправленных итогов).
-import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.117.2'; // версия — как в _shared/admin.ts
 import {
   computeAchievements,
   computeMoney,

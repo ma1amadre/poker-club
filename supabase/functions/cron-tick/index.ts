@@ -1,5 +1,7 @@
 // cron-tick — будильник клуба, его раз в 15 минут дёргает pg_cron (миграция 005).
-// verify_jwt = false (config.toml): pg_net шлёт не JWT, а заголовок x-cron-secret.
+// verify_jwt = false (config.toml): pg_net шлёт не JWT, а заголовок x-cron-secret. Секрет живёт
+// только в Vault (его создаёт миграция 011), функция сверяет заголовок RPC verify_cron_secret —
+// в окружении функций копии секрета нет.
 // За один вызов:
 //   1) до ближайшей игры по расписанию ≤ announce_hours_before и слот свободен (нет вечера ни
 //      на эту дату, ни перенесённого с неё — evenings.slot_date) —
@@ -10,7 +12,7 @@
 //      в группе, если админский вызов после сохранения не дошёл (миграция 008, notify/changes.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
 // Без settings.group_chat_id ничего не постит, но вечер создаёт.
-import { adminClient, describeError, errorResponse, json, readEnv } from '../_shared/admin.ts';
+import { adminClient, describeError, errorResponse, json } from '../_shared/admin.ts';
 import {
   DEFAULT_FORMAT,
   validateFormat,
@@ -20,7 +22,6 @@ import {
 import { announceSnapshot } from '../_shared/announce.ts';
 import { announcePost, votingPost } from '../_shared/messages.ts';
 import { postAnnounceChange } from '../notify/changes.ts';
-import { timingSafeEqual } from '../_shared/telegram.ts';
 import {
   EVENING_COLUMNS,
   loadPlayerNames,
@@ -60,15 +61,16 @@ interface TickReport {
   errors: string[];
 }
 
-const encoder = new TextEncoder();
-
-/** Сравнение секрета без утечки по времени: сравниваем SHA-256, так не утекает и длина. */
-async function secretMatches(given: string, expected: string): Promise<boolean> {
-  const [a, b] = await Promise.all([
-    crypto.subtle.digest('SHA-256', encoder.encode(given)),
-    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
-  ]);
-  return timingSafeEqual(new Uint8Array(a), new Uint8Array(b));
+/**
+ * Заголовок x-cron-secret совпадает с секретом cron_secret из Vault. Сравнение — в базе
+ * (public.verify_cron_secret, миграция 011: HMAC на случайном ключе, без утечки по времени).
+ * Пустой заголовок отсекаем без запроса в базу.
+ */
+async function secretMatches(db: Db, given: string): Promise<boolean> {
+  if (given === '') return false;
+  const { data, error } = await db.rpc('verify_cron_secret', { p_secret: given });
+  if (error) throw new Error(`verify_cron_secret: ${describeError(error)}`);
+  return data === true;
 }
 
 const hasGroup = (s: SettingsRow): s is SettingsRow & { group_chat_id: number | string } =>
@@ -281,14 +283,14 @@ async function postAnnounceChanges(
 
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== 'POST') return errorResponse(405, 'method_not_allowed', 'Только POST');
-  const expected = readEnv('CRON_SECRET');
-  if (!expected) {
-    console.error('cron-tick: не задан CRON_SECRET');
-    return errorResponse(500, 'not_configured', 'Не задан CRON_SECRET');
+  let authorized: boolean;
+  try {
+    authorized = await secretMatches(adminClient(), req.headers.get('x-cron-secret') ?? '');
+  } catch (err) {
+    console.error(`cron-tick: ${describeError(err)}`);
+    return errorResponse(500, 'not_configured', 'Не удалось проверить x-cron-secret');
   }
-  if (!(await secretMatches(req.headers.get('x-cron-secret') ?? '', expected))) {
-    return errorResponse(401, 'bad_secret', 'Неверный x-cron-secret');
-  }
+  if (!authorized) return errorResponse(401, 'bad_secret', 'Неверный x-cron-secret');
 
   const nowMs = Date.now();
   const report: TickReport = {

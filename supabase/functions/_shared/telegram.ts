@@ -286,14 +286,37 @@ function botToken(): string {
   return token;
 }
 
+/**
+ * Текст сетевой ошибки fetch без токена. В Deno сообщение о DNS/TCP/TLS-сбое содержит URL запроса
+ * («error sending request for url (https://api.telegram.org/bot<токен>/getMe)»), а этот текст дальше
+ * уходит в логи функций и в ответ cron-tick (его pg_net хранит в net._http_response). Вырезаем и
+ * сам токен (как есть и percent-encoded), и любой сегмент /bot…/ на случай другой записи.
+ */
+export function redactBotToken(text: string, token: string): string {
+  let out = text;
+  if (token) {
+    out = out.replaceAll(token, '<token>').replaceAll(encodeURIComponent(token), '<token>');
+  }
+  return out.replace(/\/bot[^/\s)]+\//g, '/bot<token>/');
+}
+
 async function callBotApi<T>(method: string, body: Record<string, unknown>): Promise<T> {
   // Токен — часть URL Bot API, поэтому URL целиком никогда не логируем.
-  const res = await fetch(`https://api.telegram.org/bot${botToken()}/${method}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10_000),
-  });
+  const token = botToken();
+  let res: Response;
+  try {
+    res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    // Новая ошибка без cause: исходная (с URL и токеном) дальше не идёт.
+    const e = err as { name?: unknown; message?: unknown } | null;
+    const text = `${String(e?.name ?? 'Error')}: ${String(e?.message ?? err)}`;
+    throw new Error(`Telegram ${method}: сеть: ${redactBotToken(text, token)}`);
+  }
   let data: BotApiResponse<T> | null = null;
   try {
     data = (await res.json()) as BotApiResponse<T>;
@@ -390,4 +413,81 @@ export function isChatMember(member: ChatMember): boolean {
     return true;
   }
   return member.status === 'restricted' && member.is_member === true;
+}
+
+// ---------------------------------------------------------------------------
+// Настройка бота из админки (bot-setup)
+// ---------------------------------------------------------------------------
+
+export interface BotInfo {
+  id: number;
+  username: string;
+  first_name: string;
+  can_join_groups?: boolean;
+  can_read_all_group_messages?: boolean;
+}
+
+/** Бот в dry-run: локально настоящего бота нет, имя — как в seed.sql. */
+export const DRY_RUN_BOT: BotInfo = {
+  id: 100500,
+  username: 'poker_club_local_bot',
+  first_name: 'Покерный клуб (локально)',
+  can_join_groups: true,
+  can_read_all_group_messages: false,
+};
+
+/** getMe — кто этот бот (имя для ссылок startapp). */
+export async function getMe(): Promise<BotInfo> {
+  if (isDryRun()) {
+    console.log('[telegram dry-run] getMe → DRY_RUN_BOT');
+    return DRY_RUN_BOT;
+  }
+  return callBotApi<BotInfo>('getMe', {});
+}
+
+export type ChatType = 'private' | 'group' | 'supergroup' | 'channel';
+
+export interface TgChat {
+  id: number;
+  type: ChatType;
+  title?: string;
+}
+
+export interface TgMessage {
+  message_id: number;
+  date: number;
+  chat: TgChat;
+  /** Группу превратили в супергруппу: её новый id (старый больше не работает). */
+  migrate_to_chat_id?: number;
+  /** Первое сообщение супергруппы после превращения: id прежней группы. */
+  migrate_from_chat_id?: number;
+}
+
+export interface TgChatMemberUpdated {
+  chat: TgChat;
+  date: number;
+  old_chat_member: ChatMember & { user?: { id: number } };
+  new_chat_member: ChatMember & { user?: { id: number } };
+}
+
+export interface TgUpdate {
+  update_id: number;
+  message?: TgMessage;
+  my_chat_member?: TgChatMemberUpdated;
+}
+
+/**
+ * getUpdates без offset: Telegram отдаёт неподтверждённые обновления, но не подтверждает их —
+ * подтверждает только следующий вызов с offset больше update_id. Поэтому повторный поиск группы
+ * видит те же обновления, пока Telegram их хранит (не дольше 24 часов, core.telegram.org/bots/api,
+ * «Getting updates»). allowed_updates Telegram запоминает для следующих вызовов; других
+ * потребителей обновлений у бота нет (webhook не ставим), так что это безопасно.
+ * При включённом webhook метод не работает — Telegram отвечает 409.
+ */
+export async function getUpdates(allowedUpdates: string[]): Promise<TgUpdate[]> {
+  return callBotApi<TgUpdate[]>('getUpdates', {
+    limit: 100,
+    timeout: 0,
+    allowed_updates: allowedUpdates,
+  });
 }

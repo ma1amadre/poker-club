@@ -80,6 +80,13 @@
   gap: var(--space-3);
 }
 
+/* Кнопки настройки бота под полями «Имя бота» и «ID группы»: в строку, на узком экране переносятся. */
+.adm-bot-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 .adm-muted {
   margin: 0;
   color: var(--ink-muted);

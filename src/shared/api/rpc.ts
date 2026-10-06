@@ -176,8 +176,13 @@ interface NotifyResponse {
   change?: AnnounceChange;
 }
 
-async function invokeNotify(body: Record<string, unknown>): Promise<NotifyResponse> {
-  const { data, error } = await supabase.functions.invoke<NotifyResponse>('notify', { body });
+/** Вызов Edge Function с JWT игрока; текст ошибки — из тела функции {error, code}. */
+async function invokeFunction<T>(
+  name: string,
+  body: Record<string, unknown>,
+  emptyMessage: string,
+): Promise<T> {
+  const { data, error } = await supabase.functions.invoke<T>(name, { body });
   if (error) {
     // Тело ошибки функции: {error: текст по-русски, code}.
     const response = (error as { context?: unknown }).context;
@@ -190,8 +195,12 @@ async function invokeNotify(body: Record<string, unknown>): Promise<NotifyRespon
     }
     throw toError(error);
   }
-  if (!data) throw new Error('Сервер уведомлений вернул пустой ответ.');
+  if (!data) throw new Error(emptyMessage);
   return data;
+}
+
+function invokeNotify(body: Record<string, unknown>): Promise<NotifyResponse> {
+  return invokeFunction<NotifyResponse>('notify', body, 'Сервер уведомлений вернул пустой ответ.');
 }
 
 /**
@@ -474,4 +483,70 @@ export function useSetMyName() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
     },
   });
+}
+
+// --- Настройка бота (Edge Function bot-setup, только админ) --------------------------------------
+
+/** Бот по getMe. */
+export interface BotInfo {
+  username: string;
+  name: string;
+  canJoinGroups: boolean | null;
+  canReadAllGroupMessages: boolean | null;
+}
+
+/** Группа, где бот сейчас состоит (по обновлениям бота за последние сутки + getChatMember). */
+export interface BotChat {
+  id: number;
+  title: string;
+  type: 'group' | 'supergroup';
+  /** Статус бота в группе: member, administrator… */
+  status: string;
+}
+
+const BOT_SETUP_EMPTY = 'Функция настройки бота вернула пустой ответ.';
+
+/** Имя бота из Telegram (getMe) — для поля «Имя бота». */
+export async function fetchBotInfo(): Promise<BotInfo> {
+  const data = await invokeFunction<{ bot: BotInfo }>(
+    'bot-setup',
+    { action: 'me' },
+    BOT_SETUP_EMPTY,
+  );
+  return data.bot;
+}
+
+/**
+ * Группы, куда добавлен бот. Telegram хранит обновление о добавлении не дольше суток: группу,
+ * куда бота добавили раньше и где с тех пор было тихо, не видно — бота надо удалить и добавить снова.
+ */
+export async function fetchBotChats(): Promise<BotChat[]> {
+  const data = await invokeFunction<{ chats: BotChat[] }>(
+    'bot-setup',
+    { action: 'chats' },
+    BOT_SETUP_EMPTY,
+  );
+  return data.chats;
+}
+
+/** Проверочный пост бота в группу. dryRun — локальный стек: пост только в логе функции. */
+export async function sendBotTestMessage(chatId: number): Promise<{ dryRun: boolean }> {
+  return invokeFunction<{ dryRun: boolean }>(
+    'bot-setup',
+    { action: 'test', chatId },
+    BOT_SETUP_EMPTY,
+  );
+}
+
+/** Кнопки админки «Клуб»: каждый вызов — по нажатию, без кеша (ответ Telegram меняется). */
+export function useFetchBotInfo() {
+  return useMutation({ mutationFn: fetchBotInfo });
+}
+
+export function useFetchBotChats() {
+  return useMutation({ mutationFn: fetchBotChats });
+}
+
+export function useSendBotTestMessage() {
+  return useMutation({ mutationFn: sendBotTestMessage });
 }

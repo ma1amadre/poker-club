@@ -24,10 +24,14 @@ supabase/
     _shared/admin.ts             # service-клиент supabase-js для функций
     _shared/messages.ts          # тексты постов бота
     _shared/announce.ts          # снимок анонса и решение «писать ли о правке вечера» (чистое, vitest)
+    _shared/botChats.ts          # группы бота из getUpdates для bot-setup (чистое, vitest)
     tg-auth/index.ts
     notify/index.ts              # + results.ts (итоги), changes.ts (перенос/отмена/возврат вечера)
     cron-tick/index.ts
+    bot-setup/index.ts           # имя бота, поиск группы, проверочный пост — для админки «Клуб»
   tests/NNN_*.sql                # SQL-проверки в транзакции с rollback (запуск — в шапке файла)
+.github/workflows/deploy.yml     # проверки → GitHub Pages + облачный Supabase (DEPLOY.md)
+.env.production                  # облачные VITE_SUPABASE_URL / _PUBLISHABLE_KEY (публичные)
 src/
   main.tsx, app/*, pages/*, shared/{supabase,telegram,auth,api,ui,lib}/*
   vendor/materia/*               # вендоренная «Материя» (scripts/sync-materia.mjs)
@@ -186,6 +190,11 @@ export interface EveningState {
 | `predictions` | pk `(evening_id, player_id)`, `winner_id uuid → players`, `first_out_id uuid → players`, `updated_at` |
 | `votes` | pk `(evening_id, voter_id, category)`, `category text check in ('hand','bluff','badbeat')`, `nominee_id uuid → players`, `caption text check (char_length <= 200)`, `photo_path text`, `created_at`; `check (voter_id <> nominee_id)` |
 
+Стартовые данные облака (seed туда не идёт) — миграция 011: строка `settings` (id=1; дефолты из 001:
+четверг 19:00 МСК, анонс за 48 ч, `group_chat_id`/`bot_username` пусты) и, если форматов ещё нет и
+`default_format_id` пуст, клубный формат `f0000000-0000-4000-8000-000000000001` «Клубный» = `DEFAULT_FORMAT`
+(сверяет `_shared/bootstrap-format.test.ts`) как `default_format_id`. Повторный прогон ничего не меняет.
+
 Индексы-ограничения: `evenings_one_per_club_day_idx` — unique по `((scheduled_at at time zone 'Europe/Moscow')::date)`
 `where status <> 'cancelled'`: не больше одного неотменённого вечера на московскую дату (вставка второго → 23505). Миграция 006.
 
@@ -223,7 +232,12 @@ export interface EveningState {
   повторное завершение опубликует «Исправленные итоги» и новое голосование.
 - `set_payout(p_evening uuid, p_pct numeric[])` — банкир вечера или админ, только пока `announced`:
   `format.payoutPct` вечера (1–10 долей > 0, сумма 100 — как `validateFormat`). Миграция 007.
-- `server_now() → timestamptz` — время сервера (clock_timestamp) для сверки часов клиента; доступна anon.
+- `server_now() → timestamptz` — время сервера (clock_timestamp) для сверки часов клиента; доступна anon
+  (её же раз в сутки дёргает `keepalive` из `poker-club-ops`).
+- `verify_cron_secret(p_secret text) → boolean` — только `service_role` (anon/authenticated — revoke):
+  совпадает ли заголовок `x-cron-secret` с `cron_secret` из Vault. Сравнение HMAC обеих строк на случайном
+  ключе вызова (время не зависит от общего префикса секрета); пустой аргумент или нет секрета — false.
+  Миграция 011.
 - `mark_settled(p_evening uuid, p_last_event_id bigint, p_voided_count int)` / `unmark_settled(p_evening uuid)` —
   банкир или админ; `status='settled'` / обратно в `finished`; оба снимают `settle_reopened_at` (миграция 008).
   `mark_settled` получает журнал, который видел экран расчёта (`journalVersion` в `pages/evening/lib.ts`: последний
@@ -288,17 +302,40 @@ export interface EveningState {
   удаление — владельцу или админу. Миграция 007.
 - Realtime: в публикации `supabase_realtime` — `evening_events`, `evenings`, `rsvps`.
 
+### Гранты
+Прав по умолчанию нет: облачный проект создан после 30.05.2026, когда Supabase перестал выдавать
+`anon`/`authenticated`/`service_role` права на новые объекты `public` (changelog «Tables not exposed to Data
+and GraphQL API automatically»); локально так же — `[api] auto_expose_new_tables = false` в `config.toml`.
+- `authenticated` — ровно нужное, миграция 002 (select на все таблицы, insert/update на `players`, `settings`,
+  `formats`, `evenings`); `anon` — только RPC `board_state`, `server_now`.
+- `service_role` (Edge Functions через `adminClient`) — select/insert/update/delete на все таблицы и
+  usage/select на sequences `public`, миграция 011; execute на RPC — поимённо в миграциях.
+- **Правило:** новая таблица (sequence) в миграции — сразу с явным `grant` для `service_role` и, если нужна
+  клиенту, для `authenticated`. Забытый грант в облаке ловит проверка после деплоя (`deploy.yml`), локально —
+  ручной вызов функций после `db reset`.
+
 ### Cron
 `pg_cron` раз в 15 минут: `net.http_post` на `{project_url}/functions/v1/cron-tick` с заголовком
-`x-cron-secret`. `project_url` и `cron_secret` — в Vault (`vault.create_secret`), в миграции не
-хардкодить; для локалки — в `seed.sql`. Время в БД — UTC; клубное расписание — Europe/Moscow.
+`x-cron-secret`. Оба значения — в Vault, в коде и окружении функций их нет:
+- `cron_secret` создаёт миграция 011 (32 случайных байта в hex), если его ещё нет; `cron-tick` сверяет
+  заголовок RPC `verify_cron_secret`. Локально `seed.sql` переписывает его на `local-cron-secret`
+  (`vault.update_secret`) — чтобы дёргать `cron-tick` руками.
+- `project_url` миграция не создаёт: в облаке его ставит деплой (Management API, `deploy.yml`), локально —
+  `seed.sql` (`http://host.docker.internal:57321`). Пока его нет, `private.invoke_cron_tick` тихо возвращает null.
+
+Время в БД — UTC; клубное расписание — Europe/Moscow.
 
 ## Edge Functions
 
-Окружение: `TELEGRAM_BOT_TOKEN`, `ADMIN_TG_ID` (tg id админа клуба), `CRON_SECRET`, `APP_URL`
-(адрес Mini App), `TELEGRAM_DRY_RUN=1` (локально: не слать в Telegram, а логировать),
-встроенные `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (или `SUPABASE_SECRET_KEY`, если задан).
-Локально — `supabase/functions/.env` (в git только `.env.example`).
+Окружение: `TELEGRAM_BOT_TOKEN`, `ADMIN_TG_ID` (tg id админа клуба), `APP_URL`
+(адрес Mini App; сейчас ни одна функция его не читает), `TELEGRAM_DRY_RUN=1` (локально: не слать в Telegram,
+а логировать), встроенные `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (или `SUPABASE_SECRET_KEY`, если задан).
+Секрета cron в окружении нет (миграция 011, см. «Cron»). Локально — `supabase/functions/.env` (в git только
+`.env.example`); в облаке `TELEGRAM_BOT_TOKEN`, `ADMIN_TG_ID`, `APP_URL` ставит деплой (`supabase secrets set`).
+Права вызывающего по JWT — `resolveCaller` в `_shared/admin.ts` (getUser + активный игрок `{id, is_admin, tg_id}`;
+notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-js@2.117.2`, версия точная (как у фронта
+в package-lock), обновлять в трёх импортах сразу. Сетевые ошибки Bot API (`callBotApi`) выходят без токена:
+сообщение fetch в Deno содержит URL с токеном, его вырезает `redactBotToken`.
 
 - `tg-auth` (`verify_jwt = false`): POST `{initData}` → проверка подписи по алгоритму Telegram
   (`secret = HMAC_SHA256(key="WebAppData", msg=bot_token)`, `hash = hex(HMAC_SHA256(secret, data_check_string))`,
@@ -330,7 +367,8 @@ export interface EveningState {
   Ответ `{ok: true, outcome: 'posted'|'already_posted'|'no_group'|'no_changes'|'not_announced', change?:
   'moved'|'cancelled'|'restored'}`; клиент — `notifyEveningFinished(eveningId, kind)` и
   `notifyEveningChanged(eveningId)` в `src/shared/api/rpc.ts`.
-- `cron-tick` (`verify_jwt = false`, проверка `x-cron-secret`): (1) если до ближайшей игры по
+- `cron-tick` (`verify_jwt = false`, проверка `x-cron-secret` через RPC `verify_cron_secret`: пустой или
+  неверный → 401 `bad_secret`, RPC недоступна → 500 `not_configured`): (1) если до ближайшей игры по
   расписанию осталось ≤ `announce_hours_before` и слот свободен — нет вечера (в любом статусе) ни в этот
   московский день по `scheduled_at`, ни закреплённого за ним по `slot_date` (перенесённый на другой день вечер
   держит свой слот: второго вечера и свежего анонса на опустевший день нет; `holdsSlot`/`slotFilter` в
@@ -340,6 +378,20 @@ export interface EveningState {
   с прошедшим `voting_closes_at` и пустым `voting_posted_at`; (3) добивает неотправленные итоги вечеров;
   (4) подстраховка `evening_changed`: для объявленных вечеров (`announced`/`cancelled`, не старше недели) тот же
   `postAnnounceChange` — если вызов из админки не дошёл, пост уйдёт с ближайшим тиком.
+- `bot-setup` (`verify_jwt = true`, только админ — `resolveCaller` + `is_admin`, иначе 403): POST
+  `{action: 'me'}` → `getMe` → `{bot: {username, name, canJoinGroups, canReadAllGroupMessages}}`;
+  `{action: 'chats'}` → `getUpdates` с `allowed_updates: ['my_chat_member', 'message']`, `limit 100`, **без
+  offset** (обновления не подтверждаются: повторный поиск видит их снова; Telegram хранит их не дольше 24 ч) →
+  `groupsFromUpdates` (`_shared/botChats.ts`: group/supergroup, членство по последнему `my_chat_member`,
+  сообщение — признак членства, если о чате больше ничего нет; группа, ставшая супергруппой, — только под
+  `migrate_to_chat_id`) → до 10 кандидатов перепроверяются `getChatMember(чат, бот)` → `{chats: [{id, title,
+  type, status}], updates}` — только группы, где состоит и вызывающий админ (`getChatMember(чат,
+  players.tg_id)`; чужую группу с ботом выбрать нельзя), у вызывающего без `tg_id` → 403 `no_tg_id`; `{action: 'test', chatId}` (целое < 0) → пост `botConnectedPost` («Бот клуба
+  подключён», кнопка на Mini App, если `bot_username` сохранён) → `{dryRun}`. Ошибки Telegram: 401/404 →
+  502 `bad_token`, 409 (webhook или чужой getUpdates) → 409 `updates_conflict`, 429 → 429, пост в чат без
+  бота → 409 `cannot_post`; без токена → 503 `no_token`. Dry-run: бот `DRY_RUN_BOT`, обновления
+  `DRY_RUN_UPDATES` (две группы), пост в лог. Клиент — `fetchBotInfo`/`fetchBotChats`/`sendBotTestMessage`
+  и хуки `useFetchBotInfo`/`useFetchBotChats`/`useSendBotTestMessage` в `src/shared/api/rpc.ts`.
 - Кнопки в постах группы — URL-кнопки на прямую ссылку Mini App
   `https://t.me/<bot_username>?startapp=<param>` (web_app-кнопки в группах недоступны).
   `startapp`: `e_<eveningId>` → вечер, `v_<eveningId>` → голосование, `r` → рейтинг.
@@ -389,6 +441,11 @@ export interface EveningState {
   вне AuthProvider); `/rating` (сезон / деньги / всё время / оракул / зал славы); `/player/:id`;
   `/history`; `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
   `/admin` без `?tab` (и с неизвестной вкладкой) открывает «Вечера» (`adminTab` в `pages/admin/lib.ts`).
+- Админка «Клуб» → «Группа и бот» (`pages/admin/BotSetup.tsx`): «Подтянуть из бота» (`bot-setup` me) и выбор
+  в шторке «Найти группу» (`bot-setup` chats) сохраняют одно поле сразу (`upsertSettings`) и подставляют его
+  в открытый черновик формы; «Отправить проверочное сообщение» — в сохранённую группу. Подсказка «Если
+  группа не находится»: бот — админ группы, поиск сразу после добавления (Telegram хранит обновление сутки),
+  иначе удалить бота и добавить снова. ID группы и имя бота по-прежнему можно вписать руками.
 - Админка «Игроки»: у игрока без `tg_id` — «Привязать к Telegram» (`pages/admin/MergeSheet.tsx`): выбор профиля
   с Telegram, предпросмотр `merge_players_preview` (что перенесётся, что мешает), подтверждение с перечнем,
   результат тостом. «Вечер»: после сохранения вечера с уже ушедшим анонсом — `notifyEveningChanged`; отмена
@@ -423,16 +480,24 @@ export interface EveningState {
   с подменой id.
 
 ## Тестовые данные (seed.sql, только локально)
-Игроки с `tg_id` 1001–1006 (1001 — админ), один гость, формат по умолчанию, settings
-(четверг 19:00 МСК), 4–6 завершённых вечеров с реалистичными событиями (ребаи, сплит-нокаут,
+Игроки с `tg_id` 1001–1006 (1001 — админ), один гость, settings (четверг 19:00 МСК; клубный формат
+создаёт миграция 011, seed на него ссылается), `cron_secret` = `local-cron-secret`, `project_url`, 4–6 завершённых вечеров с реалистичными событиями (ребаи, сплит-нокаут,
 платежи) и один `announced` вечер — чтобы рейтинг, ачивки и карточки игроков было на чём смотреть.
 
-## Деплой в облако: чеклист Auth (до подключения группы)
-Защита входа держится на настройках Auth из `supabase/config.toml`, в облако они сами не переезжают.
-1. После `supabase link` — `supabase config push` (сверить diff секции `[auth]`) или вручную в дашборде:
-   Authentication → выключить «Allow new users to sign up» и провайдер Email (вход по паролю),
-   включить Secure password change.
-2. Проверить, что вход `tg-auth` → `verifyOtp(token_hash)` работает с выключенным Email-провайдером
-   (локально так и настроено; в облаке не проверялось).
-3. Сразу после деплоя войти админом (`ADMIN_TG_ID`), до подключения группы.
-4. Участника, вышедшего из группы, админ выключает (`is_active=false`): refresh-токен иначе живёт дальше.
+## Деплой в облако
+Процесс целиком — `DEPLOY.md`. `.github/workflows/deploy.yml` (push в `main` + вручную; триггеров
+`pull_request*` нет — репозиторий публичный): `checks` (npm ci, typecheck, lint, test) → `pages-build`
+(сборка с `BASE_PATH=/poker-club/` и `.env.production`, проверка, что dev-входа нет в бандле) → `pages-deploy`;
+параллельно `backend` (только `refs/heads/main`): без секретов `SUPABASE_ACCESS_TOKEN`/`SUPABASE_DB_PASSWORD` — notice и успех, иначе
+`supabase link` → `db push --linked --skip-vault --yes` (без seed) → `functions deploy` → `secrets set`
+(`APP_URL` из vars, `ADMIN_TG_ID` и `TELEGRAM_BOT_TOKEN` из секретов) → `project_url` в Vault через Management API →
+проверка: `cron-tick` 401 на неверный секрет; SQL — гранты `service_role` на все таблицы/sequences `public`,
+`cron_secret` и `project_url` в Vault, активное задание pg_cron; `private.invoke_cron_tick()` → ответ в
+`net._http_response` 200 без `errors`. Переменные репозитория: `SUPABASE_PROJECT_REF`, `APP_URL`; секреты —
+`SUPABASE_ACCESS_TOKEN` (scoped), `SUPABASE_DB_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `ADMIN_TG_ID`. Actions закреплены SHA,
+обновления — Dependabot (`.github/dependabot.yml`). Резервные копии и keepalive — отдельный приватный репозиторий `poker-club-ops`.
+
+Auth в облаке: `supabase config push` не используется (`[auth]` в `config.toml` — локальные адреса);
+регистрация выключена руками. Провайдер Email не выключать: вход `tg-auth` → `verifyOtp(token_hash)` с
+выключенным провайдером не проверялся. Сразу после деплоя войти админом (`ADMIN_TG_ID`), до подключения
+группы. Участника, вышедшего из группы, админ выключает (`is_active=false`): refresh-токен иначе живёт дальше.

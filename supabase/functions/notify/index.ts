@@ -6,12 +6,12 @@
 // время, место или отмена — пост «Вечер перенесён» / «отменён» / «всё-таки состоится» (changes.ts).
 import {
   adminClient,
-  bearerToken,
   describeError,
   errorResponse,
   json,
   preflight,
   readJsonBody,
+  resolveCaller,
   UUID_RE,
 } from '../_shared/admin.ts';
 import { TelegramApiError } from '../_shared/telegram.ts';
@@ -24,11 +24,6 @@ import {
   type EveningRow,
 } from './results.ts';
 
-interface CallerRow {
-  id: string;
-  is_admin: boolean;
-}
-
 Deno.serve(async (req: Request): Promise<Response> => {
   const pre = preflight(req);
   if (pre) return pre;
@@ -37,22 +32,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     const db = adminClient();
 
-    // Кто вызывает: JWT проверяем через Auth (getUser), а не только на шлюзе — шлюз пропустил бы
-    // и anon-ключ, который тоже JWT.
-    const token = bearerToken(req);
-    if (!token) return errorResponse(401, 'no_token', 'Нужен вход в приложение');
-    const { data: userData, error: userError } = await db.auth.getUser(token);
-    if (userError || !userData.user) {
-      return errorResponse(401, 'bad_token', 'Сессия недействительна, открой приложение заново');
-    }
-    const { data: caller, error: callerError } = await db
-      .from('players')
-      .select('id, is_admin')
-      .eq('auth_user_id', userData.user.id)
-      .eq('is_active', true)
-      .maybeSingle<CallerRow>();
-    if (callerError) throw new Error(describeError(callerError));
-    if (!caller) return errorResponse(403, 'not_player', 'Ты не участник клуба');
+    const who = await resolveCaller(db, req);
+    if ('response' in who) return who.response;
+    const { caller } = who;
 
     const body = await readJsonBody(req);
     const kind = body?.kind;

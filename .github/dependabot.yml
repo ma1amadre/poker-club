@@ -1,0 +1,15 @@
+# Dependabot следит только за actions в .github/workflows: они закреплены SHA коммита, и без
+# подсказок SHA устареют. Раз в месяц — один PR со всеми обновлениями (группа), а не по PR на action.
+# Workflow deploy на PR не запускается (триггеров pull_request нет), так что PR — только предложение:
+# смотреть changelog action и вливать руками.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci

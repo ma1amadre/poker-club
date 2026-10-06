@@ -9,6 +9,7 @@ import {
   escapeHtml,
   isChatMember,
   miniAppLink,
+  redactBotToken,
   sendMessage,
   signInitDataFields,
   telegramDisplayName,
@@ -250,5 +251,43 @@ describe('sendMessage', () => {
       ),
     );
     await expect(sendMessage(-100, 'текст')).rejects.toThrow(/chat not found/);
+  });
+
+  it('сетевая ошибка fetch не выносит токен из URL', async () => {
+    vi.stubEnv('TELEGRAM_DRY_RUN', '');
+    vi.stubEnv('TELEGRAM_BOT_TOKEN', TOKEN);
+    // Так Deno описывает DNS/TCP-сбой: URL запроса целиком, вместе с токеном.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        throw new TypeError(
+          `error sending request for url (${url}): client error (Connect): dns error`,
+        );
+      }),
+    );
+    const err = await sendMessage(-100, 'текст').then(
+      () => null,
+      (e: unknown) => e as Error,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err?.message).toMatch(/^Telegram sendMessage: сеть: TypeError: /);
+    expect(err?.message).toContain('/bot<token>/sendMessage');
+    expect(err?.message).not.toContain('LOCAL_FAKE_TOKEN');
+    expect(err?.cause).toBeUndefined();
+  });
+});
+
+describe('redactBotToken', () => {
+  it('вырезает токен как есть, percent-encoded и любой сегмент /bot…/', () => {
+    expect(redactBotToken(`x https://api.telegram.org/bot${TOKEN}/getMe y`, TOKEN)).toBe(
+      'x https://api.telegram.org/bot<token>/getMe y',
+    );
+    expect(redactBotToken(`url /bot${encodeURIComponent(TOKEN)}/getMe`, TOKEN)).toBe(
+      'url /bot<token>/getMe',
+    );
+    expect(redactBotToken('(https://api.telegram.org/bot999:OTHER/getUpdates)', TOKEN)).toBe(
+      '(https://api.telegram.org/bot<token>/getUpdates)',
+    );
+    expect(redactBotToken(`голый ${TOKEN}`, TOKEN)).toBe('голый <token>');
   });
 });

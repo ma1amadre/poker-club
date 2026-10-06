@@ -1,7 +1,7 @@
 -- seed.sql — тестовые данные ТОЛЬКО для локального стека (supabase db reset).
 -- В облако не попадает: db push накатывает миграции, но не seed.
 --
--- Состав: 6 игроков (tg_id 1001–1006, 1001 — админ Женя) и гость, клубный формат, настройки,
+-- Состав: 6 игроков (tg_id 1001–1006, 1001 — админ Женя) и гость, настройки (клубный формат — из миграции 011),
 -- отменённый вечер, 5 завершённых вечеров (2026-Q3 ×4, 2026-Q4 ×1) и анонс на ближайший четверг.
 -- Сегодня по сценарию — вторник 2026-10-06.
 --
@@ -47,32 +47,11 @@ insert into seed_pl values
 -- ---------------------------------------------------------------------------
 -- Формат и настройки
 -- ---------------------------------------------------------------------------
--- config — ровно DEFAULT_FORMAT из domain/format.ts.
-insert into public.formats (id, name, config) values (
-  'f0000000-0000-4000-8000-000000000001',
-  'Клубный',
-  '{
-     "name": "Клубный",
-     "buyInRub": 500,
-     "startingChips": 500,
-     "bountyRub": 100,
-     "rebuyUntilLevel": 5,
-     "rebuyLimit": null,
-     "payoutPct": [70, 30],
-     "levels": [
-       {"sb": 5,   "bb": 10,  "trigger": {"type": "time", "minutes": 40}},
-       {"sb": 10,  "bb": 20,  "trigger": {"type": "time", "minutes": 40}},
-       {"sb": 15,  "bb": 30,  "trigger": {"type": "time", "minutes": 40}},
-       {"sb": 20,  "bb": 40,  "trigger": {"type": "time", "minutes": 40}},
-       {"sb": 25,  "bb": 50,  "trigger": {"type": "time", "minutes": 40}},
-       {"sb": 50,  "bb": 100, "trigger": {"type": "time", "minutes": 40}},
-       {"sb": 75,  "bb": 150, "trigger": {"type": "time", "minutes": 40}},
-       {"sb": 100, "bb": 200, "trigger": {"type": "time", "minutes": 40}}
-     ]
-   }'::jsonb);
+-- Клубный формат (id f0000000-…-0001, ровно DEFAULT_FORMAT из domain/format.ts) создаёт миграция 011 —
+-- та же, что заводит его в облаке. Здесь на него только ссылаемся.
 
--- Строку settings создала миграция 001. group_chat_id не задаём: без группы tg-auth пускает
--- только ADMIN_TG_ID, а cron-tick с TELEGRAM_DRY_RUN=1 лишь логирует посты.
+-- Строку settings создала миграция 001, формат по умолчанию проставила 011. group_chat_id не задаём:
+-- без группы tg-auth пускает только ADMIN_TG_ID, а cron-tick с TELEGRAM_DRY_RUN=1 лишь логирует посты.
 update public.settings
 set bot_username          = 'poker_club_local_bot',
     game_weekday          = 4,         -- четверг
@@ -424,15 +403,24 @@ drop table seed_pl;
 -- Vault: адрес и секрет для локального cron (миграция 005)
 -- ---------------------------------------------------------------------------
 -- host.docker.internal — потому что запрос идёт из контейнера БД к API на хосте (порт 57321).
--- cron_secret должен совпадать с CRON_SECRET в supabase/functions/.env.
+-- cron_secret миграция 011 уже создала случайным; локально заменяем его на известное значение,
+-- чтобы cron-tick можно было дёрнуть руками:
+--   curl -X POST http://127.0.0.1:57321/functions/v1/cron-tick -H 'x-cron-secret: local-cron-secret'
+-- Обновляем, а не создаём: имя секрета в Vault уникально, второй create_secret упал бы.
 do $$
+declare
+  v_id uuid;
 begin
   if not exists (select 1 from vault.secrets where name = 'project_url') then
     perform vault.create_secret('http://host.docker.internal:57321', 'project_url',
                                 'Адрес API для cron-tick (локальный стек)');
   end if;
-  if not exists (select 1 from vault.secrets where name = 'cron_secret') then
+  select id into v_id from vault.secrets where name = 'cron_secret';
+  if v_id is null then
     perform vault.create_secret('local-cron-secret', 'cron_secret',
+                                'Заголовок x-cron-secret для cron-tick (локальный стек)');
+  else
+    perform vault.update_secret(v_id, 'local-cron-secret', null,
                                 'Заголовок x-cron-secret для cron-tick (локальный стек)');
   end if;
 end;
