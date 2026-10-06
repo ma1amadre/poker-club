@@ -30,7 +30,10 @@ export interface PredictionOutcome {
   firstBustPlayerId: PlayerId | null;
 }
 
-export function scorePrediction(prediction: Prediction, outcome: PredictionOutcome): PredictionScore {
+export function scorePrediction(
+  prediction: Prediction,
+  outcome: PredictionOutcome,
+): PredictionScore {
   const winnerId = outcome.places[0];
   const winner: 0 | 3 =
     winnerId !== undefined && prediction.winnerId === winnerId ? PREDICTION_POINTS.winner : 0;

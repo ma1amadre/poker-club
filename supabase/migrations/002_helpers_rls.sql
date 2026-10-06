@@ -213,3 +213,11 @@ grant execute on function
   public.is_banker(uuid),
   public.is_participant(uuid, uuid)
   to service_role;
+
+-- Чтобы таблица или функция из будущей миграции не оказалась открытой anon «по умолчанию»:
+-- снимаем выдачу Supabase по умолчанию для объектов, которые создаёт postgres в public.
+-- Каждая новая миграция выдаёт права явно. Глобальный execute для PUBLIC так не снять
+-- (он не по схеме) — его по-прежнему отзывают поимённо, как в 003.
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
+alter default privileges in schema public revoke execute on functions from anon, authenticated;

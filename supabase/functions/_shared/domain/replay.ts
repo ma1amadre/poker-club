@@ -166,7 +166,9 @@ function validate(
 ): string | null {
   // Деньги через банкира ходят и до, и после завершения вечера (взнос при входе, выплата после).
   if (type === 'payment') {
-    return readPayment(payload) === null ? 'Платёж: нужен игрок и ненулевая сумма в целых рублях' : null;
+    return readPayment(payload) === null
+      ? 'Платёж: нужен игрок и ненулевая сумма в целых рублях'
+      : null;
   }
   if (s.finished) return 'Вечер уже завершён';
 
@@ -185,7 +187,8 @@ function validate(
       if (!p) return 'Игрок не входил в турнир';
       if (p.alive) return 'Игрок ещё в игре — ребай только после вылета';
       if (!s.rebuysOpen) return 'Ребаи закрыты';
-      if (format.rebuyLimit !== null && p.rebuys >= format.rebuyLimit) return 'Лимит ребаев исчерпан';
+      if (format.rebuyLimit !== null && p.rebuys >= format.rebuyLimit)
+        return 'Лимит ребаев исчерпан';
       return null;
     }
     case 'bust': {
@@ -312,7 +315,11 @@ function apply(
     case 'hand': {
       t.handsInLevel += 1;
       const trig = levelAt(format, t.levelIndex).trigger;
-      if (trig.type === 'hands' && t.handsInLevel >= trig.count && t.levelIndex < lastLevelIndex(format)) {
+      if (
+        trig.type === 'hands' &&
+        t.handsInLevel >= trig.count &&
+        t.levelIndex < lastLevelIndex(format)
+      ) {
         enterLevel(s, t.levelIndex + 1, 0);
       }
       return;

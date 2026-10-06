@@ -36,7 +36,12 @@ export function voteResults(votes: readonly Vote[]): Record<VoteCategory, VoteRe
     const r = result[cat];
     const max = Math.max(0, ...Object.values(r.counts));
     // Сортировка — чтобы порядок победителей не зависел от порядка строк из БД.
-    r.winners = max > 0 ? Object.keys(r.counts).filter((id) => r.counts[id] === max).sort() : [];
+    r.winners =
+      max > 0
+        ? Object.keys(r.counts)
+            .filter((id) => r.counts[id] === max)
+            .sort()
+        : [];
   }
   return result;
 }

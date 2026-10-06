@@ -64,7 +64,10 @@ export function formatDuration(ms: number): string {
 }
 
 /** Русское склонение: plural(5, ['вечер', 'вечера', 'вечеров']) → 'вечеров'. */
-export function plural(n: number, forms: readonly [one: string, few: string, many: string]): string {
+export function plural(
+  n: number,
+  forms: readonly [one: string, few: string, many: string],
+): string {
   const abs = Math.abs(Math.trunc(n));
   const mod10 = abs % 10;
   const mod100 = abs % 100;
@@ -139,7 +142,9 @@ const partsFormatter = new Intl.DateTimeFormat('en-US', {
   second: '2-digit',
 });
 
-function clubParts(date: Date): Record<'year' | 'month' | 'day' | 'hour' | 'minute' | 'second', number> {
+function clubParts(
+  date: Date,
+): Record<'year' | 'month' | 'day' | 'hour' | 'minute' | 'second', number> {
   const out = { year: 0, month: 0, day: 0, hour: 0, minute: 0, second: 0 };
   for (const part of partsFormatter.formatToParts(date)) {
     if (part.type in out) out[part.type as keyof typeof out] = Number(part.value);

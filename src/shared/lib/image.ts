@@ -25,7 +25,12 @@ async function decode(file: Blob): Promise<Drawable> {
   if (typeof createImageBitmap === 'function') {
     try {
       const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-      return { source: bitmap, width: bitmap.width, height: bitmap.height, release: () => bitmap.close() };
+      return {
+        source: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        release: () => bitmap.close(),
+      };
     } catch {
       // Старый WebView без поддержки опций или формата — пробуем через <img>.
     }

@@ -147,7 +147,8 @@ export interface EveningState {
   участников вечера (гости тоже). Конфиг `{koPoints: 0.5, winBonus: 1}` из settings.
 - `summary.ts`: `summarize(eveningId, dateIso, format, events, cfg) → EveningSummary` —
   компактный итог завершённого вечера для статистики:
-  `{eveningId, date, seasonKey, entrants, places, points, netRub, kos, koPairs: [killer, victim][], rebuys, bustLevel}`.
+  `{eveningId, date, seasonKey, entrants, places, points, netRub, kos, koPairs: [killer, victim][], rebuys, bustLevel,
+  firstBustPlayerId, busts: {victim, by}[]}` (последние два — для прогнозов и `first_blood` при дележе).
 - `season.ts`: `seasonKey(dateIso, tz='Europe/Moscow') → '2026-Q4'`; `seasonStandings(summaries, {bestN, excluded: Set<PlayerId>})`
   → строки `{playerId, total, counted: number[], played, wins, kos, netRub}` отсортированы; `allTimeStandings(...)`;
   `oracleStandings(predictionScores)`; `hallOfFame(summaries, ...)` → чемпионы завершённых кварталов.
@@ -196,8 +197,14 @@ export interface EveningState {
 - `set_prediction(p_evening uuid, p_winner uuid, p_first_out uuid)` — пока `status='announced'`.
 - `cast_vote(p_evening uuid, p_category text, p_nominee uuid, p_caption text, p_photo_path text)` —
   голосующий и номинант — участники вечера, `now() < voting_closes_at`, не за себя; upsert.
+- `delete_vote(p_evening uuid, p_voter uuid, p_category text)` — свой голос, пока голосование открыто;
+  любой — админ. Фото из Storage удаляется отдельно.
+- `set_my_name(p_name text)` — 1–40 символов, пробелы схлопываются.
 - `board_state(p_token uuid) → jsonb` — **доступен anon**; для `status in ('announced','live')` или
-  `finished` не старше 6 часов: `{evening:{id,scheduled_at,location,status,started_at,finished_at}, format, events:[без payment, без voided], players:[{id,display_name}]}`; иначе null.
+  `finished` не старше 6 часов: `{evening:{id,scheduled_at,location,status,started_at,finished_at}, format, events:[без payment, без voided], players:[{id,display_name}]}`
+  (`players` — только упомянутые в событиях); иначе null.
+- Служебные функции — в схеме `private` (не выставлена в API). Коды ошибок RPC: 42501 нет прав,
+  22023 неверные данные (лишний ключ в payload — тоже), P0001 недопустимо в текущем состоянии.
 
 ### RLS
 - Все таблицы: `select` для `current_player_id() is not null` (активный участник клуба), кроме:
@@ -231,10 +238,15 @@ export interface EveningState {
   только `ADMIN_TG_ID` → upsert `players` по `tg_id` (имя, username, фото; `ADMIN_TG_ID` → `is_admin`) →
   auth-пользователь `tg<id>@users.poker-club.invalid` (`admin.createUser` с `email_confirm`, если нет)
   → `admin.generateLink({type:'magiclink'})` → ответ `{tokenHash, player}`. Клиент делает
-  `auth.verifyOtp({type:'email', token_hash})`. Ошибки: 401 (подпись), 403 (не участник группы).
+  `auth.verifyOtp({type:'email', token_hash})`. Ошибки — тело `{error: текст, code}`: 401 (подпись:
+  `bad_hash`, `expired`, …), 403 (`not_member`, `no_group`, `inactive`). Имя из Telegram берётся только
+  при создании игрока (дальше его меняют админ и `set_my_name`). При `TELEGRAM_DRY_RUN=1` и пустой
+  `group_chat_id` пускает всех — для dev-входа за игроков seed.
 - `notify` (JWT обязателен): POST `{kind: 'evening_finished', eveningId}` — только банкир вечера или
   админ; сервер сам собирает текст (итог, места, деньги, новые ачивки, приглашение голосовать) из БД
   доменными функциями и шлёт в `settings.group_chat_id`. Идемпотентно по `results_posted_at`.
+  Ответ `{ok: true, outcome: 'posted'|'already_posted'|'no_group'}`; клиент — `notifyEveningFinished`
+  в `src/shared/api/rpc.ts`.
 - `cron-tick` (`verify_jwt = false`, проверка `x-cron-secret`): (1) если до ближайшей игры по
   расписанию осталось ≤ `announce_hours_before` и вечера на эту дату нет — создаёт `evenings`
   (формат по умолчанию, банкир не назначен) и постит анонс; (2) постит итоги голосования для вечеров

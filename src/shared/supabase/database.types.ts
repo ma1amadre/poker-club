@@ -1,12 +1,28 @@
-// РУЧНАЯ типизация схемы public по ARCHITECTURE.md в формате `supabase gen types typescript`.
-// Заменяется сгенерированной: `npx supabase gen types typescript --local > src/shared/supabase/database.types.ts`.
-// Поэтому здесь только «сырые» типы БД (text с check-ограничениями — просто string, jsonb — Json);
-// сужение до доменных типов делает слой src/shared/api.
-// Блок __InternalSupabase (версия PostgREST) не указан намеренно — его допишет генератор.
-
+// Сгенерировано: `npx supabase gen types typescript --local` (+ prettier). Руками не править —
+// сужение до доменных типов делает src/shared/api/types.ts.
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type Database = {
+  graphql_public: {
+    Tables: {
+      [_ in never]: never;
+    };
+    Views: {
+      [_ in never]: never;
+    };
+    Functions: {
+      graphql: {
+        Args: { extensions?: Json; operationName?: string; query?: string; variables?: Json };
+        Returns: Json;
+      };
+    };
+    Enums: {
+      [_ in never]: never;
+    };
+    CompositeTypes: {
+      [_ in never]: never;
+    };
+  };
   public: {
     Tables: {
       evening_events: {
@@ -15,7 +31,7 @@ export type Database = {
           created_by: string | null;
           evening_id: string;
           id: number;
-          payload: Json;
+          payload: NonNullable<Json>;
           type: string;
           voided_at: string | null;
           voided_by: string | null;
@@ -25,7 +41,7 @@ export type Database = {
           created_by?: string | null;
           evening_id: string;
           id?: number;
-          payload?: Json;
+          payload?: NonNullable<Json>;
           type: string;
           voided_at?: string | null;
           voided_by?: string | null;
@@ -35,7 +51,7 @@ export type Database = {
           created_by?: string | null;
           evening_id?: string;
           id?: number;
-          payload?: Json;
+          payload?: NonNullable<Json>;
           type?: string;
           voided_at?: string | null;
           voided_by?: string | null;
@@ -72,7 +88,7 @@ export type Database = {
           created_at: string;
           created_by: string | null;
           finished_at: string | null;
-          format: Json;
+          format: NonNullable<Json>;
           id: string;
           location: string | null;
           note: string | null;
@@ -91,7 +107,7 @@ export type Database = {
           created_at?: string;
           created_by?: string | null;
           finished_at?: string | null;
-          format: Json;
+          format: NonNullable<Json>;
           id?: string;
           location?: string | null;
           note?: string | null;
@@ -110,7 +126,7 @@ export type Database = {
           created_at?: string;
           created_by?: string | null;
           finished_at?: string | null;
-          format?: Json;
+          format?: NonNullable<Json>;
           id?: string;
           location?: string | null;
           note?: string | null;
@@ -141,21 +157,21 @@ export type Database = {
       };
       formats: {
         Row: {
-          config: Json;
+          config: NonNullable<Json>;
           created_at: string;
           id: string;
           is_archived: boolean;
           name: string;
         };
         Insert: {
-          config: Json;
+          config: NonNullable<Json>;
           created_at?: string;
           id?: string;
           is_archived?: boolean;
           name: string;
         };
         Update: {
-          config?: Json;
+          config?: NonNullable<Json>;
           created_at?: string;
           id?: string;
           is_archived?: boolean;
@@ -297,8 +313,8 @@ export type Database = {
           bot_username: string | null;
           default_format_id: string | null;
           default_location: string | null;
-          game_time: string | null;
-          game_weekday: number | null;
+          game_time: string;
+          game_weekday: number;
           group_chat_id: number | null;
           id: number;
           ko_points: number;
@@ -311,8 +327,8 @@ export type Database = {
           bot_username?: string | null;
           default_format_id?: string | null;
           default_location?: string | null;
-          game_time?: string | null;
-          game_weekday?: number | null;
+          game_time?: string;
+          game_weekday?: number;
           group_chat_id?: number | null;
           id?: number;
           ko_points?: number;
@@ -325,8 +341,8 @@ export type Database = {
           bot_username?: string | null;
           default_format_id?: string | null;
           default_location?: string | null;
-          game_time?: string | null;
-          game_weekday?: number | null;
+          game_time?: string;
+          game_weekday?: number;
           group_chat_id?: number | null;
           id?: number;
           ko_points?: number;
@@ -402,13 +418,13 @@ export type Database = {
     };
     Functions: {
       add_event: {
-        Args: { p_evening: string; p_payload: Json; p_type: string };
+        Args: { p_evening: string; p_payload?: Json; p_type: string };
         Returns: {
           at: string;
           created_by: string | null;
           evening_id: string;
           id: number;
-          payload: Json;
+          payload: NonNullable<Json>;
           type: string;
           voided_at: string | null;
           voided_by: string | null;
@@ -423,22 +439,26 @@ export type Database = {
       board_state: { Args: { p_token: string }; Returns: Json };
       cast_vote: {
         Args: {
-          p_caption: string | null;
+          p_caption?: string;
           p_category: string;
           p_evening: string;
           p_nominee: string;
-          p_photo_path: string | null;
+          p_photo_path?: string;
         };
         Returns: undefined;
       };
-      current_player_id: { Args: never; Returns: string };
-      is_admin: { Args: never; Returns: boolean };
+      current_player_id: { Args: Record<PropertyKey, never>; Returns: string };
+      delete_vote: {
+        Args: { p_category: string; p_evening: string; p_voter: string };
+        Returns: undefined;
+      };
+      is_admin: { Args: Record<PropertyKey, never>; Returns: boolean };
       is_banker: { Args: { evening: string }; Returns: boolean };
       is_participant: { Args: { evening: string; player: string }; Returns: boolean };
       mark_settled: { Args: { p_evening: string }; Returns: undefined };
       set_my_name: { Args: { p_name: string }; Returns: undefined };
       set_prediction: {
-        Args: { p_evening: string; p_first_out: string | null; p_winner: string | null };
+        Args: { p_evening: string; p_first_out: string; p_winner: string };
         Returns: undefined;
       };
       set_rsvp: { Args: { p_evening: string; p_status: string }; Returns: undefined };
@@ -462,15 +482,13 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema['Tables'] & DefaultSchema['Views'])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Views'])
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
+    : never) = never,
+> = DefaultSchemaTableNameOrOptions extends { schema: keyof DatabaseWithoutInternals }
   ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'] &
       DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Views'])[TableName] extends {
       Row: infer R;
@@ -487,16 +505,13 @@ export type Tables<
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema['Tables']
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+    keyof DefaultSchema['Tables'] | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables']
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
+    : never) = never,
+> = DefaultSchemaTableNameOrOptions extends { schema: keyof DatabaseWithoutInternals }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'][TableName] extends {
       Insert: infer I;
     }
@@ -512,16 +527,13 @@ export type TablesInsert<
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema['Tables']
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+    keyof DefaultSchema['Tables'] | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables']
-    : never = never,
-> = DefaultSchemaTableNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
+    : never) = never,
+> = DefaultSchemaTableNameOrOptions extends { schema: keyof DatabaseWithoutInternals }
   ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions['schema']]['Tables'][TableName] extends {
       Update: infer U;
     }
@@ -537,16 +549,13 @@ export type TablesUpdate<
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema['Enums']
-    | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    keyof DefaultSchema['Enums'] | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions['schema']]['Enums']
-    : never = never,
-> = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
+    : never) = never,
+> = DefaultSchemaEnumNameOrOptions extends { schema: keyof DatabaseWithoutInternals }
   ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions['schema']]['Enums'][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema['Enums']
     ? DefaultSchema['Enums'][DefaultSchemaEnumNameOrOptions]
@@ -554,22 +563,22 @@ export type Enums<
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema['CompositeTypes']
-    | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    keyof DefaultSchema['CompositeTypes'] | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals;
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions['schema']]['CompositeTypes']
-    : never = never,
-> = PublicCompositeTypeNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals;
-}
+    : never) = never,
+> = PublicCompositeTypeNameOrOptions extends { schema: keyof DatabaseWithoutInternals }
   ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions['schema']]['CompositeTypes'][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema['CompositeTypes']
     ? DefaultSchema['CompositeTypes'][PublicCompositeTypeNameOrOptions]
     : never;
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

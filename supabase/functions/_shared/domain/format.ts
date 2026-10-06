@@ -44,11 +44,14 @@ export function validateFormat(format: unknown): string[] {
   const f = format;
 
   if (typeof f.name !== 'string' || f.name.trim() === '') errors.push('Не задано название формата');
-  if (!isInt(f.buyInRub) || f.buyInRub <= 0) errors.push('Вход должен быть целым числом рублей больше 0');
+  if (!isInt(f.buyInRub) || f.buyInRub <= 0)
+    errors.push('Вход должен быть целым числом рублей больше 0');
   if (!isInt(f.startingChips) || f.startingChips <= 0)
     errors.push('Стартовый стек должен быть целым числом больше 0');
-  if (!isInt(f.bountyRub) || f.bountyRub < 0) errors.push('Баунти должно быть целым числом рублей, не меньше 0');
-  else if (isInt(f.buyInRub) && f.bountyRub > f.buyInRub) errors.push('Баунти не может быть больше входа');
+  if (!isInt(f.bountyRub) || f.bountyRub < 0)
+    errors.push('Баунти должно быть целым числом рублей, не меньше 0');
+  else if (isInt(f.buyInRub) && f.bountyRub > f.buyInRub)
+    errors.push('Баунти не может быть больше входа');
   if (!isInt(f.rebuyUntilLevel) || f.rebuyUntilLevel < 0)
     errors.push('Уровень закрытия ребаев должен быть целым числом не меньше 0');
   if (f.rebuyLimit !== null && (!isInt(f.rebuyLimit) || f.rebuyLimit < 0))
@@ -63,7 +66,8 @@ export function validateFormat(format: unknown): string[] {
     else {
       const sum = (pcts as number[]).reduce((a, b) => a + b, 0);
       // Допуск на дробные доли вида 33.3/33.3/33.4.
-      if (Math.abs(sum - 100) > 1e-9) errors.push(`Сумма долей призовых должна быть 100%, сейчас ${sum}%`);
+      if (Math.abs(sum - 100) > 1e-9)
+        errors.push(`Сумма долей призовых должна быть 100%, сейчас ${sum}%`);
     }
   }
 
@@ -76,8 +80,10 @@ export function validateFormat(format: unknown): string[] {
         errors.push(`Уровень ${n}: неверная запись`);
         return;
       }
-      if (!isInt(lv.sb) || lv.sb < 0) errors.push(`Уровень ${n}: малый блайнд — целое число не меньше 0`);
-      if (!isInt(lv.bb) || lv.bb <= 0) errors.push(`Уровень ${n}: большой блайнд — целое число больше 0`);
+      if (!isInt(lv.sb) || lv.sb < 0)
+        errors.push(`Уровень ${n}: малый блайнд — целое число не меньше 0`);
+      if (!isInt(lv.bb) || lv.bb <= 0)
+        errors.push(`Уровень ${n}: большой блайнд — целое число больше 0`);
       if (isInt(lv.sb) && isInt(lv.bb) && lv.sb > lv.bb)
         errors.push(`Уровень ${n}: малый блайнд больше большого`);
       if (lv.ante !== undefined && (!isInt(lv.ante) || lv.ante < 0))
@@ -86,9 +92,11 @@ export function validateFormat(format: unknown): string[] {
       if (!isObj(t)) {
         errors.push(`Уровень ${n}: не задан триггер смены уровня`);
       } else if (t.type === 'time') {
-        if (!isInt(t.minutes) || t.minutes <= 0) errors.push(`Уровень ${n}: длительность — целое число минут больше 0`);
+        if (!isInt(t.minutes) || t.minutes <= 0)
+          errors.push(`Уровень ${n}: длительность — целое число минут больше 0`);
       } else if (t.type === 'eliminations' || t.type === 'hands') {
-        if (!isInt(t.count) || t.count <= 0) errors.push(`Уровень ${n}: число для триггера должно быть больше 0`);
+        if (!isInt(t.count) || t.count <= 0)
+          errors.push(`Уровень ${n}: число для триггера должно быть больше 0`);
       } else {
         errors.push(`Уровень ${n}: неизвестный триггер`);
       }

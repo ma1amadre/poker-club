@@ -156,6 +156,11 @@ export function expand(): void {
   if (isInTelegram()) getWebApp()?.expand();
 }
 
+/** Закрыть Mini App (экран «нет доступа»); вне Telegram ничего не делает. */
+export function closeApp(): void {
+  if (isInTelegram()) getWebApp()?.close();
+}
+
 export function onTelegramEvent(event: TelegramEvent, cb: () => void): () => void {
   const app = getWebApp();
   if (!app || !isInTelegram()) return () => {};

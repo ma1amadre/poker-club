@@ -1,0 +1,154 @@
+/*
+ * Дизайн-токены поверх темы Telegram. telegram-web-app.js выставляет на <html> переменные
+ * --tg-theme-* из темы клиента; вне Telegram их нет, и работают фолбэки ниже — светлые или
+ * тёмные по data-theme (его ставит App по Telegram.WebApp.colorScheme или системной теме).
+ * Фолбэк выбирается по data-theme, а не по media-запросу: в Telegram схема клиента может
+ * не совпадать с системной, и недостающая переменная взяла бы цвет «не той» темы.
+ */
+
+:root {
+  /* --- Фолбэки светлой темы (близко к палитре Telegram по умолчанию) --- */
+  --fb-bg: #ffffff;
+  --fb-text: #000000;
+  --fb-hint: #707579;
+  --fb-link: #2481cc;
+  --fb-button: #2481cc;
+  --fb-button-text: #ffffff;
+  --fb-secondary-bg: #f1f1f4;
+  --fb-header-bg: #f1f1f4;
+  --fb-bottom-bar-bg: #ffffff;
+  --fb-accent-text: #2481cc;
+  --fb-section-bg: #ffffff;
+  --fb-section-header-text: #6d6d72;
+  --fb-section-separator: #e3e3e6;
+  --fb-subtitle-text: #707579;
+  --fb-destructive-text: #e53935;
+
+  /* Свои смысловые цвета: в теме Telegram их нет. */
+  --color-success: #2e9d4f;
+  --color-success-soft: rgb(46 157 79 / 0.12);
+  --color-warning: #c77c02;
+  --color-warning-soft: rgb(199 124 2 / 0.14);
+  --color-danger-soft: rgb(229 57 53 / 0.12);
+  --color-accent-soft: rgb(36 129 204 / 0.12);
+  --color-overlay: rgb(0 0 0 / 0.4);
+  --shadow-sheet: 0 -8px 32px rgb(0 0 0 / 0.16);
+  --shadow-toast: 0 6px 24px rgb(0 0 0 / 0.18);
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --fb-bg: #212121;
+  --fb-text: #ffffff;
+  --fb-hint: #aaaaaa;
+  --fb-link: #6ab3f3;
+  --fb-button: #5288c1;
+  --fb-button-text: #ffffff;
+  --fb-secondary-bg: #0f0f0f;
+  --fb-header-bg: #0f0f0f;
+  --fb-bottom-bar-bg: #212121;
+  --fb-accent-text: #6ab3f3;
+  --fb-section-bg: #212121;
+  --fb-section-header-text: #8d8e93;
+  --fb-section-separator: #2f2f2f;
+  --fb-subtitle-text: #8d8e93;
+  --fb-destructive-text: #ff5a5a;
+
+  --color-success: #4cc06a;
+  --color-success-soft: rgb(76 192 106 / 0.16);
+  --color-warning: #f0a83a;
+  --color-warning-soft: rgb(240 168 58 / 0.16);
+  --color-danger-soft: rgb(255 90 90 / 0.16);
+  --color-accent-soft: rgb(106 179 243 / 0.16);
+  --color-overlay: rgb(0 0 0 / 0.6);
+  --shadow-sheet: 0 -8px 32px rgb(0 0 0 / 0.5);
+  --shadow-toast: 0 6px 24px rgb(0 0 0 / 0.5);
+
+  color-scheme: dark;
+}
+
+:root {
+  /* --- Цвета приложения: тема Telegram, иначе фолбэк --- */
+  --color-bg: var(--tg-theme-secondary-bg-color, var(--fb-secondary-bg));
+  --color-surface: var(--tg-theme-section-bg-color, var(--tg-theme-bg-color, var(--fb-section-bg)));
+  --color-text: var(--tg-theme-text-color, var(--fb-text));
+  --color-hint: var(--tg-theme-hint-color, var(--fb-hint));
+  --color-subtitle: var(--tg-theme-subtitle-text-color, var(--color-hint));
+  --color-link: var(--tg-theme-link-color, var(--fb-link));
+  --color-accent: var(
+    --tg-theme-accent-text-color,
+    var(--tg-theme-button-color, var(--fb-accent-text))
+  );
+  --color-button: var(--tg-theme-button-color, var(--fb-button));
+  --color-button-text: var(--tg-theme-button-text-color, var(--fb-button-text));
+  --color-section-header: var(--tg-theme-section-header-text-color, var(--fb-section-header-text));
+  --color-separator: var(--tg-theme-section-separator-color, var(--fb-section-separator));
+  --color-header-bg: var(--tg-theme-header-bg-color, var(--fb-header-bg));
+  --color-bottom-bar: var(
+    --tg-theme-bottom-bar-bg-color,
+    var(--tg-theme-bg-color, var(--fb-bottom-bar-bg))
+  );
+  --color-danger: var(--tg-theme-destructive-text-color, var(--fb-destructive-text));
+  /* Нейтральная подложка для вторичных кнопок, чипов, плейсхолдеров (уточняется ниже через color-mix). */
+  --color-fill: rgb(128 128 128 / 0.14);
+  --color-fill-strong: rgb(128 128 128 / 0.24);
+
+  /* --- Типографика: системный шрифт, как в самом Telegram --- */
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Roboto Mono', Menlo, Consolas, monospace;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-clock: 56px;
+  --leading: 1.4;
+
+  /* --- Отступы (шаг 4px) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* Минимальная тач-цель (Apple HIG / Material — 44–48px). */
+  --tap: 44px;
+  --nav-height: 56px;
+
+  /* Безопасные зоны: env() для браузера и iOS, переменные Telegram — для полноэкранного режима. */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--tg-safe-area-inset-left, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--tg-safe-area-inset-right, 0px));
+
+  /* Высота видимой области: в Telegram — стабильная высота вьюпорта (без прыжков при свайпе). */
+  --app-height: var(--tg-viewport-stable-height, 100dvh);
+
+  --duration-fast: 120ms;
+  --duration: 200ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* color-mix нет в старых Android WebView (Chrome < 111) — там остаётся серый фолбэк выше. */
+@supports (color: color-mix(in srgb, red 50%, blue)) {
+  :root {
+    --color-fill: color-mix(in srgb, var(--color-hint) 14%, transparent);
+    --color-fill-strong: color-mix(in srgb, var(--color-hint) 24%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration: 0ms;
+  }
+}

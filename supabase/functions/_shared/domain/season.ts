@@ -61,7 +61,9 @@ export interface StandingsOptions {
 
 /** Порядок таблицы: очки, потом победы, потом нокауты; playerId — только для стабильности. */
 function compareRows(a: StandingRow, b: StandingRow): number {
-  return b.total - a.total || b.wins - a.wins || b.kos - a.kos || (a.playerId < b.playerId ? -1 : 1);
+  return (
+    b.total - a.total || b.wins - a.wins || b.kos - a.kos || (a.playerId < b.playerId ? -1 : 1)
+  );
 }
 
 /** Делят место: равны очки, победы и нокауты. */
@@ -106,8 +108,14 @@ function buildStandings(
 }
 
 /** Таблица сезона: сумма лучших bestN вечеров, гости исключены. */
-export function seasonStandings(summaries: readonly EveningSummary[], opts: StandingsOptions): StandingRow[] {
-  const list = opts.seasonKey === undefined ? summaries : summaries.filter((s) => s.seasonKey === opts.seasonKey);
+export function seasonStandings(
+  summaries: readonly EveningSummary[],
+  opts: StandingsOptions,
+): StandingRow[] {
+  const list =
+    opts.seasonKey === undefined
+      ? summaries
+      : summaries.filter((s) => s.seasonKey === opts.seasonKey);
   return buildStandings(list, opts.bestN, opts.excluded);
 }
 
@@ -124,7 +132,10 @@ export function moneyStandings(
   summaries: readonly EveningSummary[],
   opts: { excluded: ReadonlySet<PlayerId>; seasonKey?: string },
 ): StandingRow[] {
-  const list = opts.seasonKey === undefined ? summaries : summaries.filter((s) => s.seasonKey === opts.seasonKey);
+  const list =
+    opts.seasonKey === undefined
+      ? summaries
+      : summaries.filter((s) => s.seasonKey === opts.seasonKey);
   return buildStandings(list, Number.POSITIVE_INFINITY, opts.excluded).sort(
     (a, b) => b.netRub - a.netRub || (a.playerId < b.playerId ? -1 : 1),
   );
@@ -181,9 +192,14 @@ export function hallOfFame(
     .sort((a, b) => compareSeasonKeys(b, a));
   const result: HallOfFameEntry[] = [];
   for (const key of keys) {
-    const rows = seasonStandings(summaries, { bestN: opts.bestN, excluded: opts.excluded, seasonKey: key });
+    const rows = seasonStandings(summaries, {
+      bestN: opts.bestN,
+      excluded: opts.excluded,
+      seasonKey: key,
+    });
     const champions = seasonChampions(rows);
-    if (champions.length > 0) result.push({ seasonKey: key, champions, total: rows[0]?.total ?? 0 });
+    if (champions.length > 0)
+      result.push({ seasonKey: key, champions, total: rows[0]?.total ?? 0 });
   }
   return result;
 }

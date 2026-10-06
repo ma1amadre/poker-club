@@ -79,7 +79,9 @@ export interface AchievementInput {
 /** Хронология: по дате вечера, при равенстве — по id, чтобы порядок был детерминирован. */
 function chronological(summaries: readonly EveningSummary[]): EveningSummary[] {
   return [...summaries].sort(
-    (a, b) => Date.parse(a.date) - Date.parse(b.date) || (a.eveningId < b.eveningId ? -1 : a.eveningId > b.eveningId ? 1 : 0),
+    (a, b) =>
+      Date.parse(a.date) - Date.parse(b.date) ||
+      (a.eveningId < b.eveningId ? -1 : a.eveningId > b.eveningId ? 1 : 0),
   );
 }
 
@@ -90,7 +92,12 @@ export function computeAchievements(input: AchievementInput): Achievement[] {
   const T = ACHIEVEMENT_THRESHOLDS;
   const { excluded } = input;
   const found = new Map<string, Achievement>();
-  const add = (playerId: PlayerId, code: AchievementCode, eveningId: string | null, seasonKey: string | null) => {
+  const add = (
+    playerId: PlayerId,
+    code: AchievementCode,
+    eveningId: string | null,
+    seasonKey: string | null,
+  ) => {
     if (excluded.has(playerId)) return;
     const a: Achievement = { playerId, code, eveningId, seasonKey, count: 1 };
     const k = keyOf(a);
@@ -125,7 +132,8 @@ export function computeAchievements(input: AchievementInput): Achievement[] {
         winStreak.set(id, 0);
       } else winStreak.set(id, streak);
     }
-    if (winner !== undefined && (s.rebuys[winner] ?? 0) >= T.comebackRebuys) add(winner, 'comeback', s.eveningId, null);
+    if (winner !== undefined && (s.rebuys[winner] ?? 0) >= T.comebackRebuys)
+      add(winner, 'comeback', s.eveningId, null);
     // Заклятый враг — один раз на пару, в вечере, где случился 5-й нокаут.
     for (const [killer, victim] of s.koPairs) {
       const k = `${killer}|${victim}`;
@@ -173,14 +181,17 @@ export function computeAchievements(input: AchievementInput): Achievement[] {
       }
     }
     const maxRebuys = Math.max(0, ...rebuys.values());
-    if (maxRebuys > 0) for (const [id, n] of rebuys) if (n === maxRebuys) add(id, 'rebuy_king', null, key);
+    if (maxRebuys > 0)
+      for (const [id, n] of rebuys) if (n === maxRebuys) add(id, 'rebuy_king', null, key);
     for (const [id, n] of played) if (n === inSeason.length) add(id, 'iron_chair', null, key);
 
     const rows = seasonStandings(inSeason, { bestN: input.bestN, excluded });
     for (const id of seasonChampions(rows)) add(id, 'champion', null, key);
   }
 
-  return [...found.values()].sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0));
+  return [...found.values()].sort((a, b) =>
+    keyOf(a) < keyOf(b) ? -1 : keyOf(a) > keyOf(b) ? 1 : 0,
+  );
 }
 
 export interface Titles {
@@ -236,7 +247,10 @@ export function titles(input: Pick<AchievementInput, 'summaries' | 'excluded'>):
       rows.set(id, r);
     }
   });
-  const cmp = (a: { sum: number; perEvening: number[] }, b: { sum: number; perEvening: number[] }): number => {
+  const cmp = (
+    a: { sum: number; perEvening: number[] },
+    b: { sum: number; perEvening: number[] },
+  ): number => {
     if (a.sum !== b.sum) return b.sum - a.sum;
     for (let i = 0; i < a.perEvening.length; i++) {
       const d = (b.perEvening[i] ?? 0) - (a.perEvening[i] ?? 0);
@@ -257,7 +271,10 @@ export function titles(input: Pick<AchievementInput, 'summaries' | 'excluded'>):
  * Новые ачивки для поста бота: строки, которых не было раньше, и прирост count у существующих
  * (в поле count — только прирост).
  */
-export function diffAchievements(before: readonly Achievement[], after: readonly Achievement[]): Achievement[] {
+export function diffAchievements(
+  before: readonly Achievement[],
+  after: readonly Achievement[],
+): Achievement[] {
   const prev = new Map(before.map((a) => [keyOf(a), a.count]));
   const result: Achievement[] = [];
   for (const a of after) {
