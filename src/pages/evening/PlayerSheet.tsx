@@ -4,9 +4,12 @@ import type { PlayerState } from '@domain/types.ts';
 import { useState } from 'react';
 import { formatNumber, formatRub, joinNames, plural } from '../../shared/lib';
 import { Button, FieldGroup, Notice, PlayerPicker, Sheet, Switch } from '../../shared/ui';
-import { playerLine } from './lib';
+import { playerLine, rebuyWindow } from './lib';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
+
+/** Меньше — предупреждаем, что ребай может не успеть до закрытия. */
+const REBUY_EDGE_MS = 10_000;
 
 export interface PlayerSheetProps {
   player: PlayerState | null;
@@ -30,11 +33,16 @@ function PlayerSheetInner({
   const name = nameOf(player.playerId);
   // Свежая версия игрока: пока шторка открыта, журнал мог измениться (Realtime).
   const current = state.players[player.playerId] ?? player;
+  // Режим шторки фиксируется при открытии. Если второй оператор успел записать вылет этого же
+  // игрока, «Отметить вылет» не должна под пальцем превратиться в «Записать ребай».
+  const [mode] = useState<'bust' | 'rebuy'>(player.alive ? 'bust' : 'rebuy');
 
   const [killers, setKillers] = useState<string[]>([]);
   const [split, setSplit] = useState(false);
   const [unknown, setUnknown] = useState(false);
   const [sending, setSending] = useState(false);
+  // Пока идёт своя отправка, статус меняет наша же запись — это не «чужая» правка.
+  const overtaken = !sending && (mode === 'bust') !== current.alive;
 
   const alive = state.joinOrder
     .filter((id) => id !== current.playerId && state.players[id]?.alive)
@@ -51,6 +59,9 @@ function PlayerSheetInner({
     ? null
     : actions.check('rebuy', { playerId: current.playerId });
   const ready = unknown || killers.length > 0;
+  // Ребаи вот-вот закроются: запись, отправленная сейчас, может прийти на сервер уже после.
+  const win = rebuyWindow(evening.format, state);
+  const closingSoon = win.kind === 'open' && win.msLeft !== null && win.msLeft < REBUY_EDGE_MS;
 
   const bust = async () => {
     setSending(true);
@@ -80,7 +91,21 @@ function PlayerSheetInner({
   const line = playerLine(current);
   const description = [current.alive ? 'В игре' : 'Вне игры', line].filter(Boolean).join(' · ');
 
-  if (current.alive) {
+  if (overtaken) {
+    return (
+      <Sheet open onClose={onClose} title={name} description={description}>
+        <div className="ev-sheet-body">
+          <Notice tone="info" title={mode === 'bust' ? 'Вылет уже записан' : 'Ребай уже записан'}>
+            {mode === 'bust'
+              ? `Пока шторка была открыта, вылет игрока ${name} записали с другого устройства. Проверьте запись в ленте.`
+              : `Пока шторка была открыта, ребай игрока ${name} записали с другого устройства. Проверьте запись в ленте.`}
+          </Notice>
+        </div>
+      </Sheet>
+    );
+  }
+
+  if (mode === 'bust') {
     return (
       <Sheet
         open
@@ -180,6 +205,12 @@ function PlayerSheetInner({
       }
     >
       <div className="ev-sheet-body">
+        {!rebuyProblem && closingSoon && (
+          <Notice tone="caution" title="Ребаи закрываются">
+            Осталось меньше {Math.ceil(REBUY_EDGE_MS / 1000)} секунд. Запись может прийти на сервер
+            уже после закрытия — тогда журнал её не примет, и об этом появится сообщение.
+          </Notice>
+        )}
         {rebuyProblem ? (
           <Notice tone="info" title="Ребай не записать">
             {rebuyProblem}.

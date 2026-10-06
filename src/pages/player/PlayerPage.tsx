@@ -247,7 +247,11 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
               <Stat
                 label="Вечеров сыграно"
                 value={String(evenings.length)}
-                note={`В сезоне «${formatSeason(history.currentSeasonKey)}» вечеров нет`}
+                note={
+                  isGuest
+                    ? `В сезоне «${formatSeason(history.currentSeasonKey)}» — ${evenings.filter((e) => e.seasonKey === history.currentSeasonKey).length}; гости в рейтинг не входят`
+                    : `В сезоне «${formatSeason(history.currentSeasonKey)}» вечеров нет`
+                }
               />
             )}
           </Stats>

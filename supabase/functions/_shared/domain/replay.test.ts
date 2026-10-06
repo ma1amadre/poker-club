@@ -493,3 +493,46 @@ describe('места, финал и ошибки', () => {
     expect(s.nextLevel).toBeNull();
   });
 });
+
+// Отмена finish («вернуть вечер в игру»). add_event (миграция 007) при finish на идущем таймере
+// сначала пишет timer_pause с тем же `at`. Тогда отмена finish не запускает таймер задним числом.
+describe('отмена finish и пауза перед ним', () => {
+  const DAY = 24 * 60 * MIN;
+
+  it('с паузой перед finish: после отмены через двое суток таймер стоит там, где был', () => {
+    const j = journal().join('A', 'B', 'C');
+    j.start();
+    j.wait(90);
+    j.bust('B', ['A']);
+    j.bust('C', ['A']);
+    j.pause(); // вставляет add_event перед finish, тот же now()
+    const fin = j.finish();
+    const atFinish = replay(F, j.events, j.now());
+    expect(atFinish.timer.levelIndex).toBe(2);
+    expect(atFinish.timer.totalElapsedMs).toBe(90 * MIN);
+
+    j.wait(2 * DAY);
+    j.voidEvent(fin);
+    const back = replay(F, j.events, j.now());
+    expect(back.finished).toBe(false);
+    expect(back.timer.status).toBe('paused');
+    expect(back.timer.levelIndex).toBe(2);
+    expect(back.timer.totalElapsedMs).toBe(90 * MIN);
+    // finish был в периоде ребаев — после возврата ребай снова можно записать
+    expect(back.rebuysOpen).toBe(true);
+    expect(canApply(F, back, 'rebuy', { playerId: 'B' }, j.now())).toBeNull();
+  });
+
+  it('без паузы (старые журналы) отмена finish запускает таймер задним числом', () => {
+    const j = journal().join('A', 'B');
+    j.start();
+    j.wait(90);
+    j.bust('B', ['A']);
+    const fin = j.finish();
+    j.wait(2 * DAY);
+    j.voidEvent(fin);
+    const back = replay(F, j.events, j.now());
+    expect(back.timer.status).toBe('running');
+    expect(back.rebuysOpen).toBe(false);
+  });
+});

@@ -103,7 +103,9 @@ export interface EveningEvent {
   дальше в порядке, обратном окончательным вылетам. До завершения места известны только у
   окончательно вылетевших после закрытия ребаев.
 - `finish`: банкир завершает вечер. Допустим, если жив ровно 1 игрок (ребаи могут быть ещё открыты —
-  тогда finish их закрывает). `finished = true` только после события finish.
+  тогда finish их закрывает). `finished = true` только после события finish. Время после finish не
+  идёт; чтобы отмена finish не запускала таймер задним числом, `add_event` при идущем таймере пишет
+  перед finish явный `timer_pause` с тем же `at` (миграция 007).
 - Деньги (money.ts): `prizePoolRub = totalEntries * (buyInRub - bountyRub)`; выплаты по `payoutPct`
   для первых min(n_игроков, payoutPct.length) мест с перенормировкой до 100%, вниз до рубля, остаток
   1-му месту. Победитель забирает свою голову и сиротские. Сумма всех выплат + баунти ровно равна
@@ -176,8 +178,8 @@ export interface EveningState {
 | `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at` |
 | `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at` |
 | `formats` | `id uuid pk`, `name text`, `config jsonb` (TournamentFormat), `is_archived bool default false`, `created_at` |
-| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `results_posted_at`, `voting_posted_at`, `created_by`, `created_at` |
-| `evening_events` | `id bigserial pk`, `evening_id uuid → evenings on delete cascade`, `type text check (EventType)`, `payload jsonb default '{}'`, `at timestamptz default now()`, `created_by uuid → players`, `voided_at timestamptz`, `voided_by uuid → players` |
+| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `created_by`, `created_at` |
+| `evening_events` | `id bigserial pk`, `evening_id uuid → evenings on delete cascade`, `type text check (EventType)`, `payload jsonb default '{}'`, `at timestamptz default now()`, `created_by uuid → players`, `voided_at timestamptz`, `voided_by uuid → players`, `client_id uuid` (ключ повтора, unique `(evening_id, client_id)`, миграция 007) |
 | `rsvps` | pk `(evening_id, player_id)`, `status text check in ('yes','no','maybe')`, `updated_at` |
 | `predictions` | pk `(evening_id, player_id)`, `winner_id uuid → players`, `first_out_id uuid → players`, `updated_at` |
 | `votes` | pk `(evening_id, voter_id, category)`, `category text check in ('hand','bluff','badbeat')`, `nominee_id uuid → players`, `caption text check (char_length <= 200)`, `photo_path text`, `created_at`; `check (voter_id <> nominee_id)` |
@@ -190,16 +192,25 @@ export interface EveningState {
 (есть не-voided join).
 
 ### RPC (security definer, `set search_path = ''`, проверяют права сами)
-- `add_event(p_evening uuid, p_type text, p_payload jsonb) → evening_events` — банкир вечера или админ.
-  После `finished` банкир может добавлять только `payment`; остальное — только админ (правка закрытого вечера).
-  Побочные эффекты: первый `timer_start` → `status='live'`, `started_at=now()`; `finish` →
+- `add_event(p_evening uuid, p_type text, p_payload jsonb, p_client_id uuid default null) → evening_events` —
+  банкир вечера или админ. После `finished` банкир может добавлять только `payment`; остальное — только
+  админ (правка закрытого вечера). `p_client_id` — ключ повтора (один на намерение пользователя): если
+  событие с тем же ключом уже есть, возвращается оно, без вставки и до проверки состояния вечера
+  (тип/игрок не совпадают → 22023). Клиент держит ключ неудавшейся записи 2 минуты (useEveningActions).
+  `finish` у вечера в `announced` → P0001. Побочные эффекты: первый `timer_start` → `status='live'`,
+  `started_at=now()`; `finish` (из `live`) → при идущем таймере сначала `timer_pause`, затем
   `status='finished'`, `finished_at=now()`, `voting_closes_at=now()+interval '24 hours'`.
 - `add_guest(p_evening uuid, p_name text) → uuid` — банкир вечера или админ (права как у `add_event` для `join`):
   создаёт игрока `is_guest = true` (имя 1–40 символов, пробелы схлопываются) и сразу добавляет его `join`
   в этот вечер (через `add_event`). Возвращает id гостя. Миграция 006. Клиент — `addGuest` / `useAddGuest`
   в `src/shared/api/rpc.ts`.
-- `void_event(p_event bigint) → void` — те же права; отмена `finish` возвращает `status='live'`
-  и обнуляет finished_at/voting_closes_at.
+- `void_event(p_event bigint) → void` — те же права; отмена последнего неотменённого `finish` возвращает
+  `status='live'` (или `announced`, если `started_at` пуст), обнуляет finished_at/settled_at/voting_closes_at,
+  снимает `results_posted_at` и `voting_posted_at` (если итог уже публиковался — `results_revision += 1`):
+  повторное завершение опубликует «Исправленные итоги» и новое голосование.
+- `set_payout(p_evening uuid, p_pct numeric[])` — банкир вечера или админ, только пока `announced`:
+  `format.payoutPct` вечера (1–10 долей > 0, сумма 100 — как `validateFormat`). Миграция 007.
+- `server_now() → timestamptz` — время сервера (clock_timestamp) для сверки часов клиента; доступна anon.
 - `mark_settled(p_evening uuid)` / `unmark_settled` — банкир или админ; `status='settled'`.
 - `set_rsvp(p_evening uuid, p_status text)` — любой участник клуба, пока `status='announced'`.
 - `set_prediction(p_evening uuid, p_winner uuid, p_first_out uuid)` — пока `status='announced'`.
@@ -207,9 +218,10 @@ export interface EveningState {
   голосующий и номинант — участники вечера, `now() < voting_closes_at`, не за себя; upsert.
 - `delete_vote(p_evening uuid, p_voter uuid, p_category text)` — свой голос, пока голосование открыто;
   любой — админ. Фото из Storage удаляется отдельно.
-- `set_my_name(p_name text)` — 1–40 символов, пробелы схлопываются.
+- `set_my_name(p_name text)` — 1–40 символов, пробелы схлопываются; имя другого активного игрока
+  (без учёта регистра) → 23505 «уже занято». Уникального индекса нет: тёзки из Telegram и гости законны.
 - `board_state(p_token uuid) → jsonb` — **доступен anon**; для `status in ('announced','live')` или
-  `finished` не старше 6 часов: `{evening:{id,scheduled_at,location,status,started_at,finished_at}, format, events:[без payment, без voided], players:[{id,display_name}]}`
+  `finished` не старше 6 часов: `{evening:{id,scheduled_at,location,status,started_at,finished_at}, format, events:[без payment, без voided], players:[{id,display_name}], server_now}`
   (`players` — только упомянутые в событиях); иначе null.
 - Служебные функции — в схеме `private` (не выставлена в API). Коды ошибок RPC: 42501 нет прав,
   22023 неверные данные (лишний ключ в payload — тоже), P0001 недопустимо в текущем состоянии.
@@ -222,9 +234,10 @@ export interface EveningState {
 - `players`, `settings`, `formats`, `evenings` — insert/update только `is_admin()`; игрок может менять
   у себя только `display_name` (через RPC `set_my_name(p_name text)`).
 - Storage: приватный бакет `vote-photos`, лимит 2 МБ, `image/jpeg`/`image/webp`; путь
-  `{evening_id}/{player_id}/{category}-{random}.jpg`; загрузка — только в свою папку
-  (`(storage.foldername(name))[2] = current_player_id()::text`), чтение — участникам клуба,
-  удаление — владельцу или админу.
+  `{evening_id}/{player_id}/{12 hex}.jpg` (номинации в имени нет); загрузка — только в свою папку,
+  участнику вечера при открытом голосовании, по шаблону имени и не больше 6 файлов на игрока и вечер
+  (`public.can_upload_vote_photo`); чтение — своё, админу, остальным после `voting_closes_at` (как `votes`);
+  удаление — владельцу или админу. Миграция 007.
 - Realtime: в публикации `supabase_realtime` — `evening_events`, `evenings`, `rsvps`.
 
 ### Cron
@@ -244,17 +257,21 @@ export interface EveningState {
   сравнение за постоянное время), `auth_date` не старше 24 ч → доступ: если `settings.group_chat_id`
   задан — `getChatMember` (member/administrator/creator или restricted с `is_member`), иначе пускаем
   только `ADMIN_TG_ID` → upsert `players` по `tg_id` (имя, username, фото; `ADMIN_TG_ID` → `is_admin`) →
-  auth-пользователь `tg<id>@users.poker-club.invalid` (`admin.createUser` с `email_confirm`, если нет)
-  → `admin.generateLink({type:'magiclink'})` → ответ `{tokenHash, player}`. Клиент делает
+  auth-пользователь `tg<id>@users.poker-club.invalid` (`admin.createUser` с `email_confirm` и
+  `app_metadata.tg_id`, если нет) → `admin.generateLink({type:'magiclink'})`; чужой (без метки `tg_id`)
+  пользователь с этим адресом к игроку не привязывается — 409 `auth_conflict` → ответ `{tokenHash, player}`. Клиент делает
   `auth.verifyOtp({type:'email', token_hash})`. Ошибки — тело `{error: текст, code}`: 401 (подпись:
   `bad_hash`, `expired`, …), 403 (`not_member`, `no_group`, `inactive`). Имя из Telegram берётся только
   при создании игрока (дальше его меняют админ и `set_my_name`). При `TELEGRAM_DRY_RUN=1` и пустой
   `group_chat_id` пускает всех — для dev-входа за игроков seed.
 - `notify` (JWT обязателен): POST `{kind: 'evening_finished', eveningId}` — только банкир вечера или
   админ; сервер сам собирает текст (итог, места, деньги, новые ачивки, приглашение голосовать) из БД
-  доменными функциями и шлёт в `settings.group_chat_id`. Идемпотентно по `results_posted_at`.
-  Ответ `{ok: true, outcome: 'posted'|'already_posted'|'no_group'}`; клиент — `notifyEveningFinished`
-  в `src/shared/api/rpc.ts`.
+  доменными функциями и шлёт в `settings.group_chat_id`. Идемпотентно по `results_posted_at`; при
+  `results_revision > 0` заголовок «Исправленные итоги». `kind: 'evening_corrected'` — только админ:
+  исправленный итог закрытого вечера, если после `results_posted_at` журнал менялся (кроме платежей),
+  иначе `no_changes`; защита от дублей — перестановка `results_posted_at` по старому значению.
+  Ответ `{ok: true, outcome: 'posted'|'already_posted'|'no_group'|'no_changes'}`; клиент —
+  `notifyEveningFinished(eveningId, kind)` в `src/shared/api/rpc.ts`.
 - `cron-tick` (`verify_jwt = false`, проверка `x-cron-secret`): (1) если до ближайшей игры по
   расписанию осталось ≤ `announce_hours_before` и вечера на эту дату нет — создаёт `evenings`
   (формат по умолчанию, банкир не назначен) и постит анонс; (2) постит итоги голосования для вечеров
@@ -272,8 +289,10 @@ export interface EveningState {
   в `supabase/functions/.env` локально); код dev-входа существует только под `import.meta.env.DEV`.
 - Дизайн-система — «Материя» (собственная система пользователя, исходник вне репо: `D:/dev/materia`).
   Её сборка **вендорится** в `src/vendor/materia/` (`materia.mjs` + `materia.d.mts`, `materia.css` —
-  шрифты Google Fonts, токены всех регистров и стили компонентов одним листом; `tokens.css` — справочно,
-  уже вшит в `materia.css`). Обновление — `node scripts/sync-materia.mjs [путь]`, руками не править.
+  токены всех регистров и стили компонентов одним листом; `tokens.css` — справочно, уже вшит в
+  `materia.css`). Шрифты Google Fonts — не `@import` в листе (он блокировал запуск при зависшем
+  fonts.googleapis.com), а неблокирующая ссылка в `index.html` между метками `materia-fonts`; её пишет
+  sync-скрипт. Обновление — `node scripts/sync-materia.mjs [путь]`, руками не править.
   Порядок стилей в `main.tsx`: `materia.css` → `styles/base.css` (safe-area Telegram `--pc-safe-*`,
   `--pc-app-height`, на тач-экранах `--m-control-h` = 48 px) → `styles/app.css`; стили кита —
   `src/shared/ui/ui.css`, только на переменных «Материи».
@@ -305,10 +324,25 @@ export interface EveningState {
   `/evening/:id/settle` расчёт; `/evening/:id/vote` голосование; `/board/:token` табло (публичное,
   вне AuthProvider); `/rating` (сезон / деньги / всё время / оракул / зал славы); `/player/:id`;
   `/history`; `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
-- Время вечера: `useNow(1000)` + `replay(format, events, now)`; события вечера — запрос + Realtime-подписка
-  на `evening_events` с фильтром `evening_id=eq.<id>`; табло без авторизации опрашивает `board_state` раз в 3 с.
+- Время вечера: `useNow(1000)` + `replay(format, events, now)`; `now` — по часам сервера
+  (`src/shared/lib/serverClock.ts`: смещение по замерам `server_now` при старте и возврате на экран,
+  `board_state.server_now` на каждом опросе табло и `at` из ответов `add_event`; берётся замер с
+  наименьшим RTT). После записи `useEveningActions.send` прогоняет replay с новой записью: если журнал
+  её не принял (например, ребай пришёл после закрытия), вместо «записан» — предупреждение.
+  События вечера — запрос + Realtime-подписка на `evening_events` с фильтром `evening_id=eq.<id>`;
+  табло без авторизации опрашивает `board_state` раз в 3 с.
 
 ## Тестовые данные (seed.sql, только локально)
 Игроки с `tg_id` 1001–1006 (1001 — админ), один гость, формат по умолчанию, settings
 (четверг 19:00 МСК), 4–6 завершённых вечеров с реалистичными событиями (ребаи, сплит-нокаут,
 платежи) и один `announced` вечер — чтобы рейтинг, ачивки и карточки игроков было на чём смотреть.
+
+## Деплой в облако: чеклист Auth (до подключения группы)
+Защита входа держится на настройках Auth из `supabase/config.toml`, в облако они сами не переезжают.
+1. После `supabase link` — `supabase config push` (сверить diff секции `[auth]`) или вручную в дашборде:
+   Authentication → выключить «Allow new users to sign up» и провайдер Email (вход по паролю),
+   включить Secure password change.
+2. Проверить, что вход `tg-auth` → `verifyOtp(token_hash)` работает с выключенным Email-провайдером
+   (локально так и настроено; в облаке не проверялось).
+3. Сразу после деплоя войти админом (`ADMIN_TG_ID`), до подключения группы.
+4. Участника, вышедшего из группы, админ выключает (`is_active=false`): refresh-токен иначе живёт дальше.

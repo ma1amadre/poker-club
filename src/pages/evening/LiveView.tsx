@@ -7,12 +7,11 @@ import { useNavigate } from 'react-router-dom';
 import { notifyEveningFinished, useRsvps } from '../../shared/api';
 import {
   formatBlinds,
-  formatClock,
-  formatDuration,
   formatNumber,
   formatRub,
   formatTime,
   paths,
+  joinNames,
   plural,
   pluralWithNumber,
 } from '../../shared/lib';
@@ -32,6 +31,7 @@ import {
 } from '../../shared/ui';
 import {
   averageStackBb,
+  clockView,
   describeEvent,
   formatBbValue,
   lastUndoable,
@@ -50,6 +50,9 @@ export interface LiveViewProps {
   model: EveningModel;
   actions: EveningActions;
 }
+
+/** Ближе к авто-переходу «Уровень вперёд» переспрашивает (сеть + расхождение часов). */
+const LEVEL_EDGE_MS = 5000;
 
 function chipsText(n: number): string {
   return `${formatNumber(n)} ${plural(n, ['фишка', 'фишки', 'фишек'])}`;
@@ -78,11 +81,19 @@ export function LiveView({ model, actions }: LiveViewProps) {
 
   const undoTarget = lastUndoable(events);
 
+  // Один живой при открытых ребаях — обычно ненадолго: вылетевшие сейчас докупятся. Финиш тогда
+  // не главное действие, а подтверждение прямо говорит, что ребаи закроются.
+  const rebuysStillOpen = win.kind !== 'closed';
+  const bustedNames = state.joinOrder.filter((id) => !state.players[id]?.alive).map(nameOf);
+
   const finish = async () => {
     const winner = lastAlive ? nameOf(lastAlive) : 'последний игрок';
+    const rebuyWarning = rebuysStillOpen
+      ? ` ${rebuyText(win)}: после завершения ${bustedNames.length > 0 ? `${joinNames(bustedNames)} не ${bustedNames.length > 1 ? 'смогут' : 'сможет'} докупиться` : 'докупиться будет нельзя'}.`
+      : '';
     const ok = await actions.confirm({
       title: 'Завершить вечер?',
-      message: `Победитель — ${winner}. Места, очки и деньги зафиксируются, откроется голосование на 24 часа, итог уйдёт в группу. Вернуть вечер в игру после этого сможет только админ.`,
+      message: `Победитель — ${winner}.${rebuyWarning} Места, очки и деньги зафиксируются, откроется голосование на 24 часа, итог уйдёт в группу. Вернуть вечер в игру после этого сможет только админ.`,
       confirmText: 'Завершить вечер',
       cancelText: 'Продолжить игру',
     });
@@ -94,7 +105,12 @@ export function LiveView({ model, actions }: LiveViewProps) {
       return;
     }
     try {
-      await notifyEveningFinished(evening.id);
+      const outcome = await notifyEveningFinished(evening.id);
+      if (outcome === 'already_posted') {
+        toast.show('Итог уже был в группе', {
+          detail: 'Новый пост не отправлен. Исправленный итог админ публикует с экрана вечера.',
+        });
+      }
     } catch {
       // Пост в группу не должен мешать расчёту: если не ушёл сейчас, его добьёт cron-tick.
       toast.show('Итог не ушёл в группу', {
@@ -110,12 +126,23 @@ export function LiveView({ model, actions }: LiveViewProps) {
     if (undoTarget) void actions.voidWithConfirm(undoTarget);
   };
 
-  const clockText =
-    timer.status === 'not_started'
-      ? '--:--'
-      : timer.levelRemainingMs !== null
-        ? formatClock(timer.levelRemainingMs)
-        : formatClock(timer.levelElapsedMs, 'elapsed');
+  // «Уровень вперёд» за секунды до авто-перехода: запрос придёт на сервер уже на следующем уровне,
+  // и replay переключит ещё раз — уровень пропустится.
+  const levelNext = async () => {
+    const left = timer.status === 'running' ? timer.levelRemainingMs : null;
+    if (left !== null && left < LEVEL_EDGE_MS) {
+      const ok = await actions.confirm({
+        title: 'Уровень и так сейчас сменится',
+        message: `До конца уровня ${Math.max(1, Math.ceil(left / 1000))} с — он сменится сам. Если перейти вручную, запись может прийти уже на следующем уровне, и он пропустится.`,
+        confirmText: 'Всё равно перейти',
+        cancelText: 'Подождать',
+      });
+      if (!ok) return;
+    }
+    void actions.send('level_next', {}, { success: 'Уровень вперёд', undo: true });
+  };
+
+  const clock = clockView(state);
 
   return (
     <>
@@ -147,14 +174,11 @@ export function LiveView({ model, actions }: LiveViewProps) {
               paused ? 'm-figure ev-clock__time ev-clock__time--paused' : 'm-figure ev-clock__time'
             }
             role="timer"
-            aria-label={
-              timer.levelRemainingMs !== null
-                ? `До конца уровня ${formatDuration(timer.levelRemainingMs)}`
-                : `Уровень идёт ${formatDuration(timer.levelElapsedMs)}`
-            }
+            aria-label={clock.aria}
           >
-            {clockText}
+            {clock.text}
           </p>
+          {clock.note && <p className="m-small">{clock.note}</p>}
           {progress && (
             <Progress
               label={progress.label}
@@ -188,7 +212,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
           <div className="ev-pult">
             {lastAlive && (
               <Button
-                variant="primary"
+                variant={rebuysStillOpen ? 'secondary' : 'primary'}
                 block
                 size="lg"
                 icon="flag"
@@ -211,7 +235,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
               )}
               {paused && (
                 <Button
-                  variant={lastAlive ? 'secondary' : 'primary'}
+                  variant={lastAlive && !rebuysStillOpen ? 'secondary' : 'primary'}
                   icon="play"
                   disabled={actions.busy}
                   onClick={() =>
@@ -223,7 +247,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
               )}
               {timer.status === 'not_started' && (
                 <Button
-                  variant={lastAlive ? 'secondary' : 'primary'}
+                  variant={lastAlive && !rebuysStillOpen ? 'secondary' : 'primary'}
                   icon="play"
                   disabled={actions.busy}
                   onClick={() =>
@@ -261,9 +285,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
                 icon="skip-forward"
                 label="Уровень вперёд"
                 disabled={actions.busy || Boolean(actions.check('level_next'))}
-                onClick={() =>
-                  void actions.send('level_next', {}, { success: 'Уровень вперёд', undo: true })
-                }
+                onClick={() => void levelNext()}
               />
             </div>
             <div className="ev-pult__row">

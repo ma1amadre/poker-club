@@ -1,6 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { HashRouter } from 'react-router-dom';
+import { useServerClockSync } from '../shared/api';
 import { ToastProvider, useToast } from '../shared/ui';
 import { ErrorBoundary } from './ErrorBoundary';
 import { queryClient, setMutationErrorHandler } from './queryClient';
@@ -19,6 +20,8 @@ function GlobalMutationErrors() {
 
 export function App() {
   useThemeSync();
+  // Таймер считается от серверного времени событий — часы устройства сверяем с сервером сразу.
+  useServerClockSync();
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

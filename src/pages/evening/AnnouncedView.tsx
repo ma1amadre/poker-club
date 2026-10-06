@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import {
   type Rsvp,
+  RSVP_CHOICES,
   RSVP_ORDER,
   RSVP_STATUS_META,
   type RsvpStatus,
@@ -25,6 +26,7 @@ import {
 } from '../../shared/ui';
 import { eventPlayerId } from './lib';
 import { FormatSummary, PlayersList } from './parts';
+import { PayoutSheet } from './PayoutSheet';
 import { SeatSheet } from './SeatSheet';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -42,6 +44,8 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
   const rsvps = rsvpsQuery.data ?? [];
   const [seatOpen, setSeatOpen] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [payoutOpen, setPayoutOpen] = useState(false);
+  const goingCount = rsvps.filter((r) => r.status === 'yes').length;
 
   const seated = state.joinOrder.length;
   const startProblem =
@@ -65,7 +69,15 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
     const join = [...model.events]
       .reverse()
       .find((e) => e.type === 'join' && !e.voided && eventPlayerId(e) === playerId);
-    if (join) void actions.voidWithConfirm(join);
+    if (!join) return;
+    // До старта ленты на экране нет, мест и денег ещё нет — говорим языком стола, а не журнала.
+    const name = nameOf(playerId);
+    void actions.voidWithConfirm(join, {
+      title: `Убрать ${name} из-за стола?`,
+      message: 'Посадить снова можно до старта вечера.',
+      confirmText: 'Убрать из-за стола',
+      successText: `${name} больше не за столом`,
+    });
   };
 
   return (
@@ -79,6 +91,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
               playersById={playersById}
               label="За столом"
               onSelect={(p) => unseat(p.playerId)}
+              chevron={false}
             />
           ) : (
             <p className="m-small">
@@ -126,7 +139,9 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
         title="Кто идёт"
         aside={
           rsvpsQuery.isSuccess
-            ? `${rsvps.filter((r) => r.status === 'yes').length} идут`
+            ? goingCount > 0
+              ? pluralWithNumber(goingCount, ['идёт', 'идут', 'идут'])
+              : 'никто не идёт'
             : undefined
         }
       >
@@ -173,7 +188,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
                   title={nameOf(r.player_id)}
                   after={
                     <Badge tone={RSVP_TONE[r.status]} dot={r.status === 'yes'}>
-                      {RSVP_STATUS_META[r.status].title}
+                      {RSVP_STATUS_META[r.status].other}
                     </Badge>
                   }
                 />
@@ -183,6 +198,24 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
       </Section>
 
       <FormatSummary format={evening.format} />
+      {canControl && (
+        <div className="ev-actions">
+          <Button block icon="coins" onClick={() => setPayoutOpen(true)}>
+            Изменить призовые
+          </Button>
+          <p className="m-small">
+            Сейчас {evening.format.payoutPct.join(' / ')} % — до старта доли можно поменять под
+            число пришедших.
+          </p>
+        </div>
+      )}
+
+      <PayoutSheet
+        open={payoutOpen}
+        onClose={() => setPayoutOpen(false)}
+        eveningId={evening.id}
+        payoutPct={evening.format.payoutPct}
+      />
 
       <SeatSheet
         open={seatOpen}
@@ -209,7 +242,7 @@ function MyRsvp({ eveningId, rsvps }: { eveningId: string; rsvps: readonly Rsvp[
         label="Ваш ответ на анонс"
         block
         value={value}
-        options={(['yes', 'maybe', 'no'] as const).map((status) => ({
+        options={RSVP_CHOICES.map((status) => ({
           value: status,
           label: RSVP_STATUS_META[status].title,
         }))}

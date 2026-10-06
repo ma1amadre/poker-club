@@ -7,7 +7,6 @@ import {
   removeVotePhoto,
   uploadVotePhoto,
   useCastVote,
-  useDeleteVote,
   useVotePhotoUrl,
   type Player,
   type VoteRow,
@@ -20,7 +19,6 @@ import {
   PlayerPicker,
   Sheet,
   Skeleton,
-  useConfirm,
   useToast,
 } from '../../shared/ui';
 import { CAPTION_MAX, photoPlan, voteDraftError } from './lib';
@@ -73,6 +71,11 @@ export interface VoteSheetProps {
   /** Мой голос в этой номинации; null — ещё не голосовал. */
   current: VoteRow | null;
   onClose: () => void;
+  /**
+   * Отозвать голос. Подтверждение — у родителя: шторка сначала закрывается («Материя» не
+   * открывает окно поверх окна), и диалог не может закрыться вместе с ней по Esc.
+   */
+  onWithdraw: (vote: VoteRow) => void;
 }
 
 export function VoteSheet({
@@ -82,11 +85,10 @@ export function VoteSheet({
   participants,
   current,
   onClose,
+  onWithdraw,
 }: VoteSheetProps) {
   const toast = useToast();
-  const { confirm, confirmElement } = useConfirm();
   const cast = useCastVote(eveningId);
-  const remove = useDeleteVote(eveningId);
 
   const [nomineeId, setNomineeId] = useState<string | null>(current?.nominee_id ?? null);
   const [caption, setCaption] = useState(current?.caption ?? '');
@@ -162,7 +164,7 @@ export function VoteSheet({
       // Голос не сохранился — только что загруженное фото никому не нужно.
       if (uploaded) void removeVotePhoto(uploaded).catch(() => undefined);
       setBusy(false);
-      haptic.notify('error');
+      // Хаптику (error) даёт сам тост; глобальный тост мутации глушит meta.silent у useCastVote.
       toast.show(current ? 'Голос не изменён' : 'Голос не сохранён', {
         tone: 'critical',
         detail: errorMessage(error),
@@ -172,33 +174,14 @@ export function VoteSheet({
     // Старое фото удаляем после успешного голоса. Если не вышло — файл останется в бакете,
     // но к голосу он уже не привязан и нигде не показывается.
     if (plan.removeAfter) await removeVotePhoto(plan.removeAfter).catch(() => undefined);
-    haptic.notify('success');
     toast.success(current ? 'Голос изменён' : 'Голос отдан');
     onClose();
   };
 
-  const withdraw = async () => {
+  const withdraw = () => {
     if (!current) return;
-    const ok = await confirm({
-      title: `Отозвать голос в номинации «${title}»?`,
-      message: existingPath
-        ? 'Подпись и фото удалятся. Проголосовать заново можно до закрытия.'
-        : 'Проголосовать заново можно до закрытия.',
-      confirmText: 'Отозвать голос',
-      danger: true,
-    });
-    if (!ok) return;
-    setBusy(true);
-    try {
-      await remove.mutateAsync({ voterId: me.id, category });
-    } catch (error) {
-      setBusy(false);
-      toast.show('Голос не отозван', { tone: 'critical', detail: errorMessage(error) });
-      return;
-    }
-    if (existingPath) await removeVotePhoto(existingPath).catch(() => undefined);
-    toast.success('Голос отозван');
     onClose();
+    onWithdraw(current);
   };
 
   const photoUrl = preview ?? (showExisting ? (existingUrl.data ?? null) : null);
@@ -224,7 +207,7 @@ export function VoteSheet({
               {current ? 'Сохранить голос' : 'Отдать голос'}
             </Button>
             {current && (
-              <Button variant="ghost" block disabled={busy} onClick={() => void withdraw()}>
+              <Button variant="ghost" block disabled={busy} onClick={withdraw}>
                 Отозвать голос
               </Button>
             )}
@@ -312,7 +295,6 @@ export function VoteSheet({
           </>
         )}
       </Sheet>
-      {confirmElement}
     </>
   );
 }

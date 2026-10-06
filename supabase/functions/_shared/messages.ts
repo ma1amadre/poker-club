@@ -223,6 +223,8 @@ export interface ResultsPostInput {
   votingClosesAt: string | null;
   botUsername: string | null;
   nowMs: number; // «голосование открыто до …» пишем, только если оно ещё не закрылось
+  /** Итог уже публиковался и был исправлен (отмена finish или правка журнала админом). */
+  corrected?: boolean;
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -267,7 +269,12 @@ function achievementLines(list: readonly Achievement[], names: Record<PlayerId, 
 
 export function resultsPost(input: ResultsPostInput): Post {
   const name = (id: PlayerId): string => escapeHtml(input.names[id] ?? 'Игрок');
-  const header = [`♠️ <b>Итоги вечера ${formatClubDate(input.scheduledAt)}</b>`];
+  const header = [
+    input.corrected
+      ? `♠️ <b>Исправленные итоги вечера ${formatClubDate(input.scheduledAt)}</b>`
+      : `♠️ <b>Итоги вечера ${formatClubDate(input.scheduledAt)}</b>`,
+  ];
+  if (input.corrected) header.push('Прошлый пост с итогами устарел — верны эти.');
   if (input.location) header.push(`📍 ${escapeHtml(input.location)}`);
 
   const placeLines = input.places.map((id, i) => {

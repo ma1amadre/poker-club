@@ -135,7 +135,9 @@ export function useEveningEvents(eveningId: string | undefined) {
     {
       table: 'evening_events',
       filter: `evening_id=eq.${eveningId}`,
-      invalidate: [queryKeys.eveningEvents(eveningId ?? '')],
+      // Справочник игроков тоже: банкир мог вписать гостя (add_guest) — без перезапроса у остальных
+      // он был бы «Игроком» до истечения staleTime. Справочник крошечный, запрос дешёвый.
+      invalidate: [queryKeys.eveningEvents(eveningId ?? ''), queryKeys.players],
     },
     {
       // У evenings нет колонки evening_id — фильтруем по первичному ключу.

@@ -179,6 +179,19 @@
   gap: var(--space-5);
 }
 
+/* Призовые доли (PayoutSheet): поле и «убрать место» в строку. */
+.ev-payouts {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ev-payout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-2);
+}
+
 .ev-guest {
   display: grid;
   justify-items: start;

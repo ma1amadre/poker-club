@@ -57,11 +57,13 @@ export interface EveningRow {
   announce_posted_at: string | null;
   results_posted_at: string | null;
   voting_posted_at: string | null;
+  /** > 0 — итог уже публиковался и устарел (отмена finish или правка): пост «Исправленные итоги». */
+  results_revision: number;
 }
 
 // Одной строкой-литералом: из конкатенации supabase-js не выводит тип строк select.
 export const EVENING_COLUMNS =
-  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, results_posted_at, voting_posted_at';
+  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, results_posted_at, voting_posted_at, results_revision';
 
 interface PlayerRow {
   id: string;
@@ -324,6 +326,7 @@ export async function buildResultsPost(
   evening: EveningRow,
   settings: SettingsRow,
   nowMs: number,
+  corrected = false,
 ): Promise<Post> {
   const cfg = scoringConfig(settings);
   const [history, { names, guests }] = await Promise.all([
@@ -355,6 +358,7 @@ export async function buildResultsPost(
     votingClosesAt: evening.voting_closes_at,
     nowMs,
     botUsername: settings.bot_username,
+    corrected: corrected || evening.results_revision > 0,
   });
 }
 
@@ -401,7 +405,7 @@ export async function releasePost(
   if (error) console.error(`release ${column} ${eveningId}: ${describeError(error)}`);
 }
 
-export type PostOutcome = 'posted' | 'already_posted' | 'no_group';
+export type PostOutcome = 'posted' | 'already_posted' | 'no_group' | 'no_changes';
 
 /** Застолбить → отправить → при ошибке снять отметку и пробросить ошибку. */
 export async function publishOnce(
@@ -438,4 +442,56 @@ export async function postEveningResults(
     'finished',
     'settled',
   ]);
+}
+
+/**
+ * Исправленный итог закрытого вечера (админ поправил журнал, не возвращая вечер в игру).
+ * Публикуем, только если после прошлого поста итогов журнал менялся (кроме платежей — на итог они
+ * не влияют), иначе 'no_changes'. Защита от дублей — тот же приём «застолбить → отправить»:
+ * results_posted_at переставляется на новое время, только если он ещё равен прочитанному.
+ */
+export async function postCorrectedResults(
+  db: Db,
+  evening: EveningRow,
+  nowMs: number,
+): Promise<PostOutcome> {
+  const settings = await loadSettings(db);
+  if (settings.group_chat_id === null || settings.group_chat_id === '') return 'no_group';
+  // Итог ещё не публиковался — это обычный пост итогов, а не поправка.
+  if (!evening.results_posted_at) return postEveningResults(db, evening, nowMs);
+
+  const since = evening.results_posted_at;
+  const { data: changed, error } = await db
+    .from('evening_events')
+    .select('id')
+    .eq('evening_id', evening.id)
+    .neq('type', 'payment')
+    .or(`at.gt."${since}",voided_at.gt."${since}"`)
+    .limit(1);
+  if (error) throw new Error(`evening_events: ${describeError(error)}`);
+  if ((changed ?? []).length === 0) return 'no_changes';
+
+  const post = await buildResultsPost(db, evening, settings, nowMs, true);
+  const atIso = new Date(nowMs).toISOString();
+  const { data: claimed, error: claimError } = await db
+    .from('evenings')
+    .update({ results_posted_at: atIso, results_revision: evening.results_revision + 1 })
+    .eq('id', evening.id)
+    .eq('results_posted_at', since)
+    .in('status', ['finished', 'settled'])
+    .select('id');
+  if (claimError) throw new Error(`claim results_posted_at: ${describeError(claimError)}`);
+  if ((claimed ?? []).length === 0) return 'already_posted';
+  try {
+    await sendMessage(settings.group_chat_id, post.text, { buttons: post.buttons });
+    return 'posted';
+  } catch (err) {
+    const { error: undoError } = await db
+      .from('evenings')
+      .update({ results_posted_at: since, results_revision: evening.results_revision })
+      .eq('id', evening.id)
+      .eq('results_posted_at', atIso);
+    if (undoError) console.error(`release corrected ${evening.id}: ${describeError(undoError)}`);
+    throw err;
+  }
 }

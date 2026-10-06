@@ -8,3 +8,4 @@ export * from './rpc';
 export * from './admin';
 export * from './photos';
 export * from './board';
+export { syncServerClock, useServerClockSync } from './serverClock';

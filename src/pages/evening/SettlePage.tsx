@@ -40,7 +40,7 @@ import {
   settleOrder,
   settleTotals,
 } from './lib';
-import { EventRow } from './parts';
+import { EventRow, StaleNotice } from './parts';
 import { PaymentSheet, type PaymentTarget } from './PaymentSheet';
 import { useEveningActions } from './useEveningActions';
 import { useEveningModel, type EveningModel } from './useEveningModel';
@@ -79,7 +79,7 @@ export default function SettlePage() {
 }
 
 function SettleScreen({ model }: { model: EveningModel }) {
-  const { evening, state, events, nameOf, playersById, canControl, isAdmin, nowMs } = model;
+  const { evening, state, events, nameOf, playersById, canControl, nowMs } = model;
   const actions = useEveningActions(model);
   const toast = useToast();
   const markSettled = useMarkSettled();
@@ -109,7 +109,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
     const ok = await actions.confirm({
       title: 'Открыть расчёт заново?',
       message:
-        'Вечер вернётся в статус «Игра окончена»: банкир снова сможет записывать платежи. Записи журнала не изменятся.',
+        'Вечер вернётся в статус «Игра окончена»: долги снова появятся на главной у должников, а расчёт нужно будет закрыть заново. Записи журнала не изменятся.',
       confirmText: 'Открыть расчёт',
       cancelText: 'Оставить закрытым',
     });
@@ -136,6 +136,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
           : 'Банкир не назначен — платежи записывает админ'
       }
     >
+      {model.stale && <StaleNotice updatedAt={model.updatedAt} onRetry={model.retry} />}
       {status === 'announced' || status === 'live' ? (
         <Notice tone="info" title="Игра ещё не окончена">
           Сейчас видны только взносы. Призы и головы появятся после завершения вечера.
@@ -246,7 +247,9 @@ function SettleScreen({ model }: { model: EveningModel }) {
         </div>
       )}
 
-      {isAdmin && status === 'settled' && (
+      {/* Банкир тоже: unmark_settled ему разрешён (ARCHITECTURE.md), а после закрытия он может
+          отменить платёж — без этой кнопки вечер застрял бы в «Расчёт закрыт» с долгом. */}
+      {canControl && status === 'settled' && (
         <Button
           block
           icon="rotate-ccw"

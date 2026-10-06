@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   averageStackBb,
   bestHunters,
+  clockView,
   describeEvent,
   describeTrigger,
   eventPlayerId,
@@ -19,7 +20,9 @@ import {
   normalizeGuestName,
   orderedPlayers,
   ordinalPlace,
+  parsePayouts,
   parseRub,
+  payoutTextSum,
   paymentEvents,
   playerLine,
   rebuyText,
@@ -64,6 +67,9 @@ describe('describeEvent', () => {
     });
     expect(ev('bust', { playerId: 'b', by: ['a', 'c'] }).detail).toBe(
       'выбивают Женя и Дима — голова пополам',
+    );
+    expect(ev('bust', { playerId: 'b', by: ['a', 'c', 'd'] }).detail).toBe(
+      'выбивают Женя, Дима и Лёша — голова поровну на 3',
     );
     expect(ev('bust', { playerId: 'b', by: [] }).detail).toBe('кто выбил — не указано');
   });
@@ -221,6 +227,17 @@ describe('расчёт', () => {
     expect(parseRub('0')).toBeNull();
     expect(parseRub('-5')).toBeNull();
     expect(parseRub('12,5')).toBeNull();
+    // Точка — не мусор: «500.00» раньше превращалось в 50 000 ₽.
+    expect(parseRub('500.00')).toBeNull();
+    expect(parseRub('1500.5')).toBeNull();
+    expect(parseRub('5.0')).toBeNull();
+    expect(parseRub('1.500')).toBeNull();
+    expect(parseRub('500 руб.')).toBe(500);
+    expect(parseRub('500 руб')).toBe(500);
+    expect(parseRub('500₽')).toBe(500);
+    expect(parseRub('500 р.')).toBe(500);
+    expect(parseRub('1 500 ₽')).toBe(1500);
+    expect(parseRub('р500')).toBeNull();
     expect(parseRub('')).toBeNull();
   });
 });
@@ -351,5 +368,57 @@ describe('раскладка расчёта', () => {
     j.bust('b', ['a']);
     j.rebuy('b');
     expect(totalRebuys(replay(DEFAULT_FORMAT, j.events, j.now()))).toBe(2);
+  });
+});
+
+describe('clockView', () => {
+  it('до старта — прочерки', () => {
+    const j = journal().join('a', 'b');
+    expect(clockView(replay(DEFAULT_FORMAT, j.events, j.now())).text).toBe('--:--');
+  });
+
+  it('обычный уровень — обратный отсчёт', () => {
+    const j = journal().join('a', 'b');
+    j.start();
+    j.wait(10);
+    const v = clockView(replay(DEFAULT_FORMAT, j.events, j.now()));
+    expect(v.text).toBe('30:00');
+    expect(v.note).toBeNull();
+    expect(v.aria).toMatch(/^До конца уровня/);
+  });
+
+  it('последний уровень — не «00:00», а сколько он идёт', () => {
+    // 8 уровней по 40 мин: последний начинается на 280-й минуте; на 400-й он идёт 120 мин.
+    const j = journal().join('a', 'b');
+    j.start();
+    j.wait(400);
+    const state = replay(DEFAULT_FORMAT, j.events, j.now());
+    expect(state.nextLevel).toBeNull();
+    const v = clockView(state);
+    expect(v.text).toBe('120:00');
+    expect(v.note).toBe('Последний уровень — блайнды больше не растут');
+    expect(v.aria).toMatch(/^Последний уровень идёт/);
+  });
+});
+
+describe('parsePayouts', () => {
+  it('принимает доли с суммой 100, в том числе с запятой', () => {
+    expect(parsePayouts(['50', '30', '20'])).toEqual({ ok: true, pct: [50, 30, 20] });
+    expect(parsePayouts(['33,3', '33,3', '33.4'])).toEqual({ ok: true, pct: [33.3, 33.3, 33.4] });
+    expect(parsePayouts(['100'])).toEqual({ ok: true, pct: [100] });
+  });
+
+  it('как validateFormat и set_payout: доли > 0, сумма 100, 1–10 мест', () => {
+    expect(parsePayouts(['60', '30']).ok).toBe(false);
+    expect(parsePayouts(['100', '0']).ok).toBe(false);
+    expect(parsePayouts(['70', 'тридцать']).ok).toBe(false);
+    expect(parsePayouts([]).ok).toBe(false);
+    expect(parsePayouts(Array.from({ length: 11 }, () => '1')).ok).toBe(false);
+  });
+
+  it('сумма для подсказки', () => {
+    expect(payoutTextSum(['33,3', '33,3', '33,4'])).toBe(100);
+    expect(payoutTextSum(['50', '30'])).toBe(80);
+    expect(payoutTextSum(['50', ''])).toBeNull();
   });
 });

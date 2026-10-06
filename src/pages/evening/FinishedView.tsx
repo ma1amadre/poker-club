@@ -2,7 +2,8 @@
 // голосование. Админу — правка закрытого вечера (отмена записей, возврат вечера в игру).
 import { computeMoney } from '@domain/money.ts';
 import { eveningPoints } from '@domain/scoring.ts';
-import { scoringFromSettings, useSettings } from '../../shared/api';
+import { useState } from 'react';
+import { notifyEveningFinished, scoringFromSettings, useSettings } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import {
   formatDate,
@@ -27,6 +28,7 @@ import {
   Section,
   Stat,
   Stats,
+  useToast,
 } from '../../shared/ui';
 import { bestHunters, orderedPlayers, ordinalPlace, totalRebuys } from './lib';
 import { EventFeed, PlayersList } from './parts';
@@ -59,6 +61,33 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
   const settleIsMain = !voteIsMain && canControl && evening.status === 'finished';
 
   const finishEvent = [...events].reverse().find((e) => e.type === 'finish' && !e.voided);
+  const toast = useToast();
+  const [publishing, setPublishing] = useState(false);
+  // Журнал правили после поста итогов (платежи на итог не влияют) — пост в группе устарел.
+  const postedAt = evening.results_posted_at ? Date.parse(evening.results_posted_at) : null;
+  const resultsOutdated =
+    postedAt !== null &&
+    events.some(
+      (e) =>
+        e.type !== 'payment' &&
+        (Date.parse(e.at) > postedAt || (e.voidedAt !== null && Date.parse(e.voidedAt) > postedAt)),
+    );
+
+  const publishCorrection = async () => {
+    setPublishing(true);
+    try {
+      const outcome = await notifyEveningFinished(evening.id, 'evening_corrected');
+      if (outcome === 'posted')
+        toast.show('Исправленный итог отправлен в группу', { tone: 'positive' });
+      else if (outcome === 'no_changes') toast.show('С прошлого поста итог не менялся');
+      else if (outcome === 'no_group')
+        toast.show('Группа клуба не подключена', { tone: 'caution' });
+      else toast.show('Итог уже обновили — новый пост не нужен');
+    } catch (error) {
+      toast.error(error);
+    }
+    setPublishing(false);
+  };
 
   const reopen = async () => {
     if (finishEvent)
@@ -200,9 +229,30 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         <Section title="Правка закрытого вечера">
           <p className="m-small">
             Отмена записи пересчитает места, очки и деньги — нажмите на неё в журнале ниже. Чтобы
-            добавить вылет или ребай, верните вечер в игру: пульт откроется снова, закрытый расчёт
-            откроется, а завершить вечер нужно будет заново.
+            добавить вылет или ребай, верните вечер в игру: пульт откроется снова на паузе, закрытый
+            расчёт откроется, а завершить вечер нужно будет заново — в группу уйдут исправленные
+            итоги. Ребай после возврата можно записать, только если ребаи были открыты в момент
+            завершения.
           </p>
+          {resultsOutdated && (
+            <Notice
+              tone="caution"
+              title="Итог в группе устарел"
+              action={
+                <Button
+                  size="sm"
+                  icon="send"
+                  loading={publishing}
+                  onClick={() => void publishCorrection()}
+                >
+                  Опубликовать исправление
+                </Button>
+              }
+            >
+              Журнал правили после поста итогов: места или деньги в группе могут не совпадать с
+              приложением.
+            </Notice>
+          )}
           {finishEvent && (
             <Button variant="danger" block icon="rotate-ccw" onClick={() => void reopen()}>
               Вернуть вечер в игру

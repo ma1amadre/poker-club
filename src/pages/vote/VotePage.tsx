@@ -5,7 +5,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import {
+  errorMessage,
   queryKeys,
+  removeVotePhoto,
+  useDeleteVote,
   useEvening,
   useEveningEvents,
   usePlayers,
@@ -35,6 +38,8 @@ import {
   Page,
   PageSkeleton,
   Section,
+  useConfirm,
+  useToast,
   type IconName,
 } from '../../shared/ui';
 import { formatCountdown } from './lib';
@@ -209,6 +214,31 @@ function MyVotes({
   playersById: ReadonlyMap<string, Player>;
 }) {
   const [editing, setEditing] = useState<VoteCategory | null>(null);
+  const { confirm, confirmElement } = useConfirm();
+  const remove = useDeleteVote(eveningId);
+  const toast = useToast();
+
+  // Подтверждение отзыва — здесь, а не в шторке: шторка к этому моменту уже закрыта.
+  const withdraw = async (vote: VoteRow) => {
+    const title = VOTE_CATEGORY_META[vote.category].title;
+    const ok = await confirm({
+      title: `Отозвать голос в номинации «${title}»?`,
+      message: vote.photo_path
+        ? 'Подпись и фото удалятся. Проголосовать заново можно до закрытия.'
+        : 'Проголосовать заново можно до закрытия.',
+      confirmText: 'Отозвать голос',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await remove.mutateAsync({ voterId: me.id, category: vote.category });
+    } catch (error) {
+      toast.show('Голос не отозван', { tone: 'critical', detail: errorMessage(error) });
+      return;
+    }
+    if (vote.photo_path) await removeVotePhoto(vote.photo_path).catch(() => undefined);
+    toast.success('Голос отозван');
+  };
   // До закрытия RLS отдаёт только мои голоса, но фильтруем явно — на случай админа и кеша.
   const mine = useMemo(
     () => new Map(votes.filter((v) => v.voter_id === me.id).map((v) => [v.category, v])),
@@ -273,8 +303,10 @@ function MyVotes({
           participants={participants}
           current={mine.get(editing) ?? null}
           onClose={() => setEditing(null)}
+          onWithdraw={(vote) => void withdraw(vote)}
         />
       )}
+      {confirmElement}
     </Section>
   );
 }

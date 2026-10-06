@@ -4,6 +4,7 @@ import type { EventPayload, EventType } from '@domain/types.ts';
 import type { VoteCategory } from '@domain/votes.ts';
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/context';
+import { addClockSample } from '../lib/serverClock';
 import { supabase } from '../supabase';
 import { toError } from './errors';
 import { queryKeys } from './keys';
@@ -16,6 +17,21 @@ export interface AddEventInput {
   type: EventType;
   /** Для timer_*, level_*, hand, finish — пустой объект (по умолчанию). */
   payload?: EventPayload;
+  /**
+   * Ключ повтора (миграция 007): один на намерение пользователя. Повтор с тем же ключом после
+   * потерянного ответа вернёт уже записанное событие, а не задвоит платёж или раздачу.
+   */
+  clientId?: string;
+}
+
+/** Случайный uuid v4 — ключ повтора add_event. */
+export function newClientId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = ((b[6] ?? 0) & 0x0f) | 0x40;
+  b[8] = ((b[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Событие в журнал вечера. Перед вызовом страница проверяет его доменной canApply. */
@@ -23,14 +39,22 @@ export async function addEvent({
   eveningId,
   type,
   payload = {},
+  clientId,
 }: AddEventInput): Promise<EveningEventRecord> {
+  const t0 = Date.now();
   const { data, error } = await supabase.rpc('add_event', {
     p_evening: eveningId,
     p_type: type,
     p_payload: payload,
+    ...(clientId ? { p_client_id: clientId } : {}),
   });
+  const t1 = Date.now();
   if (error) throw toError(error);
-  return toEventRecord(data);
+  const record = toEventRecord(data);
+  // `at` ставит сервер — заодно замер часов (см. serverClock.ts). Повтор по ключу вернёт старое
+  // событие — его `at` о часах ничего не говорит.
+  if (Date.parse(record.at) >= t0 - 60_000) addClockSample(record.at, t0, t1);
+  return record;
 }
 
 /** Отменить событие (пометка voided, история сохраняется). Отмена finish возвращает вечер в live. */
@@ -118,16 +142,23 @@ export async function deleteVote({ eveningId, voterId, category }: DeleteVoteInp
 }
 
 /** Ответ Edge Function notify (supabase/functions/notify/results.ts → PostOutcome). */
-export type NotifyOutcome = 'posted' | 'already_posted' | 'no_group';
+export type NotifyOutcome = 'posted' | 'already_posted' | 'no_group' | 'no_changes';
+
+export type NotifyKind = 'evening_finished' | 'evening_corrected';
 
 /**
  * Пост итогов вечера в группу — банкир (или админ) после finish. Текст собирает сервер из БД;
  * повторный вызов безопасен (already_posted). Если не вызвать, итоги добьёт cron-tick.
+ * `evening_corrected` — только админ: исправленный итог закрытого вечера после правки журнала
+ * (no_changes — с прошлого поста журнал не менялся).
  */
-export async function notifyEveningFinished(eveningId: string): Promise<NotifyOutcome> {
+export async function notifyEveningFinished(
+  eveningId: string,
+  kind: NotifyKind = 'evening_finished',
+): Promise<NotifyOutcome> {
   const { data, error } = await supabase.functions.invoke<{ ok: true; outcome: NotifyOutcome }>(
     'notify',
-    { body: { kind: 'evening_finished', eveningId } },
+    { body: { kind, eveningId } },
   );
   if (error) {
     // Тело ошибки функции: {error: текст по-русски, code}.
@@ -156,6 +187,12 @@ export async function addGuest(eveningId: string, name: string): Promise<string>
   return data;
 }
 
+/** Призовые доли вечера до старта (миграция 007) — банкир вечера или админ. */
+export async function setPayout(eveningId: string, payoutPct: number[]): Promise<void> {
+  const { error } = await supabase.rpc('set_payout', { p_evening: eveningId, p_pct: payoutPct });
+  if (error) throw toError(error);
+}
+
 export async function setMyName(name: string): Promise<void> {
   const { error } = await supabase.rpc('set_my_name', { p_name: name });
   if (error) throw toError(error);
@@ -180,6 +217,12 @@ export function useAddEvent(eveningId: string) {
       queryClient.setQueryData<EveningEventRecord[]>(queryKeys.eveningEvents(eveningId), (old) =>
         old && !old.some((e) => e.id === record.id) ? [...old, record] : old,
       );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
+    // Ответ мог потеряться после того, как запись прошла: сверяем журнал с сервером, чтобы
+    // шторка до повторного нажатия уже показала то, что записано на самом деле.
+    onError: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
       invalidateEvening(queryClient, eveningId);
     },
@@ -255,6 +298,7 @@ export function useCastVote(eveningId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: Omit<CastVoteInput, 'eveningId'>) => castVote({ ...input, eveningId }),
+    meta: { silent: true }, // тост ошибки с контекстом показывает VoteSheet
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.votes(eveningId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
@@ -266,6 +310,7 @@ export function useDeleteVote(eveningId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: Omit<DeleteVoteInput, 'eveningId'>) => deleteVote({ ...input, eveningId }),
+    meta: { silent: true }, // тост ошибки с контекстом показывают VotePage и VoteResults
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.votes(eveningId) });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
@@ -273,10 +318,18 @@ export function useDeleteVote(eveningId: string) {
   });
 }
 
-export function useNotifyEveningFinished(eveningId: string) {
+export function useSetPayout(eveningId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => notifyEveningFinished(eveningId),
+    mutationFn: (payoutPct: number[]) => setPayout(eveningId, payoutPct),
+    onSuccess: () => invalidateEvening(queryClient, eveningId),
+  });
+}
+
+export function useNotifyEveningFinished(eveningId: string, kind: NotifyKind = 'evening_finished') {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => notifyEveningFinished(eveningId, kind),
     // results_posted_at изменился — перечитать вечер.
     onSuccess: () => invalidateEvening(queryClient, eveningId),
   });
@@ -288,6 +341,7 @@ export function useSetMyName() {
   const { updatePlayer } = useAuth();
   return useMutation({
     mutationFn: (name: string) => setMyName(name),
+    meta: { silent: true }, // ошибку («имя уже занято») RenameSheet показывает под полем
     onSuccess: (_void, name) => {
       // Сервер схлопывает пробелы так же (regexp_replace '\s+' → ' ', btrim).
       updatePlayer({ display_name: name.replace(/\s+/g, ' ').trim() });

@@ -44,6 +44,8 @@ export interface BoardState {
   format: TournamentFormat;
   events: EveningEvent[];
   players: { id: string; display_name: string }[];
+  /** Время сервера на момент ответа (миграция 007) — для сверки часов табло. */
+  server_now?: string;
 }
 
 export const EVENING_STATUS_META: Record<EveningStatus, { title: string }> = {
@@ -57,11 +59,15 @@ export const EVENING_STATUS_META: Record<EveningStatus, { title: string }> = {
 /** Порядок ответов в списках: идут, под вопросом, не ответили, не идут. */
 export const RSVP_ORDER: Record<RsvpStatus | 'none', number> = { yes: 0, maybe: 1, none: 2, no: 3 };
 
-export const RSVP_STATUS_META: Record<RsvpStatus, { title: string }> = {
-  yes: { title: 'Иду' },
-  maybe: { title: 'Под вопросом' },
-  no: { title: 'Не иду' },
+/** title — свой ответ (кнопка, первое лицо); other — ответ другого игрока в списках (третье лицо). */
+export const RSVP_STATUS_META: Record<RsvpStatus, { title: string; other: string }> = {
+  yes: { title: 'Иду', other: 'Идёт' },
+  maybe: { title: 'Под вопросом', other: 'Под вопросом' },
+  no: { title: 'Не иду', other: 'Не идёт' },
 };
+
+/** Порядок вариантов в переключателе ответа — один на всех экранах (как в списках: RSVP_ORDER). */
+export const RSVP_CHOICES: readonly RsvpStatus[] = ['yes', 'maybe', 'no'];
 
 /** Вечер завершён (игра окончена или уже рассчитан) — попадает в статистику. */
 export function isFinishedStatus(status: EveningStatus): boolean {

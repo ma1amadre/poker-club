@@ -8,6 +8,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   errorMessage,
   queryKeys,
+  RSVP_CHOICES,
+  RSVP_STATUS_META,
   useEveningEvents,
   usePredictions,
   useRsvps,
@@ -89,11 +91,11 @@ function feeText(format: Evening['format']): string {
 
 // --- Анонс -----------------------------------------------------------------------------------
 
-const RSVP_OPTIONS: readonly SegmentedOption<RsvpStatus | ''>[] = [
-  { value: 'yes', label: 'Иду' },
-  { value: 'no', label: 'Не иду' },
-  { value: 'maybe', label: 'Под вопросом' },
-];
+// Порядок вариантов — общий с экраном вечера (RSVP_CHOICES), чтобы палец не промахивался.
+const RSVP_OPTIONS: readonly SegmentedOption<RsvpStatus | ''>[] = RSVP_CHOICES.map((status) => ({
+  value: status,
+  label: RSVP_STATUS_META[status].title,
+}));
 
 export interface AnnouncedEveningProps {
   evening: Evening;
@@ -124,6 +126,9 @@ export function AnnouncedEvening({
   const myRsvp = rows.find((r) => r.player_id === me.id)?.status ?? null;
   const stale = Date.parse(evening.scheduled_at) < nowMs - STALE_ANNOUNCE_MS;
   const banker = playerName(playersById, evening.banker_id);
+  // Пульт «Отметить пришедших / Начать вечер» живёт на экране вечера — банкиру (не админу) туда
+  // больше не попасть из приложения: анонсов нет ни в истории, ни во вкладках.
+  const canControl = isAdmin || evening.banker_id === me.id;
 
   const answer = (status: RsvpStatus) => {
     const key = queryKeys.rsvps(evening.id);
@@ -198,6 +203,15 @@ export function AnnouncedEvening({
             <Going groups={groups} meId={me.id} />
           )}
         </Card>
+        {canControl ? (
+          <ButtonLink variant="primary" block icon="user-plus" to={paths.evening(evening.id)}>
+            Собрать стол и начать
+          </ButtonLink>
+        ) : (
+          <ButtonLink variant="ghost" block icon="chevron-right" to={paths.evening(evening.id)}>
+            Открыть вечер
+          </ButtonLink>
+        )}
         <FieldGroup
           label="Ваш ответ"
           hint={myRsvp ? undefined : 'Ответ нужен банкиру, чтобы собрать список игроков.'}

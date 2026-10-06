@@ -57,7 +57,13 @@ export function SettlementNotices({ history, me, playersById }: SettlementNotice
           title={`Расчёт за ${formatDate(duty.scheduledAt)} не закрыт`}
           action={action(duty.eveningId)}
         >
-          {`Вы банкир вечера. Осталось рассчитать ${pluralWithNumber(duty.pending, ['игрока', 'игроков', 'игроков'])}.`}
+          {duty.pending > 0
+            ? `Вы банкир вечера. Осталось рассчитать ${pluralWithNumber(duty.pending, ['игрока', 'игроков', 'игроков'])}.`
+            : duty.selfRemainingRub < 0
+              ? `Остальные рассчитались. Запишите, что вы забрали себе ${formatRub(-duty.selfRemainingRub)}, и закройте расчёт.`
+              : duty.selfRemainingRub > 0
+                ? `Остальные рассчитались. Запишите, что вы внесли ${formatRub(duty.selfRemainingRub)}, и закройте расчёт.`
+                : 'Все в расчёте — нажмите «Закрыть расчёт».'}
         </Notice>
       ))}
     </div>

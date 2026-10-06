@@ -21,6 +21,7 @@ import {
   Icon,
   List,
   ListItem,
+  Notice,
   Section,
   type IconName,
 } from '../../shared/ui';
@@ -32,6 +33,25 @@ import {
   playerLine,
   type NameOf,
 } from './lib';
+
+// --- Связь -----------------------------------------------------------------------------------
+
+/** Фоновый перезапрос не удался: данные на экране — на момент последней загрузки. */
+export function StaleNotice({ updatedAt, onRetry }: { updatedAt: number; onRetry: () => void }) {
+  return (
+    <Notice
+      tone="caution"
+      title={`Нет связи · данные на ${formatTime(updatedAt)}`}
+      action={
+        <Button size="sm" icon="refresh-cw" onClick={onRetry}>
+          Обновить
+        </Button>
+      }
+    >
+      Записи, сделанные с этого экрана, уже на сервере. Экран обновится сам, когда связь вернётся.
+    </Notice>
+  );
+}
 
 // --- Формат ----------------------------------------------------------------------------------
 
@@ -119,11 +139,20 @@ export interface PlayersListProps {
   playersById: Map<string, Player>;
   /** Строка-кнопка: пульт игрока у банкира. */
   onSelect?: (player: PlayerState) => void;
+  /** Шеврон у строки-кнопки (переход). false — строка открывает действие, а не экран. */
+  chevron?: boolean;
   label?: string;
 }
 
 /** Игроки вечера строками: живые по входу, затем вылетевшие (свежие выше), после finish — по местам. */
-export function PlayersList({ state, nameOf, playersById, onSelect, label }: PlayersListProps) {
+export function PlayersList({
+  state,
+  nameOf,
+  playersById,
+  onSelect,
+  chevron = true,
+  label,
+}: PlayersListProps) {
   const rows = orderedPlayers(state);
   return (
     <List aria-label={label ?? 'Игроки вечера'}>
@@ -151,7 +180,7 @@ export function PlayersList({ state, nameOf, playersById, onSelect, label }: Pla
               )
             }
             onClick={onSelect ? () => onSelect(p) : undefined}
-            chevron={Boolean(onSelect)}
+            chevron={Boolean(onSelect) && chevron}
           />
         );
       })}

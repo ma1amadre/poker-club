@@ -8,11 +8,26 @@
     <meta name="robots" content="noindex, nofollow" />
     <title>Покерный клуб</title>
     <!--
-      Шрифты «Материи» грузятся @import с Google Fonts из materia.css: соединения открываем заранее,
-      чтобы текст не ждал DNS и TLS.
+      Шрифты «Материи» с Google Fonts — неблокирующей ссылкой (media="print" → onload → all), а не
+      @import в листе бандла: зависший fonts.googleapis.com не должен держать запуск приложения.
+      Пока шрифтов нет, работают системные стеки фолбэка. Блок между метками пишет
+      scripts/sync-materia.mjs — руками не править.
     -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- materia-fonts:start -->
+    <link
+      rel="preload"
+      as="style"
+      href="https://fonts.googleapis.com/css2?family=Commissioner:wght@300..700&amp;family=Geologica:slnt,wght,CRSV,SHRP@-12..0,100..900,0..1,0..100&amp;family=JetBrains+Mono:wght@400..700&amp;family=Literata:ital,opsz,wght@0,7..72,200..700;1,7..72,200..700&amp;family=Martian+Mono:wdth,wght@75..112.5,100..800&amp;family=Sofia+Sans+Condensed:wght@400..900&amp;family=Sofia+Sans:wght@300..700&amp;display=swap"
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Commissioner:wght@300..700&amp;family=Geologica:slnt,wght,CRSV,SHRP@-12..0,100..900,0..1,0..100&amp;family=JetBrains+Mono:wght@400..700&amp;family=Literata:ital,opsz,wght@0,7..72,200..700;1,7..72,200..700&amp;family=Martian+Mono:wdth,wght@75..112.5,100..800&amp;family=Sofia+Sans+Condensed:wght@400..900&amp;family=Sofia+Sans:wght@300..700&amp;display=swap"
+      media="print"
+      onload="this.media = 'all'"
+    />
+    <!-- materia-fonts:end -->
     <!--
       SDK Telegram подключается синхронно и ДО бандла: он разбирает launch-параметры из location.hash
       (tgWebAppData и др.) при загрузке, а main.tsx затем чистит hash под HashRouter.

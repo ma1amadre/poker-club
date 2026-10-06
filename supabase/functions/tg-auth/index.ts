@@ -158,7 +158,10 @@ async function upsertPlayer(user: TelegramUser, isAdminTg: boolean): Promise<Pla
 /**
  * auth-пользователь игрока и одноразовый токен входа.
  * createUser — только при первом входе (auth_user_id пуст); если пользователь с таким email уже
- * есть (связь потерялась), generateLink всё равно вернёт его id, и мы восстановим связь.
+ * есть (связь потерялась), generateLink всё равно вернёт его id, и мы восстановим связь — но только
+ * если этого пользователя создал tg-auth: в app_metadata лежит tg_id, а его пользователь сам
+ * изменить не может. Иначе адрес tg<id>@… мог бы заранее занять посторонний (signup в облаке
+ * включён по умолчанию) и получить чужой профиль при первом входе жертвы.
  * Регистрация в Auth закрыта (enable_signup = false), но admin-методы её не проверяют.
  */
 async function issueLoginToken(
@@ -173,7 +176,7 @@ async function issueLoginToken(
       email,
       email_confirm: true,
       user_metadata: { tg_id: tgId },
-      app_metadata: { provider: 'telegram' },
+      app_metadata: { provider: 'telegram', tg_id: tgId },
     });
     // email_exists — уже создан раньше (сбой между createUser и записью связи): не ошибка.
     const exists =
@@ -185,6 +188,24 @@ async function issueLoginToken(
   const { data, error } = await auth.generateLink({ type: 'magiclink', email });
   if (error || !data.user || !data.properties?.hashed_token) {
     throw new Error(`auth generateLink: ${describeError(error ?? 'пустой ответ')}`);
+  }
+
+  const taggedTgId = (data.user.app_metadata as { tg_id?: unknown } | undefined)?.tg_id;
+  if (player.auth_user_id === data.user.id) {
+    // Пользователи, созданные до метки, — дописываем её (связь уже доверенная).
+    if (taggedTgId !== tgId) {
+      const { error: tagError } = await auth.updateUserById(data.user.id, {
+        app_metadata: { ...data.user.app_metadata, tg_id: tgId },
+      });
+      if (tagError) console.error(`tg-auth: метка tg_id ${tgId}: ${describeError(tagError)}`);
+    }
+  } else if (taggedTgId !== tgId) {
+    console.error(`tg-auth: auth-пользователь ${data.user.id} для tg ${tgId} создан не tg-auth`);
+    throw new HttpError(
+      409,
+      'auth_conflict',
+      'Учётная запись для этого Telegram уже занята — напишите админу клуба',
+    );
   }
 
   let linked = player;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useClosingConfirmation } from '../../shared/telegram';
 import { useConfirm } from '../../shared/ui';
 
 /**
@@ -32,6 +33,9 @@ export function useLeave(fallback: string, dirty: boolean, what: string) {
   const leave = useCallback(async () => {
     if (await confirmDiscard()) leaveNow();
   }, [confirmDiscard, leaveNow]);
+
+  // Закрытие Mini App с правками — спросит Telegram (beforeunload внутри него не работает).
+  useClosingConfirmation(dirty);
 
   // Закрытие вкладки или перезагрузка с правками — браузер спросит сам (вне Telegram).
   useEffect(() => {

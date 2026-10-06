@@ -64,6 +64,9 @@ export interface TelegramWebApp {
   /** Цвет нижней панели Telegram, с 7.10. */
   setBottomBarColor?(color: string): void;
   disableVerticalSwipes?(): void;
+  /** Спрашивать подтверждение при закрытии Mini App, с 6.2. */
+  enableClosingConfirmation?(): void;
+  disableClosingConfirmation?(): void;
   openLink(url: string, options?: { try_instant_view?: boolean }): void;
   openTelegramLink(url: string): void;
   onEvent(event: TelegramEvent, cb: () => void): void;

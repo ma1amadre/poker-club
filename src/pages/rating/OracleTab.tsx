@@ -46,7 +46,7 @@ export function OracleTab({ ctx, seasons, season, onSeason }: OracleTabProps) {
         <Empty
           icon="eye"
           title="Прогнозов в этом сезоне ещё не было"
-          description="Прогноз на победителя и первый вылет делают на экране вечера до старта таймера."
+          description="Прогноз на победителя и первый вылет делают на главной, в карточке ближайшего вечера, до старта таймера."
         />
       ) : (
         <List aria-label={`Оракул сезона «${formatSeason(season)}»`}>

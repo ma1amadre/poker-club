@@ -1,5 +1,4 @@
-/* Материя 2.0.0 — вендорено scripts/sync-materia.mjs из D:/dev/materia. Руками не править. */
-@import url("https://fonts.googleapis.com/css2?family=Commissioner:wght@300..700&family=Geologica:slnt,wght,CRSV,SHRP@-12..0,100..900,0..1,0..100&family=JetBrains+Mono:wght@400..700&family=Literata:ital,opsz,wght@0,7..72,200..700;1,7..72,200..700&family=Martian+Mono:wdth,wght@75..112.5,100..800&family=Sofia+Sans+Condensed:wght@400..900&family=Sofia+Sans:wght@300..700&display=swap");
+/* Материя 2.0.0 — вендорено scripts/sync-materia.mjs из D:/dev/materia. Руками не править. Шрифты подключает index.html (метки materia-fonts). */
 
 
 /* Материя — токены. Сгенерировано tools/build-css.js из tokens.json; руками не править. */

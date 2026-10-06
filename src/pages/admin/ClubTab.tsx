@@ -27,6 +27,7 @@ import {
   Select,
   useToast,
 } from '../../shared/ui';
+import { useClosingConfirmation } from '../../shared/telegram';
 import { adminErrorText } from './lib';
 import { ListSkeleton } from './parts';
 import { useFocusInvalid } from './useFocusInvalid';
@@ -105,6 +106,14 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
 
   const { patch, errors } = parseSettingsDraft(draft);
   const dirty = settingsDirty(draft, settings);
+  // Закрыть Mini App с несохранёнными настройками — только через вопрос Telegram.
+  useClosingConfirmation(dirty);
+  // Очки и «лучших N» не снимаются на вечер или сезон: всё считается по текущим настройкам.
+  const initial = draftFromSettings(settings);
+  const scoringChanged =
+    draft.koPoints !== initial.koPoints ||
+    draft.winBonus !== initial.winBonus ||
+    draft.bestN !== initial.bestN;
   const errorOf = (field: SettingsField) =>
     submitted || touched.has(field) ? errors[field] : undefined;
 
@@ -280,6 +289,12 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
           autoComplete="off"
           {...bind('bestN')}
         />
+        {scoringChanged && (
+          <Notice tone="caution" title="Пересчитаются и прошлые сезоны">
+            Очки и число лучших вечеров не запоминаются на сезон: после сохранения по новым правилам
+            пересчитаются все прошлые сезоны, Зал славы и чемпионы — в том числе уже объявленные.
+          </Notice>
+        )}
         <div className="adm-grid-2">
           <Field
             label="Очки за нокаут"

@@ -30,6 +30,12 @@ export interface EveningModel {
   canControl: boolean;
   isAdmin: boolean;
   isBanker: boolean;
+  /** Фоновый перезапрос не удался: на экране последние загруженные данные. */
+  stale: boolean;
+  /** Когда данные экрана в последний раз пришли с сервера (мс, часы устройства). */
+  updatedAt: number;
+  /** Перезапросить вечер и журнал. */
+  retry: () => void;
 }
 
 export type EveningModelResult =
@@ -65,15 +71,17 @@ export function useEveningModel(id: string | undefined): EveningModelResult {
     [replayed],
   );
 
-  if (eveningQuery.isError || eventsQuery.isError) {
-    return {
-      status: 'error',
-      error: eveningQuery.error ?? eventsQuery.error,
-      retry: () => {
-        void eveningQuery.refetch();
-        void eventsQuery.refetch();
-      },
-    };
+  const retry = () => {
+    void eveningQuery.refetch();
+    void eventsQuery.refetch();
+  };
+  // Экран ошибки — только когда показать нечего. Неудачный фоновый перезапрос (сеть «моргнула»
+  // после Realtime или возврата в Mini App) не должен сносить пульт банкира с открытой шторкой:
+  // данные в кеше есть, экран показывает их с пометкой «нет связи». data === null — «не найден».
+  const eveningFailed = eveningQuery.isError && eveningQuery.data === undefined;
+  const eventsFailed = eventsQuery.isError && eventsQuery.data === undefined;
+  if (eveningFailed || eventsFailed) {
+    return { status: 'error', error: eveningQuery.error ?? eventsQuery.error, retry };
   }
   if (eveningQuery.isPending || (evening && eventsQuery.isPending)) return { status: 'loading' };
   if (!evening) return { status: 'not_found' };
@@ -94,6 +102,9 @@ export function useEveningModel(id: string | undefined): EveningModelResult {
       canControl: isAdmin || isBanker,
       isAdmin,
       isBanker,
+      stale: eveningQuery.isRefetchError || eventsQuery.isRefetchError,
+      updatedAt: Math.min(eveningQuery.dataUpdatedAt, eventsQuery.dataUpdatedAt),
+      retry,
     },
   };
 }

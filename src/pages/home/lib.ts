@@ -1,6 +1,6 @@
 // Чистые помощники главной: какой вечер показать, кто идёт, место в сезоне и незакрытые расчёты.
 // Следующая игра по расписанию — nextGameAt из shared/lib/clubTime. Деньги и места — только доменными функциями.
-import { computeMoney, paymentsFromEvents, settlement } from '@domain/money.ts';
+import { computeMoney, isSettled, paymentsFromEvents, settlement } from '@domain/money.ts';
 import { replay } from '@domain/replay.ts';
 import { sameRank, type StandingRow } from '@domain/season.ts';
 import type { EveningSummary } from '@domain/summary.ts';
@@ -170,6 +170,13 @@ export interface BankerDuty {
   scheduledAt: string;
   /** Сколько игроков (кроме самого банкира) ещё не рассчитались. */
   pending: number;
+  /**
+   * Остаток своей строки банкира: по конвенции клуба банкир записывает и свой выигрыш (−) или
+   * проигрыш (+) — пока он не ноль, «Закрыть расчёт» неактивна.
+   */
+  selfRemainingRub: number;
+  /** Все строки, включая свою, в нуле — осталось нажать «Закрыть расчёт». */
+  allSettled: boolean;
 }
 
 export interface OpenSettlements {
@@ -179,8 +186,9 @@ export interface OpenSettlements {
 
 /**
  * Мои незакрытые расчёты по вечерам «игра окончена» (не settled): settlement домена по журналу.
- * Свою строку банкиру не показываем — с самим собой он не рассчитывается; вместо неё — сколько
- * игроков ему ещё нужно рассчитать.
+ * Банкиру вместо долга — напоминание, пока вечер не «Расчёт закрыт»: сколько игроков ещё не
+ * рассчитано, своя строка (её тоже нужно свести в ноль — так её считает экран расчёта) и что
+ * осталось нажать «Закрыть расчёт».
  */
 export function openSettlements(
   evenings: readonly SettleEveningLike[],
@@ -200,9 +208,13 @@ export function openSettlements(
       const pending = Object.entries(table).filter(
         ([id, row]) => id !== meId && row.status !== 'settled',
       ).length;
-      if (pending > 0) {
-        out.banker.push({ eveningId: evening.id, scheduledAt: evening.scheduled_at, pending });
-      }
+      out.banker.push({
+        eveningId: evening.id,
+        scheduledAt: evening.scheduled_at,
+        pending,
+        selfRemainingRub: table[meId]?.remainingRub ?? 0,
+        allSettled: isSettled(table),
+      });
       continue;
     }
     const row = table[meId];

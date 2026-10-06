@@ -24,7 +24,12 @@ function isPermanent(error: unknown): boolean {
 
 export const queryClient = new QueryClient({
   mutationCache: new MutationCache({
-    onError: (error) => mutationErrorHandler?.(error),
+    // meta.silent — у мутации свой тост ошибки с контекстом («Голос не сохранён»): без этого
+    // пользователь получал два тоста и двойную вибрацию.
+    onError: (error, _vars, _ctx, mutation) => {
+      if (mutation.meta?.silent) return;
+      mutationErrorHandler?.(error);
+    },
   }),
   defaultOptions: {
     queries: {
@@ -37,6 +42,10 @@ export const queryClient = new QueryClient({
     mutations: {
       // Запись не повторяем сами: повтор add_event мог бы задвоить событие в журнале.
       retry: false,
+      // По умолчанию ('online') без сети мутация молча встаёт на паузу: спиннер без конца, шторку не
+      // закрыть, пульт серый, а тоста «Нет связи» нет. 'always' — сразу ошибка и понятный тост;
+      // повтор банкир делает сам (add_event идемпотентен по ключу повтора).
+      networkMode: 'always',
     },
   },
 });

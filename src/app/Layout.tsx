@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../shared/auth';
 import { cn, paths } from '../shared/lib';
+import { useBackButton } from '../shared/telegram';
 import { BottomNav, PageSkeleton, type BottomNavItem } from '../shared/ui';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useStartParamRedirect } from './useStartParamRedirect';
@@ -25,6 +26,10 @@ export function Layout() {
   // Редактор формата открывается поверх админки параметром ?format= — это вложенный экран.
   const nested = new URLSearchParams(location.search).has('format');
   const showNav = TAB_ROOTS.has(location.pathname) && !nested;
+  // Базовый слой кнопки «Назад» на вложенных маршрутах — под Page с back (её запись ложится
+  // сверху). Пока грузится ленивый чанк или данные (PageSkeleton без Page), кнопка не пропадает
+  // и не мигает «Назад» → «Закрыть» → «Назад» при каждом переходе.
+  useBackButton({ enabled: !showNav });
 
   return (
     <div className={cn('app-layout', showNav && 'ui-has-bottomnav')}>

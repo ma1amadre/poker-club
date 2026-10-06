@@ -18,7 +18,7 @@ import { AnnouncedView } from './AnnouncedView';
 import './evening.css';
 import { FinishedView } from './FinishedView';
 import { LiveView } from './LiveView';
-import { FormatSummary } from './parts';
+import { FormatSummary, StaleNotice } from './parts';
 import { TvSheet } from './TvSheet';
 import { useEveningActions } from './useEveningActions';
 import { useEveningModel, type EveningModel } from './useEveningModel';
@@ -79,6 +79,7 @@ function EveningScreen({ model }: { model: EveningModel }) {
         ) : undefined
       }
     >
+      {model.stale && <StaleNotice updatedAt={model.updatedAt} onRetry={model.retry} />}
       {evening.note && <p className="m-body">{evening.note}</p>}
 
       {evening.status === 'announced' && <AnnouncedView model={model} actions={actions} />}

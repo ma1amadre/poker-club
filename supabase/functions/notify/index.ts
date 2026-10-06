@@ -1,5 +1,6 @@
 // notify — пост итогов вечера в группу клуба по команде банкира или админа.
-// POST {kind: 'evening_finished', eveningId} с JWT игрока. Текст сервер собирает сам из БД
+// POST {kind: 'evening_finished' | 'evening_corrected', eveningId} с JWT игрока. evening_corrected —
+// только админ: исправленный итог закрытого вечера после правки журнала. Текст сервер собирает сам из БД
 // доменными функциями: клиенту не доверяем ни цифры, ни имена. Идемпотентно по results_posted_at.
 import {
   adminClient,
@@ -12,7 +13,13 @@ import {
   UUID_RE,
 } from '../_shared/admin.ts';
 import { TelegramApiError } from '../_shared/telegram.ts';
-import { EVENING_COLUMNS, NotReadyError, postEveningResults, type EveningRow } from './results.ts';
+import {
+  EVENING_COLUMNS,
+  NotReadyError,
+  postCorrectedResults,
+  postEveningResults,
+  type EveningRow,
+} from './results.ts';
 
 interface CallerRow {
   id: string;
@@ -45,10 +52,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!caller) return errorResponse(403, 'not_player', 'Вы не участник клуба');
 
     const body = await readJsonBody(req);
-    if (!body || body.kind !== 'evening_finished') {
+    const kind = body?.kind;
+    if (kind !== 'evening_finished' && kind !== 'evening_corrected') {
       return errorResponse(400, 'bad_kind', 'Неизвестный тип уведомления');
     }
-    const eveningId = body.eveningId;
+    const eveningId = body?.eveningId;
     if (typeof eveningId !== 'string' || !UUID_RE.test(eveningId)) {
       return errorResponse(400, 'bad_evening', 'Некорректный id вечера');
     }
@@ -64,11 +72,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!caller.is_admin && evening.banker_id !== caller.id) {
       return errorResponse(403, 'forbidden', 'Итоги публикует банкир вечера или админ');
     }
+    if (kind === 'evening_corrected' && !caller.is_admin) {
+      return errorResponse(403, 'forbidden', 'Исправленный итог публикует админ');
+    }
     if (evening.status !== 'finished' && evening.status !== 'settled') {
       return errorResponse(409, 'not_finished', 'Вечер ещё не завершён');
     }
 
-    const outcome = await postEveningResults(db, evening, Date.now());
+    const outcome =
+      kind === 'evening_corrected'
+        ? await postCorrectedResults(db, evening, Date.now())
+        : await postEveningResults(db, evening, Date.now());
     return json({ ok: true, outcome });
   } catch (error) {
     if (error instanceof NotReadyError) return errorResponse(409, 'not_finished', error.message);

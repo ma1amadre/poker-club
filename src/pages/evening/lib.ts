@@ -10,7 +10,7 @@ import type {
   TournamentFormat,
 } from '@domain/types.ts';
 // Только чистое форматирование (Intl), без React: модуль тестируется в node.
-import { formatDuration, NBSP, pluralWithNumber } from '../../shared/lib/format';
+import { formatClock, formatDuration, NBSP, pluralWithNumber } from '../../shared/lib/format';
 import { joinNames, NAME_MAX, normalizeName } from '../../shared/lib/text';
 import { RSVP_ORDER } from '../../shared/api/types';
 
@@ -67,7 +67,8 @@ export function describeEvent(
       let detail: string;
       if (by.length === 0) detail = 'кто выбил — не указано';
       else if (by.length === 1) detail = `выбивает ${by[0]}`;
-      else detail = `выбивают ${joinNames(by)} — голова пополам`;
+      else if (by.length === 2) detail = `выбивают ${joinNames(by)} — голова пополам`;
+      else detail = `выбивают ${joinNames(by)} — голова поровну на ${by.length}`;
       return { kind: 'bust', title: `Вылет: ${who()}`, detail };
     }
     case 'timer_start':
@@ -277,12 +278,54 @@ export function signedPayment(amountAbs: number, direction: SettleDirection): nu
   return direction === 'from_banker' ? -n : n;
 }
 
-/** Разбор суммы из поля ввода: «1 500», «1500 ₽» → 1500; мусор, ноль, дроби → null. */
+/**
+ * Разбор суммы из поля ввода: «1 500», «1500 ₽», «500 руб.» → целые рубли; мусор, ноль, дроби → null.
+ * Единица срезается только в конце строки, а точка и запятая внутри числа — отказ: «500.00» —
+ * это не 50 000 ₽, а дробная запись, которую банкир должен перепроверить.
+ */
 export function parseRub(text: string): number | null {
-  const cleaned = text.replace(/[\s ₽руб.]/gi, '');
+  const cleaned = text
+    .trim()
+    .replace(/\s*(₽|руб\.?|р\.?)$/i, '')
+    .replace(/\s/g, ''); // \s в JS покрывает и неразрывные пробелы
   if (!/^\d{1,7}$/.test(cleaned)) return null;
   const n = Number(cleaned);
   return n > 0 && n <= 1_000_000 ? n : null;
+}
+
+/** Доля призовых из поля ввода: «70», «33,3», «33.3» → число; пусто или мусор → NaN. */
+function parsePct(text: string): number {
+  const s = text.trim().replace(/\s/g, '').replace(',', '.');
+  return /^(\d+(\.\d*)?|\.\d+)$/.test(s) ? Number(s) : Number.NaN;
+}
+
+/** Сумма долей для подсказки «сейчас 90 %»; null — есть нечисловое поле. */
+export function payoutTextSum(texts: readonly string[]): number | null {
+  const nums = texts.map(parsePct);
+  if (nums.some((n) => Number.isNaN(n))) return null;
+  // Округление убирает хвосты двоичной арифметики: 33,3 + 33,3 + 33,4 = 100.
+  return Math.round(nums.reduce((a, b) => a + b, 0) * 1e6) / 1e6;
+}
+
+/**
+ * Призовые доли из полей ввода — то же правило, что у validateFormat и RPC set_payout:
+ * 1–10 мест, каждая доля больше нуля, сумма 100 %. Ошибка — текст для поля.
+ */
+export function parsePayouts(
+  texts: readonly string[],
+): { ok: true; pct: number[] } | { ok: false; error: string } {
+  if (texts.length < 1 || texts.length > 10)
+    return { ok: false, error: 'Призовых мест — от 1 до 10.' };
+  const pct = texts.map(parsePct);
+  if (pct.some((n) => !Number.isFinite(n) || n <= 0))
+    return { ok: false, error: 'Каждая доля — число процентов больше нуля, например 70 или 33,3.' };
+  const sum = payoutTextSum(texts) ?? Number.NaN;
+  if (Math.abs(sum - 100) > 1e-9)
+    return {
+      ok: false,
+      error: `Сумма долей должна быть 100 %, сейчас ${String(sum).replace('.', ',')} %.`,
+    };
+  return { ok: true, pct };
 }
 
 // --- Подписи игроков и уровня ----------------------------------------------------------------
@@ -297,6 +340,44 @@ export function levelLabel(format: TournamentFormat, state: EveningState): strin
   const total = format.levels.length;
   const n = Math.min(state.timer.levelIndex + 1, total);
   return `Уровень ${n} из ${total}`;
+}
+
+export interface ClockView {
+  /** Крупные цифры: обратный отсчёт, прошедшее время уровня или «--:--». */
+  text: string;
+  /** Для скринридера. */
+  aria: string;
+  /** Пояснение под часами (последний уровень) или null. */
+  note: string | null;
+}
+
+/**
+ * Что показывать на часах пульта и табло. На последнем уровне обратного отсчёта нет: уровень сам
+ * не кончается (блайнды остаются последними), поэтому «00:00» сбивало бы с толку — показываем,
+ * сколько идёт уровень.
+ */
+export function clockView(state: EveningState): ClockView {
+  const t = state.timer;
+  if (t.status === 'not_started') return { text: '--:--', aria: 'Таймер не запущен', note: null };
+  if (state.nextLevel === null) {
+    return {
+      text: formatClock(t.levelElapsedMs, 'elapsed'),
+      aria: `Последний уровень идёт ${formatDuration(t.levelElapsedMs)}`,
+      note: 'Последний уровень — блайнды больше не растут',
+    };
+  }
+  if (t.levelRemainingMs !== null) {
+    return {
+      text: formatClock(t.levelRemainingMs),
+      aria: `До конца уровня ${formatDuration(t.levelRemainingMs)}`,
+      note: null,
+    };
+  }
+  return {
+    text: formatClock(t.levelElapsedMs, 'elapsed'),
+    aria: `Уровень идёт ${formatDuration(t.levelElapsedMs)}`,
+    note: null,
+  };
 }
 
 /**

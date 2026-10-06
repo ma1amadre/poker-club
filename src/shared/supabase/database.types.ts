@@ -28,6 +28,7 @@ export type Database = {
       evening_events: {
         Row: {
           at: string;
+          client_id: string | null;
           created_by: string | null;
           evening_id: string;
           id: number;
@@ -38,6 +39,7 @@ export type Database = {
         };
         Insert: {
           at?: string;
+          client_id?: string | null;
           created_by?: string | null;
           evening_id: string;
           id?: number;
@@ -48,6 +50,7 @@ export type Database = {
         };
         Update: {
           at?: string;
+          client_id?: string | null;
           created_by?: string | null;
           evening_id?: string;
           id?: number;
@@ -93,6 +96,7 @@ export type Database = {
           location: string | null;
           note: string | null;
           results_posted_at: string | null;
+          results_revision: number;
           scheduled_at: string;
           settled_at: string | null;
           started_at: string | null;
@@ -112,6 +116,7 @@ export type Database = {
           location?: string | null;
           note?: string | null;
           results_posted_at?: string | null;
+          results_revision?: number;
           scheduled_at: string;
           settled_at?: string | null;
           started_at?: string | null;
@@ -131,6 +136,7 @@ export type Database = {
           location?: string | null;
           note?: string | null;
           results_posted_at?: string | null;
+          results_revision?: number;
           scheduled_at?: string;
           settled_at?: string | null;
           started_at?: string | null;
@@ -418,9 +424,10 @@ export type Database = {
     };
     Functions: {
       add_event: {
-        Args: { p_evening: string; p_payload?: Json; p_type: string };
+        Args: { p_client_id?: string; p_evening: string; p_payload?: Json; p_type: string };
         Returns: {
           at: string;
+          client_id: string | null;
           created_by: string | null;
           evening_id: string;
           id: number;
@@ -438,6 +445,7 @@ export type Database = {
       };
       add_guest: { Args: { p_evening: string; p_name: string }; Returns: string };
       board_state: { Args: { p_token: string }; Returns: Json };
+      can_upload_vote_photo: { Args: { p_evening: string; p_player: string }; Returns: boolean };
       cast_vote: {
         Args: {
           p_caption?: string;
@@ -457,7 +465,9 @@ export type Database = {
       is_banker: { Args: { evening: string }; Returns: boolean };
       is_participant: { Args: { evening: string; player: string }; Returns: boolean };
       mark_settled: { Args: { p_evening: string }; Returns: undefined };
+      server_now: { Args: Record<PropertyKey, never>; Returns: string };
       set_my_name: { Args: { p_name: string }; Returns: undefined };
+      set_payout: { Args: { p_evening: string; p_pct: number[] }; Returns: undefined };
       set_prediction: {
         Args: { p_evening: string; p_first_out: string; p_winner: string };
         Returns: undefined;

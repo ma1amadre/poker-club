@@ -1,6 +1,7 @@
 // Фото к голосам: приватный бакет vote-photos (2 МБ, jpeg/webp). Путь задан контрактом:
-// {evening_id}/{player_id}/{category}-{random}.jpg — политика Storage пускает загрузку только
-// в папку, где второй сегмент равен current_player_id().
+// {evening_id}/{player_id}/{12 hex}.jpg — политика Storage (миграция 007) пускает загрузку только
+// в свою папку, только участнику вечера при открытом голосовании и только по этому шаблону имени.
+// Номинации в имени нет: до закрытия голосования путь не должен выдавать, кто в какой голосовал.
 import type { VoteCategory } from '@domain/votes.ts';
 import { useQuery } from '@tanstack/react-query';
 import { compressImage } from '../lib/image';
@@ -17,9 +18,10 @@ export interface VotePhotoTarget {
   category: VoteCategory;
 }
 
-function randomSuffix(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID().slice(0, 8);
-  return Math.random().toString(36).slice(2, 10);
+/** 12 случайных hex-символов — шаблон имени в политике загрузки. */
+function randomName(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -28,7 +30,7 @@ function randomSuffix(): string {
  */
 export async function uploadVotePhoto(file: Blob, target: VotePhotoTarget): Promise<string> {
   const blob = await compressImage(file);
-  const path = `${target.eveningId}/${target.playerId}/${target.category}-${randomSuffix()}.jpg`;
+  const path = `${target.eveningId}/${target.playerId}/${randomName()}.jpg`;
   const { error } = await supabase.storage.from(VOTE_PHOTOS_BUCKET).upload(path, blob, {
     contentType: 'image/jpeg',
     upsert: false,

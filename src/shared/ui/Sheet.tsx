@@ -52,6 +52,10 @@ export function Sheet({
   // перезапускался бы каждый рендер — фокус прыгал бы из полей ввода на панель.
   const onKey = useEffectEvent((event: KeyboardEvent) => {
     const panel = panelRef.current;
+    // Фокус в другом слое (диалог поверх шторки) — клавиши его, не наши: иначе Esc закрыл бы и
+    // диалог, и шторку разом, а прокрутка страницы осталась бы заблокированной.
+    const active = document.activeElement;
+    if (panel && active && active !== document.body && !panel.contains(active)) return;
     if (event.key === 'Escape' && dismissible) {
       event.stopPropagation();
       onClose();

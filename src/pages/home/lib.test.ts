@@ -265,6 +265,29 @@ describe('незакрытые расчёты', () => {
     expect(res.banker).toEqual([expect.objectContaining({ eveningId: 'e1', pending: 1 })]);
   });
 
+  it('банкир-игрок: остальные рассчитались — напоминание про свою строку и закрытие', () => {
+    // Банкир A выиграл: ему причитается 260 (своя строка −260), B должен 260.
+    const paid = [...log, ...events([['payment', { playerId: 'B', amountRub: 260 }]])].map(
+      (e, i) => ({ ...e, id: i + 1 }),
+    );
+    const own = [...paid, ...events([['payment', { playerId: 'A', amountRub: -260 }]])].map(
+      (e, i) => ({ ...e, id: i + 1 }),
+    );
+    const onlySelf = openSettlements([evening({ banker_id: 'A' })], new Map([['e1', paid]]), 'A');
+    expect(onlySelf.banker).toEqual([
+      expect.objectContaining({ pending: 0, selfRemainingRub: -260, allSettled: false }),
+    ]);
+    const allZero = openSettlements([evening({ banker_id: 'A' })], new Map([['e1', own]]), 'A');
+    expect(allZero.banker).toEqual([
+      expect.objectContaining({ pending: 0, selfRemainingRub: 0, allSettled: true }),
+    ]);
+    // После «Закрыть расчёт» напоминаний нет.
+    expect(
+      openSettlements([evening({ banker_id: 'A', status: 'settled' })], new Map([['e1', own]]), 'A')
+        .banker,
+    ).toEqual([]);
+  });
+
   it('рассчитанные и незавершённые по журналу вечера пропускаются', () => {
     const unfinished = log.filter((e) => e.type !== 'finish');
     expect(

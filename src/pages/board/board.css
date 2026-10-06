@@ -84,7 +84,9 @@
 .bd-glow::before {
   content: '';
   position: absolute;
-  inset: -40% -20%;
+  /* По горизонтали свечение не выходит за блок: иначе на телефоне 320–393 px оно раздвигало
+     документ и появлялась горизонтальная прокрутка. */
+  inset: -40% 0;
   z-index: -1;
   background: radial-gradient(
     closest-side,
@@ -169,6 +171,13 @@
   display: grid;
   justify-items: start;
   gap: var(--space-5);
+}
+
+/* Длинное имя победителя («Константинопольский») переносится, а не уезжает за экран. */
+.bd-wait .m-display {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  hyphens: auto;
 }
 
 .bd-wait .ui-list {

@@ -44,7 +44,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
       c.player.id,
       [
         c.player.is_guest ? 'гость' : null,
-        c.rsvp ? RSVP_STATUS_META[c.rsvp].title.toLowerCase() : null,
+        c.rsvp ? RSVP_STATUS_META[c.rsvp].other.toLowerCase() : null,
       ]
         .filter(Boolean)
         .join(' · '),

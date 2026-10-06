@@ -9,8 +9,8 @@ import {
   type Player,
 } from '../../shared/api';
 import { useAuth, useCurrentPlayer } from '../../shared/auth';
-import { useNow } from '../../shared/lib';
-import { ErrorView, Page, PageSkeleton } from '../../shared/ui';
+import { paths, useNow } from '../../shared/lib';
+import { ButtonLink, ErrorView, Page, PageSkeleton } from '../../shared/ui';
 import { LastEveningSection } from './LastEveningSection';
 import { pickUpcoming } from './lib';
 import { SeasonSection } from './SeasonSection';
@@ -59,7 +59,16 @@ export default function HomePage() {
   const upcoming = pickUpcoming(evenings.data ?? [], nowMinute);
 
   return (
-    <Page title="Покерный клуб" documentTitle="Главная">
+    <Page
+      title="Покерный клуб"
+      documentTitle="Главная"
+      actions={
+        // Своя карточка (там же «Сменить имя») — иначе новичку без вечеров в рейтинге до неё не дойти.
+        <ButtonLink size="sm" variant="ghost" icon="user" to={paths.player(me.id)}>
+          Моя карточка
+        </ButtonLink>
+      }
+    >
       {history.data && (
         <SettlementNotices history={history.data} me={me} playersById={playersById} />
       )}

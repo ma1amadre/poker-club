@@ -8,10 +8,9 @@ import { useEffect, useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { errorMessage, useBoardState, type BoardState } from '../../shared/api';
 import {
+  clockOffsetMs,
   formatBlinds,
-  formatClock,
   formatDateNumeric,
-  formatDuration,
   formatNumber,
   formatRub,
   formatTime,
@@ -20,6 +19,7 @@ import {
 } from '../../shared/lib';
 import { Badge, Button, Icon, List, ListItem, PageSkeleton, Stat, Stats } from '../../shared/ui';
 import {
+  clockView,
   describeEvent,
   levelLabel,
   orderedPlayers,
@@ -66,7 +66,13 @@ export default function BoardPage() {
       />
     );
   }
-  return <Board data={query.data} stale={query.isError} updatedAt={query.dataUpdatedAt} />;
+  return (
+    <Board
+      data={query.data}
+      failing={query.isError || query.fetchStatus === 'paused'}
+      updatedAt={query.dataUpdatedAt}
+    />
+  );
 }
 
 function BoardMessage({
@@ -88,16 +94,21 @@ function BoardMessage({
   );
 }
 
+/** Данные старше — «нет связи», даже если запрос просто завис (опрос раз в 3 с). */
+const STALE_AFTER_MS = 10_000;
+
 function Board({
   data,
-  stale,
+  failing,
   updatedAt,
 }: {
   data: BoardState;
-  stale: boolean;
+  failing: boolean;
   updatedAt: number;
 }) {
   const nowMs = useNow(1000);
+  // Возраст данных — по часам устройства (dataUpdatedAt тоже по ним): nowMs серверный, снимаем смещение.
+  const stale = failing || nowMs - clockOffsetMs() - updatedAt > STALE_AFTER_MS;
   const fullscreen = useFullscreen();
   const wake = useWakeLock();
   const { evening, format } = data;
@@ -168,10 +179,7 @@ function LiveBoard({
   const { format } = data;
   const timer = state.timer;
   const paused = timer.status === 'paused';
-  const clock =
-    timer.levelRemainingMs !== null
-      ? formatClock(timer.levelRemainingMs)
-      : formatClock(timer.levelElapsedMs, 'elapsed');
+  const clock = clockView(state);
   const trig = state.currentLevel.trigger;
   const trigNote =
     trig.type === 'hands'
@@ -202,15 +210,12 @@ function LiveBoard({
           <p
             className={paused ? 'm-display bd-time bd-time--paused' : 'm-display bd-time'}
             role="timer"
-            aria-label={
-              timer.levelRemainingMs !== null
-                ? `До конца уровня ${formatDuration(timer.levelRemainingMs)}`
-                : `Уровень идёт ${formatDuration(timer.levelElapsedMs)}`
-            }
+            aria-label={clock.aria}
           >
-            {clock}
+            {clock.text}
           </p>
         </div>
+        {clock.note && <p className="m-body bd-muted">{clock.note}</p>}
         <div className="bd-blinds">
           <div className="bd-blinds__now">
             <p className="m-eyebrow">Блайнды</p>
@@ -219,7 +224,7 @@ function LiveBoard({
           <div className="bd-blinds__next">
             <p className="m-eyebrow">Дальше</p>
             <p className="m-figure bd-muted">
-              {state.nextLevel ? formatBlinds(state.nextLevel) : '—'}
+              {state.nextLevel ? formatBlinds(state.nextLevel) : 'блайнды не растут'}
             </p>
           </div>
         </div>
