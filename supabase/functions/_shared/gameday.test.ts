@@ -267,7 +267,7 @@ describe('gamedayPost', () => {
     const post = gamedayPost(input({ bankerName: null }));
     expect(post.text).toBe(
       [
-        '<b>Сегодня покер в 19:00</b>',
+        '♠️ <b>Сегодня покер в 19:00</b>',
         'Место: У Жени',
         'Банкир пока не назначен',
         '',
@@ -280,7 +280,7 @@ describe('gamedayPost', () => {
       ].join('\n'),
     );
     expect(post.buttons).toEqual([
-      { text: 'Иду / не иду', url: 'https://t.me/poker_club_bot?startapp=e_e1' },
+      { text: '♣️ Иду / не иду', url: 'https://t.me/poker_club_bot?startapp=e_e1' },
     ]);
   });
 
@@ -343,13 +343,13 @@ describe('gamedayPost', () => {
     const late = '2026-10-08T22:30:00.000Z'; // пятница, 01:30 МСК
     expect(
       plain(gamedayPost(input({ scheduledAt: late, nowMs: Date.parse(late) - 5 * HOUR })).text),
-    ).toMatch(/^<b>Завтра покер в 01:30<\/b>/);
+    ).toMatch(/^♠️ <b>Завтра покер в 01:30<\/b>/);
     expect(
       plain(gamedayPost(input({ nowMs: START - 30 * HOUR })).text), // среда, 13:00 МСК
-    ).toMatch(/^<b>Завтра покер в 19:00<\/b>/);
+    ).toMatch(/^♠️ <b>Завтра покер в 19:00<\/b>/);
     expect(
       plain(gamedayPost(input({ nowMs: START - 47 * HOUR })).text), // вторник
-    ).toMatch(/^<b>Покер в четверг, 8 октября, в 19:00<\/b>/);
+    ).toMatch(/^♠️ <b>Покер в четверг, 8 октября, в 19:00<\/b>/);
   });
 
   it('без имени бота — без кнопки', () => {

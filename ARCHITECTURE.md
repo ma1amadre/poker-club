@@ -506,7 +506,7 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   (`src/pages/home/lib.ts`; совпадение проверяет `gameday.test.ts`): игрок, выключенный после ответа, остаётся
   среди ответивших. Видимый текст держится в лимите Telegram (4096 символов после разбора разметки, `visibleLength`):
   не влезает — самый длинный список укорачивается до первых имён и хвоста «и ещё N» без упоминаний; кнопка
-  `e_<id>` «Иду / не иду» (без эмодзи: решение пользователя). Публикация — `publishOnce(…, 'gameday_posted_at', …, ['announced'], {},
+  `e_<id>` «♣️ Иду / не иду» (из эмодзи в посте — только масти: решение пользователя). Публикация — `publishOnce(…, 'gameday_posted_at', …, ['announced'], {},
   {scheduled_at})`: застолбить, только если вечер не перенесли между чтением и отметкой (параметр `match` у
   `claimPost`/`publishOnce`). В отчёте тика — `gameday[id]`: `posted`/`already_posted`/`fresh_announce`/
   `wait_announce`.

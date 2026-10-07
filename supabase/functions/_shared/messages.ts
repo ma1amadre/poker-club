@@ -392,8 +392,8 @@ const GAMEDAY_TRIM_ORDER: readonly GamedayList[] = ['no', 'maybe', 'pending', 'y
 
 /**
  * Пост в день игры: когда и где, банкир, кто идёт, под вопросом, не идёт и кто из постоянных
- * игроков ещё не ответил (с упоминанием). Нет места или банкира — так и пишем. Без эмодзи, включая
- * масти и кнопку (решение пользователя): только текст.
+ * игроков ещё не ответил (с упоминанием). Нет места или банкира — так и пишем. Из эмодзи — только масти:
+ * ♠️ в заголовке и ♣️ на кнопке (решение пользователя), строки списков — чистый текст.
  *
  * Длина. В «Ещё не ответили» попадают все активные постоянные игроки, а tg-auth заводит игрока на
  * каждого участника группы, открывшего Mini App, — у большой группы видимый текст перерос бы лимит
@@ -440,7 +440,7 @@ export function gamedayPost(input: GamedayPostInput): Post {
   const maybe = roster.maybe.length > 0;
   const render = (): string => {
     const lines = [
-      `<b>${title}</b>`,
+      `♠️ <b>${title}</b>`,
       location ? `Место: ${escapeHtml(location)}` : 'Место пока не назначено',
       banker ? `Банкир: ${escapeHtml(banker)}` : 'Банкир пока не назначен',
       '',
@@ -478,7 +478,7 @@ export function gamedayPost(input: GamedayPostInput): Post {
   }
   return {
     text,
-    buttons: appButton(input.botUsername, 'Иду / не иду', `e_${input.eveningId}`),
+    buttons: appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`),
   };
 }
 
