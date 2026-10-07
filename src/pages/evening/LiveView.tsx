@@ -31,6 +31,7 @@ import {
 } from '../../shared/ui';
 import {
   averageStackBb,
+  bountyNote,
   clockView,
   describeEvent,
   formatBbValue,
@@ -75,9 +76,8 @@ export function LiveView({ model, actions }: LiveViewProps) {
   const avg = averageStackBb(state);
   const lastAlive =
     state.aliveCount === 1 ? state.joinOrder.find((id) => state.players[id]?.alive) : undefined;
-  // Все головы вечера — по кратностям входов (домен); «от …» — если были входы крупнее стандартного.
+  // Все головы вечера — по кратностям входов (домен); подпись — головы тех, кто сейчас в игре.
   const bountyPoolRub = state.bountyPoolRub;
-  const multiEntries = state.totalStacks > state.totalEntries;
   const money = computeMoney(format, state);
   const owedRub = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
 
@@ -328,7 +328,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
           label="Баунти"
           value={formatNumber(bountyPoolRub)}
           unit="₽"
-          note={`${multiEntries ? 'от ' : ''}${formatRub(format.bountyRub)} за голову`}
+          note={bountyNote(state, format)}
         />
         <Stat
           label="В игре"

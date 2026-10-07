@@ -1,13 +1,14 @@
 // Шторка «кто за столом»: отметить пришедших (на старте) или опоздавшего (по ходу игры) и вписать
 // гостя без Telegram. Каждый выбранный игрок — отдельный join; гость — RPC add_guest (сразу с join).
 // Кратность входа (×1 по умолчанию) — одна на всех, кого сажают этим нажатием, и на гостя: кто
-// входит на другую сумму, того сажают отдельно.
+// входит на другую сумму, того сажают отдельно. После гостя кратность возвращается к ×1 — иначе
+// выбранная для него сумма молча досталась бы всем отмеченным; при ×k сумма видна на кнопке.
 import { entryAmounts } from '@domain/money.ts';
 import { useState } from 'react';
 import { RSVP_STATUS_META, useAddGuest, usePlayers, type Rsvp } from '../../shared/api';
 import { formatRub, pluralWithNumber } from '../../shared/lib';
 import { Button, Field, PlayerPicker, Sheet, useToast } from '../../shared/ui';
-import { entryPayload, normalizeGuestName, seatCandidates } from './lib';
+import { entryPayload, normalizeGuestName, seatButtonLabel, seatCandidates } from './lib';
 import { StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -96,6 +97,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     try {
       await addGuest.mutateAsync({ name, stacks });
       setGuestName('');
+      setStacks(1);
       toast.show(`Гость ${name} за столом`, {
         tone: 'positive',
         detail: stacks > 1 ? `Вход — ${formatRub(entryRub)}.` : undefined,
@@ -128,7 +130,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
           disabled={selected.length === 0 || Boolean(closedReason) || addGuest.isPending}
           onClick={() => void seat()}
         >
-          {selected.length > 0 ? `Посадить за стол: ${selected.length}` : 'Выбери, кого посадить'}
+          {seatButtonLabel(selected.length, model.evening.format, stacks)}
         </Button>
       }
     >

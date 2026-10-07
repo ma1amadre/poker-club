@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   averageStackBb,
   bestHunters,
+  bountyNote,
   clockView,
   describeEvent,
   describeTrigger,
@@ -31,6 +32,7 @@ import {
   reopenedNotice,
   settledNotice,
   rebuyWindow,
+  seatButtonLabel,
   seatCandidates,
   settleDirection,
   settleLabel,
@@ -325,6 +327,43 @@ describe('подписи уровня и игрока', () => {
     );
     expect(entryPayload('a', 1)).toEqual({ playerId: 'a' });
     expect(entryPayload('a', 4)).toEqual({ playerId: 'a', stacks: 4 });
+  });
+
+  it('seatButtonLabel: при ×k сумма видна на кнопке до записи', () => {
+    expect(seatButtonLabel(0, DEFAULT_FORMAT, 2)).toBe('Выбери, кого посадить');
+    // Стандартный вход — подпись как раньше.
+    expect(seatButtonLabel(6, DEFAULT_FORMAT, 1)).toBe('Посадить за стол: 6');
+    expect(seatButtonLabel(6, DEFAULT_FORMAT, 2)).toBe(
+      `Посадить за стол: 6 · по${NB}1${NB}000${NB}₽`,
+    );
+    expect(seatButtonLabel(1, DEFAULT_FORMAT, 3)).toBe(`Посадить за стол: 1 · 1${NB}500${NB}₽`);
+  });
+
+  it('bountyNote: головы тех, кто сейчас в игре, по их текущим входам', () => {
+    const note = (j: ReturnType<typeof journal>) =>
+      bountyNote(replay(DEFAULT_FORMAT, j.events, j.now()), DEFAULT_FORMAT);
+    // Никого за столом — стандартная голова формата.
+    expect(note(journal())).toBe(`100${NB}₽ за голову`);
+    // Только стандартные входы.
+    expect(note(journal().join('a', 'b'))).toBe(`100${NB}₽ за голову`);
+    // Все вошли ×2 — у каждого на кону 200 ₽, а не «от 100 ₽».
+    const all2 = journal();
+    for (const id of ['a', 'b', 'c']) all2.joinStacks(id, 2);
+    expect(note(all2)).toBe(`200${NB}₽ за голову`);
+    // Смешанные кратности — диапазон.
+    const mixed = journal().join('a');
+    mixed.joinStacks('b', 3);
+    expect(note(mixed)).toBe(`100–300${NB}₽ за голову`);
+    // Вылетевший с крупной головой из подписи уходит; ребай считается по своей кратности.
+    mixed.bust('b', ['a']);
+    expect(note(mixed)).toBe(`100${NB}₽ за голову`);
+    mixed.rebuy('b', 2);
+    expect(note(mixed)).toBe(`100–200${NB}₽ за голову`);
+    // Без баунти в формате — 0 ₽, как и раньше.
+    const noBounty = { ...DEFAULT_FORMAT, bountyRub: 0 };
+    const j = journal();
+    j.joinStacks('a', 2);
+    expect(bountyNote(replay(noBounty, j.events, j.now()), noBounty)).toBe(`0${NB}₽ за голову`);
   });
 
   it('describeTrigger и formatBbValue', () => {

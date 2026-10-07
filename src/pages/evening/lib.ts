@@ -427,6 +427,35 @@ export function stacksHint(format: TournamentFormat, k: number): string {
     : `Всё в фонд — ${rubText(a.poolRub)}.`;
 }
 
+/**
+ * Главная кнопка шторки посадки. Кратность одна на всех отмеченных, поэтому при входе крупнее
+ * стандартного сумма видна прямо на кнопке — до записи, а не только в тосте после неё.
+ */
+export function seatButtonLabel(count: number, format: TournamentFormat, k: number): string {
+  if (count === 0) return 'Выбери, кого посадить';
+  const base = `Посадить за стол: ${count}`;
+  if (k <= 1) return base;
+  const sum = rubText(entryAmounts(format, k).rub);
+  return `${base} · ${count > 1 ? `по${NBSP}` : ''}${sum}`;
+}
+
+/**
+ * Подпись к баунти на табло: сколько стоит голова у тех, кто сейчас в игре, — у каждого голова
+ * его текущего входа или ребая. Все одинаковые — «200 ₽ за голову», разные — «100–300 ₽ за голову»;
+ * в игре никого — стандартная голова формата.
+ */
+export function bountyNote(state: EveningState, format: TournamentFormat): string {
+  const heads = state.joinOrder
+    .map((id) => state.players[id])
+    .filter((p): p is PlayerState => Boolean(p?.alive))
+    .map((p) => entryAmounts(format, p.currentStacks).bountyRub);
+  if (heads.length === 0) return `${rubText(format.bountyRub)} за голову`;
+  const min = Math.min(...heads);
+  const max = Math.max(...heads);
+  const range = min === max ? rubText(min) : `${formatNumber(min)}–${rubText(max)}`;
+  return `${range} за голову`;
+}
+
 /** Payload входа или ребая: кратность пишется, только если она больше 1 (стандартный — как раньше). */
 export function entryPayload(
   playerId: PlayerId,
