@@ -267,27 +267,27 @@ describe('gamedayPost', () => {
     const post = gamedayPost(input({ bankerName: null }));
     expect(post.text).toBe(
       [
-        '♠️ <b>Сегодня покер в 19:00</b>',
-        '📍 У Жени',
-        '🏦 Банкир пока не назначен',
+        '<b>Сегодня покер в 19:00</b>',
+        'Место: У Жени',
+        'Банкир пока не назначен',
         '',
-        '✅ Идут (2): Женя и Саша',
-        '🤔 Под вопросом (1): Дима',
-        '❌ Не идут (1): Лёша',
-        '⏳ Ещё не ответили (2): Костя (@kostya_k) и <a href="tg://user?id=1005">Миша</a>',
+        'Идут (2): Женя и Саша',
+        'Под вопросом (1): Дима',
+        'Не идут (1): Лёша',
+        'Ещё не ответили (2): Костя (@kostya_k) и <a href="tg://user?id=1005">Миша</a>',
         '',
         'Кто ещё не ответил или под вопросом — отметьтесь, идёте ли.',
       ].join('\n'),
     );
     expect(post.buttons).toEqual([
-      { text: '♣️ Иду / не иду', url: 'https://t.me/poker_club_bot?startapp=e_e1' },
+      { text: 'Иду / не иду', url: 'https://t.me/poker_club_bot?startapp=e_e1' },
     ]);
   });
 
   it('банкир и место есть — по имени; нет места — так и пишем', () => {
     const text = gamedayPost(input({ location: '  ' })).text;
-    expect(text).toContain('\n📍 Место пока не назначено\n');
-    expect(text).toContain('\n🏦 Банкир: Саша\n');
+    expect(text).toContain('\nМесто пока не назначено\n');
+    expect(text).toContain('\nБанкир: Саша\n');
   });
 
   it('всё пользовательское экранируется', () => {
@@ -298,19 +298,24 @@ describe('gamedayPost', () => {
         roster: gamedayRoster([player('a', 'А<б>', { username: 'a_user' })], [rsvp('a', 'yes', 1)]),
       }),
     ).text;
-    expect(text).toContain('📍 У &lt;Жени&gt; &amp; Ко');
-    expect(text).toContain('🏦 Банкир: &lt;i&gt;Саша&lt;/i&gt;');
-    expect(text).toContain('✅ Идут (1): А&lt;б&gt;');
+    expect(text).toContain('Место: У &lt;Жени&gt; &amp; Ко');
+    expect(text).toContain('Банкир: &lt;i&gt;Саша&lt;/i&gt;');
+    expect(text).toContain('Идут (1): А&lt;б&gt;');
   });
 
   it('пустые списки: «пока никто», без строк «под вопросом» и «не идут»; все ответили — строка про планы', () => {
     const empty = gamedayPost(
       input({ roster: { yes: [], maybe: [], no: [], pending: [] } }),
     ).text.split('\n');
-    expect(empty).toContain('✅ Идут: пока никто');
-    expect(empty.some((l) => l.startsWith('🤔') || l.startsWith('❌') || l.startsWith('⏳'))).toBe(
-      false,
-    );
+    expect(empty).toContain('Идут: пока никто');
+    expect(
+      empty.some(
+        (l) =>
+          l.startsWith('Под вопросом') ||
+          l.startsWith('Не идут') ||
+          l.startsWith('Ещё не ответили'),
+      ),
+    ).toBe(false);
     expect(empty.at(-1)).toBe('Если планы поменялись, обновите ответ «иду / не иду».');
 
     const onlyPending = gamedayPost(
@@ -338,13 +343,13 @@ describe('gamedayPost', () => {
     const late = '2026-10-08T22:30:00.000Z'; // пятница, 01:30 МСК
     expect(
       plain(gamedayPost(input({ scheduledAt: late, nowMs: Date.parse(late) - 5 * HOUR })).text),
-    ).toMatch(/^♠️ <b>Завтра покер в 01:30<\/b>/);
+    ).toMatch(/^<b>Завтра покер в 01:30<\/b>/);
     expect(
       plain(gamedayPost(input({ nowMs: START - 30 * HOUR })).text), // среда, 13:00 МСК
-    ).toMatch(/^♠️ <b>Завтра покер в 19:00<\/b>/);
+    ).toMatch(/^<b>Завтра покер в 19:00<\/b>/);
     expect(
       plain(gamedayPost(input({ nowMs: START - 47 * HOUR })).text), // вторник
-    ).toMatch(/^♠️ <b>Покер в четверг, 8 октября, в 19:00<\/b>/);
+    ).toMatch(/^<b>Покер в четверг, 8 октября, в 19:00<\/b>/);
   });
 
   it('без имени бота — без кнопки', () => {
@@ -375,7 +380,7 @@ describe('gamedayPost: лимит Telegram на длину текста', () => 
     const players = crowd(60, petrov);
     const text = gamedayPost(input({ roster: gamedayRoster(players, yes8(players)) })).text;
     expect(text).not.toContain('и ещё');
-    expect(text).toContain('⏳ Ещё не ответили (52): ');
+    expect(text).toContain('Ещё не ответили (52): ');
   });
 
   it('140 и 400 молчунов — пост влезает в 4096, хвост «и ещё N» без упоминаний, счётчик полный', () => {
@@ -385,9 +390,9 @@ describe('gamedayPost: лимит Telegram на длину текста', () => 
       const text = gamedayPost(input({ roster })).text;
       expect(visibleLength(text)).toBeLessThanOrEqual(TELEGRAM_TEXT_LIMIT);
       // «Идут» — короткий список, его не трогаем; режем самый длинный.
-      expect(text).toContain(`✅ Идут (8): ${joinAll(roster.yes)}`);
-      const line = text.split('\n').find((l) => l.startsWith('⏳')) ?? '';
-      const m = /^⏳ Ещё не ответили \((\d+)\): (.+) и ещё (\d+)$/.exec(line);
+      expect(text).toContain(`Идут (8): ${joinAll(roster.yes)}`);
+      const line = text.split('\n').find((l) => l.startsWith('Ещё не ответили')) ?? '';
+      const m = /^Ещё не ответили \((\d+)\): (.+) и ещё (\d+)$/.exec(line);
       expect(m).not.toBeNull();
       const [, total, shownPart, rest] = m ?? [];
       expect(Number(total)).toBe(n - 8);
@@ -403,7 +408,7 @@ describe('gamedayPost: лимит Telegram на длину текста', () => 
     const players = crowd(200, (i) => `${'Я'.repeat(120)}${String(i).padStart(8, '0')}`);
     const text = gamedayPost(input({ roster: gamedayRoster(players, yes8(players)) })).text;
     expect(visibleLength(text)).toBeLessThanOrEqual(TELEGRAM_TEXT_LIMIT);
-    expect(text).toMatch(/\n⏳ Ещё не ответили \(192\): .+ и ещё \d+\n/);
+    expect(text).toMatch(/\nЕщё не ответили \(192\): .+ и ещё \d+\n/);
   });
 
   it('длинные списки ответивших режутся по очереди — самый длинный первым', () => {
@@ -414,12 +419,12 @@ describe('gamedayPost: лимит Telegram на длину текста', () => 
     const text = gamedayPost(input({ roster: gamedayRoster(players, rsvps) })).text;
     expect(visibleLength(text)).toBeLessThanOrEqual(TELEGRAM_TEXT_LIMIT);
     const lines = text.split('\n');
-    expect(lines.find((l) => l.startsWith('✅'))).toMatch(/^✅ Идут \(300\): .+ и ещё \d+$/);
-    expect(lines.find((l) => l.startsWith('❌'))).toMatch(/^❌ Не идут \(240\): .+ и ещё \d+$/);
+    expect(lines.find((l) => l.startsWith('Идут'))).toMatch(/^Идут \(300\): .+ и ещё \d+$/);
+    expect(lines.find((l) => l.startsWith('Не идут'))).toMatch(/^Не идут \(240\): .+ и ещё \d+$/);
     // 60 «под вопросом» короче обрезанных списков — остаются целиком.
-    expect(lines.find((l) => l.startsWith('🤔'))).toMatch(/^🤔 Под вопросом \(60\): [^]+$/);
-    expect(lines.find((l) => l.startsWith('🤔'))).not.toContain('и ещё');
-    expect(lines.some((l) => l.startsWith('⏳'))).toBe(false);
+    expect(lines.find((l) => l.startsWith('Под вопросом'))).toMatch(/^Под вопросом \(60\): [^]+$/);
+    expect(lines.find((l) => l.startsWith('Под вопросом'))).not.toContain('и ещё');
+    expect(lines.some((l) => l.startsWith('Ещё не ответили'))).toBe(false);
   });
 });
 

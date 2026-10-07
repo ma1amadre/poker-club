@@ -392,7 +392,8 @@ const GAMEDAY_TRIM_ORDER: readonly GamedayList[] = ['no', 'maybe', 'pending', 'y
 
 /**
  * Пост в день игры: когда и где, банкир, кто идёт, под вопросом, не идёт и кто из постоянных
- * игроков ещё не ответил (с упоминанием). Нет места или банкира — так и пишем.
+ * игроков ещё не ответил (с упоминанием). Нет места или банкира — так и пишем. Без эмодзи, включая
+ * масти и кнопку (решение пользователя): только текст.
  *
  * Длина. В «Ещё не ответили» попадают все активные постоянные игроки, а tg-auth заводит игрока на
  * каждого участника группы, открывшего Mini App, — у большой группы видимый текст перерос бы лимит
@@ -424,10 +425,10 @@ export function gamedayPost(input: GamedayPostInput): Post {
     no: items.no.length,
     pending: items.pending.length,
   };
-  const group = (icon: string, label: string, key: GamedayList): string => {
+  const group = (label: string, key: GamedayList): string => {
     const all = items[key];
     const n = shown[key];
-    const head = `${icon} ${label} (${all.length})`;
+    const head = `${label} (${all.length})`;
     if (n >= all.length) return `${head}: ${joinNames(all)}`;
     const rest = `ещё ${all.length - n}`;
     return n === 0 ? head : `${head}: ${all.slice(0, n).join(', ')} и ${rest}`;
@@ -439,15 +440,15 @@ export function gamedayPost(input: GamedayPostInput): Post {
   const maybe = roster.maybe.length > 0;
   const render = (): string => {
     const lines = [
-      `♠️ <b>${title}</b>`,
-      location ? `📍 ${escapeHtml(location)}` : '📍 Место пока не назначено',
-      banker ? `🏦 Банкир: ${escapeHtml(banker)}` : '🏦 Банкир пока не назначен',
+      `<b>${title}</b>`,
+      location ? `Место: ${escapeHtml(location)}` : 'Место пока не назначено',
+      banker ? `Банкир: ${escapeHtml(banker)}` : 'Банкир пока не назначен',
       '',
-      roster.yes.length > 0 ? group('✅', 'Идут', 'yes') : '✅ Идут: пока никто',
+      roster.yes.length > 0 ? group('Идут', 'yes') : 'Идут: пока никто',
     ];
-    if (maybe) lines.push(group('🤔', 'Под вопросом', 'maybe'));
-    if (roster.no.length > 0) lines.push(group('❌', 'Не идут', 'no'));
-    if (pending) lines.push(group('⏳', 'Ещё не ответили', 'pending'));
+    if (maybe) lines.push(group('Под вопросом', 'maybe'));
+    if (roster.no.length > 0) lines.push(group('Не идут', 'no'));
+    if (pending) lines.push(group('Ещё не ответили', 'pending'));
     lines.push(
       '',
       pending && maybe
@@ -477,7 +478,7 @@ export function gamedayPost(input: GamedayPostInput): Post {
   }
   return {
     text,
-    buttons: appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`),
+    buttons: appButton(input.botUsername, 'Иду / не иду', `e_${input.eveningId}`),
   };
 }
 
