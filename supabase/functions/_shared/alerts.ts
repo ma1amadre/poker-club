@@ -50,6 +50,7 @@ export type AlertKind =
   | 'cron_schedule'
   | 'cron_changes'
   | 'cron_announce'
+  | 'cron_gameday'
   | 'cron_results'
   | 'cron_voting'
   | 'cron_crash'
@@ -84,6 +85,12 @@ export const ALERT_KINDS: Record<AlertKind, KindInfo> = {
     fn: 'cron-tick',
     what: 'Не ушёл анонс вечера в группу.',
     check: RETRY_BY_CRON,
+  },
+  cron_gameday: {
+    fn: 'cron-tick',
+    what: 'Не ушёл пост в день игры в группу.',
+    check:
+      'Проверь логи функции. cron-tick повторит пост через 15 минут, пока вечер не начался, но, пока причина не устранена, это не поможет.',
   },
   cron_results: {
     fn: 'cron-tick',

@@ -10,7 +10,9 @@
 //   3) постит итоги голосования, когда оно закрылось;
 //   4) подстраховка notify evening_changed: о переносе, месте, отмене или возврате вечера, чей
 //      анонс уже в группе, если админский вызов после сохранения не дошёл (миграция 008,
-//      notify/changes.ts).
+//      notify/changes.ts);
+//   5) пост в день игры за gameday_hours_before до начала объявленного вечера: кто идёт и кто ещё
+//      не ответил (миграция 014, _shared/gameday.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
 // Без settings.group_chat_id ничего не постит, но вечер создаёт.
 // Сбой шага или всего вызова — сообщение админу в личку (_shared/alerts.ts, не чаще раза в 6 ч на
@@ -24,10 +26,18 @@ import {
   type TournamentFormat,
 } from '../_shared/domain/index.ts';
 import { announceSnapshot } from '../_shared/announce.ts';
-import { announcePost, formatClubDate, votingPost } from '../_shared/messages.ts';
+import {
+  decideGamedayPost,
+  gamedayHours,
+  gamedayRoster,
+  type GamedayPlayerRow,
+  type GamedayRsvpRow,
+} from '../_shared/gameday.ts';
+import { announcePost, formatClubDate, gamedayPost, votingPost } from '../_shared/messages.ts';
 import { postAnnounceChange } from '../notify/changes.ts';
 import {
   EVENING_COLUMNS,
+  fetchAll,
   loadPlayerNames,
   loadSettings,
   postEveningResults,
@@ -59,6 +69,11 @@ interface TickReport {
   nextGameAt: string | null;
   createdEvening: string | null;
   announced: Record<string, PostOutcome>;
+  /**
+   * Пост в день игры: posted / already_posted, fresh_announce — отмечен без поста (анонс ушёл уже
+   * внутри окна), wait_announce — окно открыто, а анонс ещё не уходил.
+   */
+  gameday: Record<string, PostOutcome | 'fresh_announce' | 'wait_announce'>;
   results: Record<string, PostOutcome>;
   voting: Record<string, PostOutcome | 'no_votes'>;
   changes: Record<string, string>;
@@ -214,6 +229,102 @@ async function postAnnouncements(
   }
 }
 
+/**
+ * Шаг 1в: пост в день игры — у объявленных вечеров, до начала которых осталось не больше
+ * gameday_hours_before. Один раз на вечер (gameday_posted_at, publishOnce); перенос на другой
+ * московский день снимает отметку (триггер миграции 014), и в новый день пост уходит снова.
+ * Идёт после анонсов: анонс, ушедший в этот же тик, уже виден как свежий, и пост дня игры
+ * отмечается без отправки — группа не получает два поста подряд (decideGamedayPost).
+ */
+async function postGamedayPosts(
+  db: Db,
+  s: SettingsRow & { group_chat_id: number | string },
+  nowMs: number,
+  report: TickState,
+): Promise<void> {
+  const hours = gamedayHours(s.gameday_hours_before);
+  const { data, error } = await db
+    .from('evenings')
+    .select(EVENING_COLUMNS)
+    .eq('status', 'announced')
+    .is('gameday_posted_at', null)
+    .gt('scheduled_at', new Date(nowMs).toISOString())
+    .lte('scheduled_at', new Date(nowMs + hours * HOUR_MS).toISOString())
+    .order('scheduled_at');
+  if (error) throw new Error(`evenings: ${describeError(error)}`);
+  const evenings = (data ?? []) as unknown as EveningRow[];
+  if (evenings.length === 0) return;
+
+  // Игроки — один раз на шаг и только если есть что постить.
+  let players: GamedayPlayerRow[] | null = null;
+  const loadPlayers = async (): Promise<GamedayPlayerRow[]> => {
+    players ??= await fetchAll<GamedayPlayerRow>((from, to) =>
+      db
+        .from('players')
+        .select('id, display_name, username, tg_id, is_active, is_guest')
+        .order('id')
+        .range(from, to),
+    );
+    return players;
+  };
+
+  for (const e of evenings) {
+    try {
+      const decision = decideGamedayPost(e, hours, nowMs);
+      if (decision === 'none') continue;
+      if (decision === 'wait_announce') {
+        report.gameday[e.id] = 'wait_announce';
+        continue;
+      }
+      // Застолбить, только если вечер не перенесли, пока мы его читали.
+      const sameTime = { scheduled_at: e.scheduled_at };
+      if (decision === 'fresh_announce') {
+        const claimed = await claimPost(
+          db,
+          e.id,
+          'gameday_posted_at',
+          new Date(nowMs).toISOString(),
+          ['announced'],
+          {},
+          sameTime,
+        );
+        report.gameday[e.id] = claimed ? 'fresh_announce' : 'already_posted';
+        continue;
+      }
+
+      const all = await loadPlayers();
+      const { data: rsvps, error: rError } = await db
+        .from('rsvps')
+        .select('player_id, status, updated_at')
+        .eq('evening_id', e.id);
+      if (rError) throw new Error(`rsvps: ${describeError(rError)}`);
+      const banker = e.banker_id ? all.find((p) => p.id === e.banker_id) : undefined;
+      const post = gamedayPost({
+        eveningId: e.id,
+        scheduledAt: e.scheduled_at,
+        location: e.location,
+        bankerName: banker?.display_name ?? null,
+        roster: gamedayRoster(all, (rsvps ?? []) as GamedayRsvpRow[]),
+        botUsername: s.bot_username,
+        nowMs,
+      });
+      report.gameday[e.id] = await publishOnce(
+        db,
+        e.id,
+        'gameday_posted_at',
+        s.group_chat_id,
+        post,
+        nowMs,
+        ['announced'],
+        {},
+        sameTime,
+      );
+    } catch (err) {
+      fail(report, 'cron_gameday', `день игры ${e.id}`, err, eveningDetail(e));
+    }
+  }
+}
+
 /** Шаг 2: итоги вечеров, которые не ушли через notify. */
 async function backfillResults(db: Db, nowMs: number, report: TickState): Promise<void> {
   const { data, error } = await db
@@ -351,6 +462,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     nextGameAt: null,
     createdEvening: null,
     announced: {},
+    gameday: {},
     results: {},
     voting: {},
     changes: {},
@@ -383,6 +495,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         postAnnounceChanges(client, s, nowMs, report),
       );
       await step('анонсы', 'cron_announce', () => postAnnouncements(client, s, nowMs, report));
+      // После анонсов: анонс, ушедший в этот тик, гасит пост дня игры (decideGamedayPost).
+      await step('пост в день игры', 'cron_gameday', () =>
+        postGamedayPosts(client, s, nowMs, report),
+      );
       await step('итоги вечеров', 'cron_results', () => backfillResults(client, nowMs, report));
       await step('итоги голосования', 'cron_voting', () =>
         postVotingResults(client, s, nowMs, report),

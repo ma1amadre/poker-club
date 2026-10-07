@@ -15,6 +15,7 @@ import {
   type VoteResult,
 } from './domain/index.ts';
 import { moveKind, samePlace, type AnnounceChange, type AnnounceSnapshot } from './announce.ts';
+import type { GamedayPlayer, GamedayRoster } from './gameday.ts';
 import { escapeHtml, miniAppLink, type UrlButton } from './telegram.ts';
 
 export const CLUB_TZ = 'Europe/Moscow';
@@ -324,6 +325,160 @@ export function announceChangePost(change: AnnounceChange, input: AnnounceChange
   if (change === 'cancelled') return eveningCancelledPost(input);
   if (change === 'restored') return eveningRestoredPost(input);
   return eveningMovedPost(input);
+}
+
+// ---------------------------------------------------------------------------
+// Пост в день игры (миграция 014, cron-tick; когда писать — _shared/gameday.ts)
+// ---------------------------------------------------------------------------
+
+export interface GamedayPostInput {
+  eveningId: string;
+  scheduledAt: string;
+  location: string | null;
+  /** display_name банкира, неэкранированное; null — банкир не назначен. */
+  bankerName: string | null;
+  roster: GamedayRoster;
+  botUsername: string | null;
+  /** «Сегодня» / «завтра» — относительно этого момента, по Москве. */
+  nowMs: number;
+}
+
+/** Сколько московских календарных дней от nowMs до iso: 0 — сегодня, 1 — завтра. */
+function clubDaysAhead(nowMs: number, iso: string): number {
+  const a = clubParts(nowMs);
+  const b = clubParts(Date.parse(iso));
+  return Math.round(
+    (Date.UTC(b.year, b.month - 1, b.day) - Date.UTC(a.year, a.month - 1, a.day)) / 86_400_000,
+  );
+}
+
+/**
+ * Упоминание игрока, который ещё не ответил. Есть username — «Имя (@username)»: Telegram сам
+ * делает из @username упоминание. Нет — ссылка tg://user?id= на имя. Bot API («Formatting options»,
+ * проверено 07.10.2026): такая ссылка работает только как inline-ссылка, а оговорка «гарантированно —
+ * только если пользователь писал боту» касается тех, кто не состоит в чате; игроки клуба — участники
+ * группы (tg-auth пускает только их). Без tg_id (профиль заведён админом) — просто имя.
+ */
+export function mentionHtml(player: GamedayPlayer): string {
+  const name = escapeHtml(player.name);
+  if (player.username) {
+    const at = `@${player.username}`;
+    // Имя из Telegram без имени и фамилии tg-auth собирает как «@username» — не повторяем его.
+    return player.name.trim().toLowerCase() === at.toLowerCase() ? at : `${name} (${at})`;
+  }
+  if (player.tgId) return `<a href="tg://user?id=${player.tgId}">${name}</a>`;
+  return name;
+}
+
+/**
+ * Лимит текста sendMessage: «1-4096 characters after entities parsing» (Bot API, проверено
+ * 07.10.2026) — считается видимый текст, без HTML-разметки.
+ */
+export const TELEGRAM_TEXT_LIMIT = 4096;
+
+/**
+ * Видимая длина поста с parse_mode HTML — то, что Telegram сверяет с лимитом: без тегов, сущность
+ * (&amp;, &lt;, &gt;, &quot; — других escapeHtml не ставит) — один символ. Меряем в UTF-16, как Bot
+ * API меряет сущности: так длина не меньше числа символов, и запас — в нашу пользу.
+ */
+export function visibleLength(html: string): number {
+  return html.replace(/<[^>]*>/g, '').replace(/&(?:amp|lt|gt|quot);/g, '&').length;
+}
+
+type GamedayList = 'yes' | 'maybe' | 'no' | 'pending';
+
+/** Какой список укорачивать первым, если показано поровну: «идут» — последним. */
+const GAMEDAY_TRIM_ORDER: readonly GamedayList[] = ['no', 'maybe', 'pending', 'yes'];
+
+/**
+ * Пост в день игры: когда и где, банкир, кто идёт, под вопросом, не идёт и кто из постоянных
+ * игроков ещё не ответил (с упоминанием). Нет места или банкира — так и пишем.
+ *
+ * Длина. В «Ещё не ответили» попадают все активные постоянные игроки, а tg-auth заводит игрока на
+ * каждого участника группы, открывшего Mini App, — у большой группы видимый текст перерос бы лимит
+ * Telegram (TELEGRAM_TEXT_LIMIT). sendMessage отклонил бы пост, publishOnce снял бы отметку, и пост не
+ * ушёл бы ни на одном тике. Поэтому, пока текст не влезает, укорачиваем самый длинный из показанных
+ * списков (при равенстве — в порядке GAMEDAY_TRIM_ORDER): первые по порядку остаются, хвост
+ * становится «и ещё N» — без имён и упоминаний; число в скобках — по-прежнему все.
+ */
+export function gamedayPost(input: GamedayPostInput): Post {
+  const { roster } = input;
+  const time = formatClubTime(input.scheduledAt);
+  const ahead = clubDaysAhead(input.nowMs, input.scheduledAt);
+  const title =
+    ahead === 0
+      ? `Сегодня покер в ${time}`
+      : ahead === 1
+        ? `Завтра покер в ${time}`
+        : `Покер ${formatWhen(input.scheduledAt)}`;
+
+  const items: Record<GamedayList, string[]> = {
+    yes: roster.yes.map((p) => escapeHtml(p.name)),
+    maybe: roster.maybe.map((p) => escapeHtml(p.name)),
+    no: roster.no.map((p) => escapeHtml(p.name)),
+    pending: roster.pending.map(mentionHtml),
+  };
+  const shown: Record<GamedayList, number> = {
+    yes: items.yes.length,
+    maybe: items.maybe.length,
+    no: items.no.length,
+    pending: items.pending.length,
+  };
+  const group = (icon: string, label: string, key: GamedayList): string => {
+    const all = items[key];
+    const n = shown[key];
+    const head = `${icon} ${label} (${all.length})`;
+    if (n >= all.length) return `${head}: ${joinNames(all)}`;
+    const rest = `ещё ${all.length - n}`;
+    return n === 0 ? head : `${head}: ${all.slice(0, n).join(', ')} и ${rest}`;
+  };
+
+  const location = input.location?.trim();
+  const banker = input.bankerName?.trim();
+  const pending = roster.pending.length > 0;
+  const maybe = roster.maybe.length > 0;
+  const render = (): string => {
+    const lines = [
+      `♠️ <b>${title}</b>`,
+      location ? `📍 ${escapeHtml(location)}` : '📍 Место пока не назначено',
+      banker ? `🏦 Банкир: ${escapeHtml(banker)}` : '🏦 Банкир пока не назначен',
+      '',
+      roster.yes.length > 0 ? group('✅', 'Идут', 'yes') : '✅ Идут: пока никто',
+    ];
+    if (maybe) lines.push(group('🤔', 'Под вопросом', 'maybe'));
+    if (roster.no.length > 0) lines.push(group('❌', 'Не идут', 'no'));
+    if (pending) lines.push(group('⏳', 'Ещё не ответили', 'pending'));
+    lines.push(
+      '',
+      pending && maybe
+        ? 'Кто ещё не ответил или под вопросом — отметьтесь, идёте ли.'
+        : pending
+          ? 'Кто ещё не ответил — отметьтесь, идёте ли.'
+          : maybe
+            ? 'Кто под вопросом — отметьтесь, идёте ли.'
+            : PLANS_LINE,
+    );
+    return lines.join('\n');
+  };
+
+  let text = render();
+  let excess = visibleLength(text) - TELEGRAM_TEXT_LIMIT;
+  while (excess > 0) {
+    let key: GamedayList | null = null;
+    for (const k of GAMEDAY_TRIM_ORDER) if (shown[k] > (key ? shown[key] : 0)) key = k;
+    if (!key) break; // списки пусты, а текст всё равно длинный — резать больше нечего
+    shown[key] -= 1;
+    // Оценка: имя и разделитель «, ». Точную длину (с хвостом «и ещё N») проверяет перерисовка.
+    excess -= visibleLength(items[key][shown[key]] ?? '') + 2;
+    if (excess <= 0) {
+      text = render();
+      excess = visibleLength(text) - TELEGRAM_TEXT_LIMIT;
+    }
+  }
+  return {
+    text,
+    buttons: appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`),
+  };
 }
 
 // ---------------------------------------------------------------------------

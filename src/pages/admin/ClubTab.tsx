@@ -35,6 +35,8 @@ import { useFocusInvalid } from './useFocusInvalid';
 import {
   ANNOUNCE_HOURS_MAX,
   draftFromSettings,
+  GAMEDAY_HOURS_MAX,
+  gamedayNote,
   parseSettingsDraft,
   scoringChangeNote,
   settingsDirty,
@@ -214,6 +216,9 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
               {groupConnected
                 ? ' и опубликует анонс в группе.'
                 : '; анонса не будет, пока группа не подключена.'}
+              {groupConnected && !errors.announceHours && !errors.gamedayHours
+                ? ` ${gamedayNote(patch.announce_hours_before, patch.gameday_hours_before)}`
+                : null}
             </>
           ) : undefined
         }
@@ -233,6 +238,14 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
           autoComplete="off"
           hint={`От 1 до ${ANNOUNCE_HOURS_MAX} часов до начала игры.`}
           {...bind('announceHours')}
+        />
+        <Field
+          label="Пост в день игры за"
+          suffix="ч"
+          inputMode="numeric"
+          autoComplete="off"
+          hint={`От 1 до ${GAMEDAY_HOURS_MAX} часов до начала: кто идёт, кто под вопросом и кто ещё не ответил.`}
+          {...bind('gamedayHours')}
         />
         <Field
           label="Место по умолчанию"

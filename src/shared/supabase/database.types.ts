@@ -115,6 +115,7 @@ export type Database = {
           created_by: string | null;
           finished_at: string | null;
           format: NonNullable<Json>;
+          gameday_posted_at: string | null;
           id: string;
           location: string | null;
           note: string | null;
@@ -140,6 +141,7 @@ export type Database = {
           created_by?: string | null;
           finished_at?: string | null;
           format: NonNullable<Json>;
+          gameday_posted_at?: string | null;
           id?: string;
           location?: string | null;
           note?: string | null;
@@ -165,6 +167,7 @@ export type Database = {
           created_by?: string | null;
           finished_at?: string | null;
           format?: NonNullable<Json>;
+          gameday_posted_at?: string | null;
           id?: string;
           location?: string | null;
           note?: string | null;
@@ -375,6 +378,7 @@ export type Database = {
           default_location: string | null;
           game_time: string;
           game_weekday: number;
+          gameday_hours_before: number;
           group_chat_id: number | null;
           id: number;
           ko_points: number;
@@ -389,6 +393,7 @@ export type Database = {
           default_location?: string | null;
           game_time?: string;
           game_weekday?: number;
+          gameday_hours_before?: number;
           group_chat_id?: number | null;
           id?: number;
           ko_points?: number;
@@ -403,6 +408,7 @@ export type Database = {
           default_location?: string | null;
           game_time?: string;
           game_weekday?: number;
+          gameday_hours_before?: number;
           group_chat_id?: number | null;
           id?: number;
           ko_points?: number;

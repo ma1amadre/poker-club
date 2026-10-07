@@ -5,6 +5,7 @@ import type { upsertSettings } from '../../shared/api/admin';
 import type { Settings } from '../../shared/api/types';
 import { decimalToInput, intToInput, parseDecimalInput, parseIntInput } from './lib';
 import { normalizeTime } from '../../shared/lib/clubTime';
+import { NBSP } from '../../shared/lib/format';
 
 export type SettingsPatch = Parameters<typeof upsertSettings>[0];
 
@@ -15,6 +16,7 @@ export interface SettingsValues extends SettingsPatch {
   game_weekday: number;
   game_time: string;
   announce_hours_before: number;
+  gameday_hours_before: number;
   default_location: string | null;
   default_format_id: string | null;
   season_best_n: number;
@@ -28,6 +30,8 @@ export interface SettingsDraft {
   weekday: string;
   time: string;
   announceHours: string;
+  /** За сколько часов до начала пост в день игры (settings.gameday_hours_before, миграция 014). */
+  gamedayHours: string;
   location: string;
   /** '' — формат не выбран (cron-tick возьмёт встроенный клубный). */
   formatId: string;
@@ -40,6 +44,8 @@ export type SettingsField = keyof SettingsDraft;
 
 /** Окно анонса — как check в БД: от 1 часа до двух недель. */
 export const ANNOUNCE_HOURS_MAX = 336;
+/** Пост в день игры — как check в БД (миграция 014): от 1 часа до двух суток. */
+export const GAMEDAY_HOURS_MAX = 48;
 
 export function draftFromSettings(s: Settings): SettingsDraft {
   return {
@@ -49,6 +55,7 @@ export function draftFromSettings(s: Settings): SettingsDraft {
     weekday: String(s.game_weekday),
     time: normalizeTime(s.game_time) ?? '',
     announceHours: intToInput(s.announce_hours_before),
+    gamedayHours: intToInput(s.gameday_hours_before),
     location: s.default_location ?? '',
     formatId: s.default_format_id ?? '',
     bestN: intToInput(s.season_best_n),
@@ -104,6 +111,16 @@ export function parseSettingsDraft(draft: SettingsDraft): {
     errors.announceHours = `Целое число часов от 1 до ${ANNOUNCE_HOURS_MAX} (две недели).`;
   }
 
+  const gamedayHours = parseIntInput(draft.gamedayHours);
+  if (
+    gamedayHours === null ||
+    Number.isNaN(gamedayHours) ||
+    gamedayHours < 1 ||
+    gamedayHours > GAMEDAY_HOURS_MAX
+  ) {
+    errors.gamedayHours = `Целое число часов от 1 до ${GAMEDAY_HOURS_MAX} (двое суток).`;
+  }
+
   const bestN = parseIntInput(draft.bestN);
   if (bestN === null || Number.isNaN(bestN) || bestN < 1) {
     errors.bestN = 'Целое число от 1.';
@@ -127,6 +144,7 @@ export function parseSettingsDraft(draft: SettingsDraft): {
       game_weekday: weekday ?? 0,
       game_time: time ?? '',
       announce_hours_before: hours ?? 0,
+      gameday_hours_before: gamedayHours ?? 0,
       default_location: location === '' ? null : location,
       default_format_id: draft.formatId === '' ? null : draft.formatId,
       season_best_n: bestN ?? 0,
@@ -149,6 +167,19 @@ export function settingsDirty(draft: SettingsDraft, saved: Settings): boolean {
       return !(x === y || (Number.isNaN(x) && Number.isNaN(y)));
     return x !== y;
   });
+}
+
+/**
+ * Подпись расписания про пост в день игры (миграция 014). Анонс, пришедший уже внутри окна дня игры,
+ * заменяет этот пост (cron-tick, supabase/functions/_shared/gameday.ts), поэтому при окне не меньше
+ * срока анонса отдельного поста обычно нет. «Обычно» — потому что перенос вечера на другой день
+ * снимает отметку поста (триггер evenings_reset_gameday_post), а время анонса остаётся прежним: если
+ * после переноса анонс оказался раньше нового окна, в новый день пост уйдёт.
+ */
+export function gamedayNote(announceHours: number, gamedayHours: number): string {
+  return gamedayHours >= announceHours
+    ? `Анонс приходит за ${announceHours}${NBSP}ч — уже внутри окна поста в день игры, поэтому отдельного поста обычно нет. Он может прийти, если перенести вечер на другой день.`
+    : `За ${gamedayHours}${NBSP}ч до начала бот напишет в группу, кто идёт и кто ещё не ответил.`;
 }
 
 /**

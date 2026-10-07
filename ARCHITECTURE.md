@@ -24,6 +24,7 @@ supabase/
     _shared/admin.ts             # service-клиент supabase-js для функций
     _shared/messages.ts          # тексты постов бота
     _shared/announce.ts          # снимок анонса и решение «писать ли о правке вечера» (чистое, vitest)
+    _shared/gameday.ts           # пост в день игры: писать ли сейчас, кто идёт и кто не ответил (чистое, vitest)
     _shared/botChats.ts          # группы бота из getUpdates для bot-setup (чистое, vitest)
     tg-auth/index.ts
     notify/index.ts              # + results.ts (итоги), changes.ts (перенос/отмена/возврат вечера)
@@ -221,9 +222,9 @@ export interface EveningState {
 | Таблица | Колонки |
 |---|---|
 | `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at` |
-| `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at` |
+| `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `gameday_hours_before int default 5` (1–48: за сколько часов до начала пост в день игры; миграция 014), `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at` |
 | `formats` | `id uuid pk`, `name text`, `config jsonb` (TournamentFormat), `is_archived bool default false`, `created_at` |
-| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `scoring jsonb` (снимок правил очков `{koPoints, winBonus}` из settings в момент завершения; есть ровно у `finished`/`settled` — constraint `evenings_scoring_when_closed`, форма — `evenings_scoring_shape`; ставит и снимает триггер `evenings_scoring_snapshot`, снаружи не пишется; миграция 013), `created_by`, `created_at` |
+| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `gameday_posted_at` (пост в день игры ушёл или не понадобился; пишет только cron-tick; перенос на другой московский день снимает отметку — триггер `evenings_reset_gameday_post`, before update of `scheduled_at`, любой путь записи, включая upsert формы админки; перенос в пределах дня не трогает; миграция 014), `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `scoring jsonb` (снимок правил очков `{koPoints, winBonus}` из settings в момент завершения; есть ровно у `finished`/`settled` — constraint `evenings_scoring_when_closed`, форма — `evenings_scoring_shape`; ставит и снимает триггер `evenings_scoring_snapshot`, снаружи не пишется; миграция 013), `created_by`, `created_at` |
 | `evening_events` | `id bigserial pk`, `evening_id uuid → evenings on delete cascade`, `type text check (EventType)`, `payload jsonb default '{}'`, `at timestamptz default now()`, `created_by uuid → players`, `voided_at timestamptz`, `voided_by uuid → players`, `client_id uuid` (ключ повтора, unique `(evening_id, client_id)`, миграция 007) |
 | `rsvps` | pk `(evening_id, player_id)`, `status text check in ('yes','no','maybe')`, `updated_at` |
 | `predictions` | pk `(evening_id, player_id)`, `winner_id uuid → players`, `first_out_id uuid → players`, `updated_at` |
@@ -256,7 +257,7 @@ export interface EveningState {
   закрытые сезоны не пересчитываются.
 
 Стартовые данные облака (seed туда не идёт) — миграция 011: строка `settings` (id=1; дефолты из 001:
-четверг 19:00 МСК, анонс за 48 ч, `group_chat_id`/`bot_username` пусты) и, если форматов ещё нет и
+четверг 19:00 МСК, анонс за 48 ч, `group_chat_id`/`bot_username` пусты; пост в день игры за 5 ч — умолчание 014) и, если форматов ещё нет и
 `default_format_id` пуст, клубный формат `f0000000-0000-4000-8000-000000000001` «Клубный» = `DEFAULT_FORMAT`
 (сверяет `_shared/bootstrap-format.test.ts`) как `default_format_id`. Повторный прогон ничего не меняет.
 
@@ -379,7 +380,8 @@ and GraphQL API automatically»); локально так же — `[api] auto_e
   usage/select на sequences `public`, миграция 011; execute на RPC — поимённо в миграциях.
 - **Правило:** новая таблица (sequence) в миграции — сразу с явным `grant` для `service_role` и, если нужна
   клиенту, для `authenticated`. Забытый грант в облаке ловит проверка после деплоя (`deploy.yml`), локально —
-  ручной вызов функций после `db reset`.
+  ручной вызов функций после `db reset`. Новой колонке существующей таблицы отдельный грант не нужен: права выданы
+  на таблицу целиком, а не по колонкам (так в 014 — `settings.gameday_hours_before`, `evenings.gameday_posted_at`).
 
 ### Cron
 `pg_cron` раз в 15 минут: `net.http_post` на `{project_url}/functions/v1/cron-tick` с заголовком
@@ -408,7 +410,7 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
 
 **Оповещение админа о сбоях** (`_shared/alerts.ts`, миграция 012): `alertAdmin(db, kind, detail, err)` пишет в
 личный чат `ADMIN_TG_ID` (id личного чата = tg id) от бота клуба, parse_mode HTML. Вызывают: `cron-tick` — по
-каждому виду сбоя за тик (`cron_schedule`, `cron_changes`, `cron_announce`, `cron_results`, `cron_voting`; первая
+каждому виду сбоя за тик (`cron_schedule`, `cron_changes`, `cron_announce`, `cron_gameday`, `cron_results`, `cron_voting`; первая
 ошибка вида + «ещё N в этом же шаге»), `cron_crash` — тик упал целиком (`loadSettings` и т. п.) или не проверить
 `x-cron-secret` (500 `not_configured`; 401 `bad_secret` не алертится); `notify` — `notify_post`, когда Telegram не
 принял пост (`TelegramApiError`, `TelegramNetworkError`); `bot-setup` и `tg-auth` не алертят. Ответы функций и
@@ -487,7 +489,27 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   с прошедшим `voting_closes_at` и пустым `voting_posted_at`; (3) добивает неотправленные итоги вечеров;
   (4) подстраховка `evening_changed`: для объявленных вечеров (`announced`/`cancelled`, не старше недели) тот же
   `postAnnounceChange` — если вызов из админки не дошёл, пост уйдёт с ближайшим тиком (в отчёте тика —
-  `changes[id]` вида `posted:moved:place_set`).
+  `changes[id]` вида `posted:moved:place_set`); (5) **пост в день игры** (миграция 014, шаг идёт сразу после
+  анонсов, алерт `cron_gameday`): вечера `announced` с началом в `(now, now + gameday_hours_before]` и пустым
+  `gameday_posted_at`. Решение — `decideGamedayPost` (`_shared/gameday.ts`): анонс ещё не уходил →
+  `wait_announce` (ничего не пишем, сначала уйдёт анонс); анонс ушёл уже внутри окна (`announce_posted_at >=
+  начало − N ч`, в том числе в этот же тик) → `fresh_announce`, `gameday_posted_at` ставится без поста — анонс и
+  пост дня игры в один тик (и подряд) группа не получает; иначе `post`. Посты о правке вечера (перенос, место,
+  возврат отменённого) свежестью не считаются: `announce_posted_at` они не трогают, и пост дня игры, если окно уже
+  открыто, приходит следом — ближайшим тиком или, если пост о правке отправила подстраховка шага (4), в тот же тик.
+  Пост — `gamedayPost` (`_shared/messages.ts`): «Сегодня покер в 19:00» («Завтра …», если окно
+  переходит через полночь, дальше — с датой), место или «Место пока не назначено», банкир или «Банкир пока не
+  назначен», «Идут (n)» (пусто — «пока никто»), «Под вопросом (n)», «Не идут (n)» — имена в порядке ответа;
+  «Ещё не ответили (n)» — `gamedayRoster`: активные постоянные игроки (`is_active`, не `is_guest`) без строки
+  `rsvps` на вечер, по имени, с упоминанием (`mentionHtml`: «Имя (@username)», без username —
+  `<a href="tg://user?id=…">Имя</a>`, без `tg_id` — имя). Списки — по правилам `groupRsvps` главной Mini App
+  (`src/pages/home/lib.ts`; совпадение проверяет `gameday.test.ts`): игрок, выключенный после ответа, остаётся
+  среди ответивших. Видимый текст держится в лимите Telegram (4096 символов после разбора разметки, `visibleLength`):
+  не влезает — самый длинный список укорачивается до первых имён и хвоста «и ещё N» без упоминаний; кнопка
+  `e_<id>` «♣️ Иду / не иду». Публикация — `publishOnce(…, 'gameday_posted_at', …, ['announced'], {},
+  {scheduled_at})`: застолбить, только если вечер не перенесли между чтением и отметкой (параметр `match` у
+  `claimPost`/`publishOnce`). В отчёте тика — `gameday[id]`: `posted`/`already_posted`/`fresh_announce`/
+  `wait_announce`.
 - `bot-setup` (`verify_jwt = true`, только админ — `resolveCaller` + `is_admin`, иначе 403): POST
   `{action: 'me'}` → `getMe` → `{bot: {username, name, canJoinGroups, canReadAllGroupMessages}}`;
   `{action: 'chats'}` → `getUpdates` с `allowed_updates: ['my_chat_member', 'message']`, `limit 100`, **без
@@ -570,6 +592,11 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   alltime|oracle|records|fame`, `useRatingParams`); `/player/:id`; `/history` (вкладки «Вечера» и «Моменты»,
   `?tab=moments`); `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
   `/admin` без `?tab` (и с неизвестной вкладкой) открывает «Вечера» (`adminTab` в `pages/admin/lib.ts`).
+- Админка «Клуб» → «Расписание»: «Анонс за» и рядом «Пост в день игры за» (`gamedayHours` в
+  `pages/admin/settingsDraft.ts`, 1–48 ч, как check миграции 014). Подпись раздела — `gamedayNote`: за сколько часов
+  бот напишет, кто идёт и кто не ответил, а если окно не меньше срока анонса — что анонс приходит уже внутри окна
+  и отдельного поста обычно нет, но он может прийти после переноса вечера на другой день (перенос снимает
+  `gameday_posted_at`, а `announce_posted_at` остаётся: анонс, оказавшийся раньше нового окна, пост не гасит).
 - Админка «Клуб» → «Группа и бот» (`pages/admin/BotSetup.tsx`): «Подтянуть из бота» (`bot-setup` me) и выбор
   в шторке «Найти группу» (`bot-setup` chats) сохраняют одно поле сразу (`upsertSettings`) и подставляют его
   в открытый черновик формы; «Отправить проверочное сообщение» — в сохранённую группу. Подсказка «Если
@@ -624,12 +651,15 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
 - `supabase/tests/013_scoring_snapshot.sql` — то же для 013 (снимок у завершённых, смена очков не трогает прошлые
   вечера, снимок не пишется снаружи, отмена и повторный finish, заморозка «лучших N» при правке настройки, права
   на `season_rules`, ограничения при выключенном триггере). Требует «сейчас» не раньше 2026-Q4 (seed — 2026-Q3/Q4).
+- `supabase/tests/014_gameday_post.sql` — то же для 014 (`gameday_hours_before`: умолчание, границы 1–48, правка
+  админом и только им; `service_role` пишет `gameday_posted_at`; перенос в пределах московского дня отметку не
+  снимает — в том числе через полночь UTC, на другой день — снимает, в том числе upsert формы админки).
 - `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed с новым Telegram-профилем в транзакции
   с rollback: replay, settlement, голоса и прогнозы каждого вечера после слияния совпадают с исходными
   с подменой id.
 
 ## Тестовые данные (seed.sql, только локально)
-Игроки с `tg_id` 1001–1006 (1001 — админ), один гость, settings (четверг 19:00 МСК; клубный формат
+Игроки с `tg_id` 1001–1006 (1001 — админ), один гость, settings (четверг 19:00 МСК, анонс за 48 ч, пост в день игры за 5 ч; клубный формат
 создаёт миграция 011, seed на него ссылается), `cron_secret` = `local-cron-secret`, `project_url`, 4–6 завершённых вечеров с реалистичными событиями (ребаи, сплит-нокаут,
 платежи) и один `announced` вечер — чтобы рейтинг, ачивки и карточки игроков было на чём смотреть.
 

@@ -38,6 +38,8 @@ export interface SettingsRow {
   game_weekday: number;
   game_time: string; // 'HH:MM:SS', время Москвы
   announce_hours_before: number;
+  /** За сколько часов до начала пост в день игры (миграция 014, 1–48). */
+  gameday_hours_before: number;
   default_location: string | null;
   default_format_id: string | null;
   season_best_n: number;
@@ -56,6 +58,8 @@ export interface EveningRow {
   finished_at: string | null;
   voting_closes_at: string | null;
   announce_posted_at: string | null;
+  /** Пост в день игры ушёл или не понадобился (миграция 014). */
+  gameday_posted_at: string | null;
   results_posted_at: string | null;
   voting_posted_at: string | null;
   /** > 0 — итог уже публиковался и устарел (отмена finish или правка): пост «Исправленные итоги». */
@@ -70,7 +74,7 @@ export interface EveningRow {
 
 // Одной строкой-литералом: из конкатенации supabase-js не выводит тип строк select.
 export const EVENING_COLUMNS =
-  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, results_posted_at, voting_posted_at, results_revision, announce_snapshot, cancel_reason, scoring';
+  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, gameday_posted_at, results_posted_at, voting_posted_at, results_revision, announce_snapshot, cancel_reason, scoring';
 
 interface PlayerRow {
   id: string;
@@ -104,7 +108,7 @@ export interface VoteRow {
 type Db = SupabaseClient;
 
 /** PostgREST отдаёт не больше max_rows (1000) строк за запрос — читаем страницами. */
-async function fetchAll<T>(
+export async function fetchAll<T>(
   page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
   pageSize = 1000,
 ): Promise<T[]> {
@@ -396,11 +400,14 @@ export async function buildResultsPost(
 // не напишут в группу дважды: второй увидит, что строка уже занята. Цена — при падении функции
 // между отметкой и отправкой пост потеряется; дубль в группе хуже.
 
-export type PostColumn = 'announce_posted_at' | 'results_posted_at' | 'voting_posted_at';
+export type PostColumn =
+  'announce_posted_at' | 'gameday_posted_at' | 'results_posted_at' | 'voting_posted_at';
 
 /**
  * statuses — дополнительно требовать статус вечера (итоги — только у завершённого).
  * extra — поля, которые пишутся вместе с отметкой (анонс запоминает снимок announce_snapshot).
+ * match — застолбить, только если поля вечера всё ещё равны прочитанным (пост дня игры сверяет
+ * scheduled_at: перенос между чтением и отметкой не должен уйти в группу старым временем).
  */
 export async function claimPost(
   db: Db,
@@ -409,6 +416,7 @@ export async function claimPost(
   atIso: string,
   statuses?: readonly EveningRow['status'][],
   extra: Record<string, unknown> = {},
+  match: Record<string, string> = {},
 ): Promise<boolean> {
   let query = db
     .from('evenings')
@@ -416,6 +424,7 @@ export async function claimPost(
     .eq('id', eveningId)
     .is(column, null);
   if (statuses) query = query.in('status', [...statuses]);
+  for (const [key, value] of Object.entries(match)) query = query.eq(key, value);
   const { data, error } = await query.select('id');
   if (error) throw new Error(`claim ${column}: ${describeError(error)}`);
   return (data ?? []).length > 0;
@@ -448,9 +457,12 @@ export async function publishOnce(
   nowMs: number,
   statuses?: readonly EveningRow['status'][],
   extra: Record<string, unknown> = {},
+  match: Record<string, string> = {},
 ): Promise<PostOutcome> {
   const atIso = new Date(nowMs).toISOString();
-  if (!(await claimPost(db, eveningId, column, atIso, statuses, extra))) return 'already_posted';
+  if (!(await claimPost(db, eveningId, column, atIso, statuses, extra, match))) {
+    return 'already_posted';
+  }
   try {
     await sendMessage(chatId, post.text, { buttons: post.buttons });
     return 'posted';

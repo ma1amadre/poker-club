@@ -57,6 +57,7 @@ set bot_username          = 'poker_club_local_bot',
     game_weekday          = 4,         -- четверг
     game_time             = '19:00',   -- по Москве
     announce_hours_before = 48,
+    gameday_hours_before  = 5,         -- пост в день игры (миграция 014)
     default_location      = 'У Жени',
     default_format_id     = 'f0000000-0000-4000-8000-000000000001',
     season_best_n         = 10,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Settings } from '../../shared/api/types';
 import {
   draftFromSettings,
+  gamedayNote,
   normalizeBotUsername,
   parseSettingsDraft,
   scoringChangeNote,
@@ -16,6 +17,7 @@ const SAVED: Settings = {
   game_weekday: 4,
   game_time: '19:00:00',
   announce_hours_before: 48,
+  gameday_hours_before: 5,
   default_location: 'У Жени',
   default_format_id: 'f0000000-0000-4000-8000-000000000001',
   season_best_n: 10,
@@ -37,6 +39,7 @@ describe('draftFromSettings', () => {
       weekday: '4',
       time: '19:00',
       announceHours: '48',
+      gamedayHours: '5',
       location: 'У Жени',
       formatId: 'f0000000-0000-4000-8000-000000000001',
       bestN: '10',
@@ -71,6 +74,7 @@ describe('parseSettingsDraft', () => {
       game_weekday: 4,
       game_time: '19:00',
       announce_hours_before: 48,
+      gameday_hours_before: 5,
       default_location: 'У Жени',
       default_format_id: 'f0000000-0000-4000-8000-000000000001',
       season_best_n: 10,
@@ -117,6 +121,17 @@ describe('parseSettingsDraft', () => {
     expect(parseSettingsDraft(draft({ announceHours: '337' })).errors.announceHours).toBeDefined();
   });
 
+  it('пост в день игры — от 1 до 48 часов, как check миграции 014', () => {
+    expect(parseSettingsDraft(draft({ gamedayHours: '0' })).errors.gamedayHours).toBeDefined();
+    expect(parseSettingsDraft(draft({ gamedayHours: '' })).errors.gamedayHours).toBeDefined();
+    expect(parseSettingsDraft(draft({ gamedayHours: '2,5' })).errors.gamedayHours).toBeDefined();
+    expect(parseSettingsDraft(draft({ gamedayHours: '49' })).errors.gamedayHours).toMatch(/48/);
+    const ok = parseSettingsDraft(draft({ gamedayHours: '48' }));
+    expect(ok.errors.gamedayHours).toBeUndefined();
+    expect(ok.patch.gameday_hours_before).toBe(48);
+    expect(settingsDirty(draft({ gamedayHours: '6' }), SAVED)).toBe(true);
+  });
+
   it('очки: десятичная запятая, не меньше 0', () => {
     const ok = parseSettingsDraft(draft({ koPoints: '0,25', winBonus: '2' }));
     expect(ok.errors).toEqual({});
@@ -145,6 +160,27 @@ describe('settingsDirty', () => {
     expect(settingsDirty(draft({ weekday: '5' }), SAVED)).toBe(true);
     expect(settingsDirty(draft({ location: 'У Саши' }), SAVED)).toBe(true);
     expect(settingsDirty(draft({ groupChatId: '-100123' }), SAVED)).toBe(true);
+  });
+});
+
+describe('gamedayNote', () => {
+  const plain = (s: string) => s.replace(/ /g, ' ');
+
+  it('окно короче срока анонса — пост будет', () => {
+    expect(plain(gamedayNote(48, 5))).toBe(
+      'За 5 ч до начала бот напишет в группу, кто идёт и кто ещё не ответил.',
+    );
+  });
+
+  it('анонс приходит уже внутри окна — отдельного поста обычно нет, кроме переноса на другой день', () => {
+    for (const [announce, gameday] of [
+      [5, 5],
+      [3, 5],
+    ] as const) {
+      expect(plain(gamedayNote(announce, gameday))).toBe(
+        `Анонс приходит за ${announce} ч — уже внутри окна поста в день игры, поэтому отдельного поста обычно нет. Он может прийти, если перенести вечер на другой день.`,
+      );
+    }
   });
 });
 
