@@ -35,6 +35,7 @@ supabase/
 .env.production                  # облачные VITE_SUPABASE_URL / _PUBLISHABLE_KEY (публичные)
 src/
   main.tsx, app/*, pages/*, shared/{supabase,telegram,auth,api,ui,lib}/*
+  shared/lib/poker/*             # движок олл-ина: оценка рук, эквити, ауты, Web Worker (раздел «Олл-ин»)
   vendor/materia/*               # вендоренная «Материя» (scripts/sync-materia.mjs)
   styles/fonts.css               # @font-face своих шрифтов (пишет scripts/fetch-fonts.mjs)
 public/fonts/                    # woff2 шрифтов «Материи» + OFL.txt (scripts/fetch-fonts.mjs)
@@ -82,7 +83,8 @@ export type EventType =
   | 'join' | 'rebuy' | 'bust'
   | 'timer_start' | 'timer_pause' | 'timer_resume'
   | 'level_next' | 'level_prev' | 'hand'
-  | 'payment' | 'finish';
+  | 'payment' | 'finish'
+  | 'showdown' | 'showdown_close';           // олл-ин на табло (миграция 017), на игру не влияет
 
 export const MAX_ENTRY_STACKS = 10;
 
@@ -90,7 +92,21 @@ export type EventPayload =
   | { playerId: PlayerId; stacks?: number }                  // join, rebuy; stacks — кратность k (1..10, нет = 1)
   | { playerId: PlayerId; by: PlayerId[] }                   // bust; by = кто выбил (0..n)
   | { playerId: PlayerId; amountRub: number; note?: string } // payment: + игрок→банкир, − банкир→игрок
+  | ShowdownPayload                                          // showdown
+  | { showdownId: string }                                   // showdown_close
   | Record<string, never>;                                   // timer_*, level_*, hand, finish
+
+export type CardCode = string; // 'As', 'Td', '9h': ранг 2–9TJQKA, масть s h d c
+export type ShowdownHand = { playerId: PlayerId; cards: [CardCode, CardCode] };
+export type ShowdownPayload = {
+  showdownId: string;   // uuid раздачи: один на олл-ин, общий у всех его правок
+  hands: ShowdownHand[]; // 2..9, порядок — порядок показа
+  board: CardCode[];     // 0, 3, 4 или 5 карт
+};
+export type ShowdownState = ShowdownPayload & {
+  openedEventId: number; eventId: number; // первое и последнее принятое событие раздачи
+  openedAt: string; updatedAt: string;    // `at` открытия и последней правки
+};
 
 export interface EveningEvent {
   id: number; type: EventType; payload: EventPayload;
@@ -139,6 +155,18 @@ export interface EveningEvent {
   взносов — это инвариант, его проверяют тесты (`money.test.ts`: ручные сценарии, 3000
   сгенерированных вечеров со смешанными кратностями и независимым пересчётом голов, полный перебор
   ~22 тыс. вечеров на троих с головой 75 ₽).
+- **Олл-ин** (миграция 017, `showdown.ts`): `showdown` — полное состояние раздачи (руки и стол), каждая
+  правка пишет всё заново; `showdown_close {showdownId}` — банкир закрыл раздачу. Форма — `readShowdown`: id —
+  uuid, 2..9 рук по две карты, без повторов игроков и карт (в руках и на столе вместе), на столе 0/3/4/5 карт.
+  Игроки: новая раздача (другой `showdownId`) — только те, кто в игре (`alive`); правка открытой — ещё и те, кто
+  уже был в ней и с тех пор вылетел (олл-ин вводят до вылета, опечатку в карте замечают и после); игрок не из
+  турнира — ошибка. Принятое событие кладёт раздачу в `state.showdown` (`openedEventId`/`openedAt` — от первой
+  версии с этим id), новый `showdownId` заменяет незакрытую раздачу, `showdown_close` с id открытой и `finish`
+  обнуляют её (отмена finish вернёт). Закрыть не ту раздачу — ошибка «Эта раздача олл-ина уже закрыта».
+  После finish олл-ин не принимается («Вечер уже завершён»). На деньги, места, нокауты, таймер, итоги, очки и
+  ачивки олл-ин не влияет: `apply` трогает только `state.showdown` (`showdown.test.ts` сверяет replay,
+  `computeMoney` и `summarize` одного журнала с олл-инами и без них — отменёнными, с теми же id). Отмена (void)
+  — как у всех событий: отменить последнюю правку — раздача возвращается к предыдущей версии.
 - Ошибочные события (ребай живого, bust мёртвого, join после закрытия) не ломают replay: они
   пропускаются и попадают в `state.errors: {eventId, message}[]`. `canApply(format, state, type, payload, nowMs)`
   возвращает текст ошибки или null — фронт проверяет перед отправкой.
@@ -169,6 +197,7 @@ export interface EveningState {
   finished: boolean;
   places: PlayerId[];          // index 0 = 1-е место; полон только при finished
   firstBustPlayerId: PlayerId | null; // для прогноза «кто вылетит первым» = первый bust вечера
+  showdown: ShowdownState | null; // открытый олл-ин (только показ; см. «Олл-ин»)
   errors: { eventId: number; message: string }[];
 }
 ```
@@ -265,6 +294,12 @@ export interface EveningState {
   {clips: [{voice, hash, text}], notes}` — то же по всему клубу: вход — `private.voice_manifest_input()`, только
   активные игроки с озвучиваемым именем; целые фразы пар — для 16 недавних (по `last_played_at`), остальным
   нокауты собираются кусками; что урезано — в `notes`. Уровни формата — до первого нечитаемого (`speakableLevels`).
+- `showdown.ts` (миграция 017): нотация карт (`CARD_RANKS` '23456789TJQKA', `CARD_SUITS` 'shdc', `isCardCode`),
+  `readShowdown`/`readShowdownId` — форма payload, `streetOf(boardSize)` → `'preflop'|'flop'|'turn'|'river'`,
+  `isShowdownEvent(type)`, `visibleShowdown(showdown, nowMs)` — показывать ли раздачу: после ривера —
+  `SHOWDOWN_RIVER_HOLD_MS` (2 мин) с последней правки, на любой улице — не дольше `SHOWDOWN_IDLE_HIDE_MS` (10 мин)
+  без правок; время серверное, поэтому табло, пульт и экраны игроков прячут раздачу одновременно. Типы
+  олл-ина (`SHOWDOWN_EVENT_TYPES`) — в `types.ts`.
 - `index.ts` — реэкспорт всего.
 
 ## База данных (public)
@@ -329,6 +364,12 @@ export interface EveningState {
   «Кратность входа — целое число от 1 до 10» (`private.json_entry_stacks`); в нормализованной копии
   хранится только при k > 1 — стандартный вход неотличим от событий до 015. Клиент тоже шлёт `stacks`
   только при k > 1 (`entryPayload` в `pages/evening/lib.ts`).
+  Олл-ин (миграция 017): `showdown` — `{showdownId, hands: [{playerId, cards: [c1, c2]}], board}`, нормализованная
+  копия — uuid в нижнем регистре; 22023, если: id не uuid (`private.json_showdown_id`), рук не 2..9, игрок
+  повторяется или не за столом вечера (нет действующего join, `is_participant`), карт в руке не две, карта не в
+  нотации 'As'/'Td'/'9h' (`private.json_card`, регистр строгий), карта повторяется, на столе не 0/3/4/5 карт,
+  лишний ключ (в payload и в руке). `showdown_close` — `{showdownId}`. Жив ли игрок — правило replay. Ключ
+  повтора у олл-ина сверяет и id раздачи, и карты рук и стола (другая карта — другое намерение).
   `finish` у вечера в `announced` → P0001. Побочные эффекты: первый `timer_start` → `status='live'`,
   `started_at=now()`; `finish` (из `live`) → при идущем таймере сначала `timer_pause`, затем
   `status='finished'`, `finished_at=now()`, `voting_closes_at=now()+interval '24 hours'`.
@@ -374,8 +415,10 @@ export interface EveningState {
   (`predictionCandidates` в `pages/home/lib.ts`; гость на анонс не отвечает — войти он не может).
 - `merge_players(p_guest uuid, p_target uuid) → jsonb` — только админ (миграция 008). `p_guest` — игрок без
   `tg_id` и без входа (гость или сделанный постоянным), `p_target` — игрок с `tg_id`. Атомарно, под блокировкой
-  всех вечеров (тот же порядок, что у add_event): в `evening_events` — `payload.playerId` и элементы `payload.by`
-  точной заменой значения (порядок `by` сохраняется, `private.payload_replace_player`), `created_by`/`voided_by`;
+  всех вечеров (тот же порядок, что у add_event): в `evening_events` — `payload.playerId`, элементы `payload.by` и
+  игроки рук олл-ина `payload.hands[].playerId` (017) точной заменой значения (порядок `by` и рук сохраняется,
+  `private.payload_replace_player`; какие записи трогать — `private.payload_mentions_player`, то же правило у
+  `player_references` и счёта `events` в отчёте), `created_by`/`voided_by`;
   `rsvps`, `predictions` (свои строки и `winner_id`/`first_out_id`), `votes` (`voter_id`, `nominee_id`) —
   удалить и вставить заново с прежними `updated_at`/`created_at`; `evenings.banker_id`/`created_by`;
   `p_target.is_guest = false`; `spoken_name` гостя переходит профилю, если у профиля своего нет (миграция 016:
@@ -410,7 +453,9 @@ export interface EveningState {
 - `board_state(p_token uuid) → jsonb` — **доступен anon**; для `status in ('announced','live')` или
   `finished`/`settled` не старше 6 часов (правило — `private.board_evening_id(p_token) → uuid`, миграция 016: одно
   на все RPC табло): `{evening:{id,scheduled_at,location,status,started_at,finished_at}, format, events:[без payment, без voided], players:[{id,display_name,spoken_name}], server_now}`
-  (`players` — только упомянутые в событиях; `spoken_name` — с 016); иначе null.
+  (`players` — только упомянутые в событиях; `spoken_name` — с 016); иначе null. События олл-ина (`showdown`,
+  `showdown_close`, миграция 017) идут как все; имена игроков рук в `players` есть всегда — у каждого из них есть
+  join этого вечера (017 board_state не меняет).
 - `board_voice_clips(p_token uuid, p_voice text, p_hashes text[]) → jsonb` — **доступен anon** (миграция 016): по
   живому токену (то же правило) — `[{hash, mime, duration_ms, audio}]` найденных клипов `voice_clips` этого голоса
   (`audio` — base64 без переводов строк); не озвученных в ответе нет; токен погас — null; больше 100 хешей — 22023.
@@ -653,7 +698,9 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   (Москва UTC+3 ↔ UTC для форм, `nextGameSlot`/`nextGameAt` — то же правило, что `cron-tick/schedule.ts`,
   сверяется тестом), `voting` (`votingPhase`, `participantIds` как `is_participant`), `paths`, `useNow`,
   `useElementWidth`, `clubLife` (подписи «Жизни клуба»: `ACHIEVEMENT_SHORT` — описания ачивок без рода,
-  `recordValueParts`/`recordValueText` — одно значение рекорда на все экраны, выигрыш со знаком). Между папками
+  `recordValueParts`/`recordValueText` — одно значение рекорда на все экраны, выигрыш со знаком); `poker/` — движок
+  олл-ина, импорт из `shared/lib/poker` (свой `index.ts`: в нём React-хук с Web Worker, поэтому чистые модули —
+  например `pages/evening/lib.ts` — и тесты берут `poker/cards`, `poker/equity` напрямую). Между папками
   `src/pages/*` разрешены только три связи: табло берёт подписи вечера из `pages/evening/lib`, карточка игрока — места
   и чемпиона из `pages/rating/stats`, главная — «Твой вечер» из `pages/evening` (`EveningRecap`, `useEveningRecap`,
   `recap`: та же карточка, что на экране вечера); остальное общее — здесь.
@@ -790,6 +837,79 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   Подписи — `shared/lib/spokenName.ts` (`SPOKEN_NAME_HINT` дословно: «Как произносить имя на табло — кириллицей.
   Ударение — знак + перед гласной: Эрдн+и», что скажет табло при пустом поле, тост об озвучке раз в сутки).
 
+## Олл-ин: карты, шансы и ауты на табло (миграция 017)
+
+Когда игроки в олл-ине вскрываются, банкир отмечает в пульте их карты и стол; табло и экран вечера у всех
+показывают руки, стол, шансы на победу и ауты, всё пересчитывается с каждой картой. Железа нет — ручной ввод.
+
+- **Пульт** (`pages/evening/ShowdownSheet.tsx`, логика — чистый `showdownDraft.ts`): «Отметить олл-ин» в пульте
+  (раздача на табло — «Продолжить олл-ин») и «Отметить карты» в панели. Шторка: «Кто вскрывается» — `PlayerPicker`
+  из тех, кто в игре, и участников раздачи на табло и черновика (`showdownCandidates`: вылетевший участник открытой
+  раздачи остаётся в списке и после снятой галочки; вернули — `setPlayers` ставит его на прежнее место и возвращает
+  его карты с табло, если их никто не занял), до 9; места карт — руки по очереди, затем флоп, тёрн, ривер;
+  колода — сетка 13 рангов × 4 масти, одно касание — одна карта в подсвеченное место, дальше — следующее пустое;
+  занятые карты недоступны, повторное касание снимает карту, касание места — поправить его. При 1–3 игроках места
+  прилипают к верху шторки, если экран достаточно высокий (600 / 760 px). Главная кнопка (`sendLabel`): «Показать на
+  табло» → «Открыть флоп» → «Открыть тёрн» → «Открыть ривер»; правка — «Сохранить правку»; после ривера —
+  «Закрыть раздачу» (иначе она — ghost-кнопкой). Каждая отправка — `showdown` с полным состоянием (`checkDraft`:
+  «Отметь карты: …», «Отметь все три карты флопа», «Карты стола — по порядку…»), тост с «Отменить» (void).
+  `showdownId` — `newClientId()` при открытии раздачи. Олл-ин на флопе/тёрне — руки и стол одной отправкой.
+- **Показ** — `ShowdownView` кита (`src/shared/ui`, вариант `board` для табло и `compact` для экрана вечера) и
+  `PlayingCard`/`SuitPip`: стол из пяти мест (пустые — пунктиром), руки (карты, рука словами — «Пара дам»,
+  «Флеш до туза»), шансы — целые % и полоса (лидер по шансам — accent), «делёж N %» (частота дележа), «Впереди»
+  у лучшей руки на текущем столе, ауты; на ривере — «Лучшая рука» / «Делёж банка», проигравшие приглушены.
+  Табло (`pages/board/ShowdownBoard.tsx`) показывает панель вместо таймера и стола, пока `visibleShowdown`
+  (`BoardPage`), часы уровня — строкой в её шапке; экран вечера (`LiveView`) — первой карточкой, у банкира с
+  кнопкой. Масти — значками (SVG, не символами шрифта) и цветом: ♠ ink, ♥ critical, ♦ синий из категориальной
+  палитры регистра (Кобальт — chart-1, тёмный — chart-4, Янтарь — chart-5), ♣ positive (`showdown.css`).
+  Проценты — `roundShares`: целые, сумма 100, равные доли — равные цифры (тогда сумма может быть 99). Руки, равные
+  по шансам из-за равноправия мастей (AhKd и AdKh против 7c7s), и до флопа получают в точности равные доли — движок
+  их усредняет (`suitSymmetryGroups`, см. «Движок»), иначе шум Монте-Карло дал бы 18 % и 17 %.
+- **Табло на ТВ** (от 1024 px в горизонтали): панель целиком в экране — прокрутить табло нечем. На время олл-ина
+  табло во всю ширину (`bd--showdown` в `BoardPage`, без `--container-wide`); размеры панели — в долях `--sd-u`
+  (`min(1vh, (100vw − 96px) / 164)`: сотая высоты кадра 16:9 или 1/164 ширины панели), поэтому раскладка одна на
+  1280×720, 1920×1080 и 4K; стол — справа от заголовка и часов. Руки по `data-hands`: 2–4 — в один ряд, 5–6 — по
+  три, 7–8 — по четыре, 9 — по пять в два ряда, карты и цифры мельче с каждым шагом; имя и рука словами — в одну
+  строку с многоточием, ауты — сплошной строкой. Остальное (длинный список аутов в узкой колонке, строки подвала
+  табло, низкий экран) ловит `useFitToScreen` (`pages/board/fitToScreen.ts`): если страница длиннее экрана, масштаб
+  `--sd-fit` подбирается двоичным поиском по настоящей раскладке (`bestFit`, от 1 до 0,6) при смене раздачи,
+  размера окна и высоты страницы (ResizeObserver, не чаще раза за кадр). Проверено в headless Chrome на стенде с
+  разметкой табло (длинные имена, строка подвала): 2–9 рук на всех улицах при 1920×1080, 1366×768, 1280×720,
+  1024×768, 2560×1440 — без прокрутки и наложений, масштаб меньше 1 понадобился только девятерым на флопе при
+  1366×768 и 1280×720 (0,99 и 0,975); худший случай (9 рук с длинными списками аутов, 1280×720, три строки
+  подвала) — 0,84.
+- **Движок** (`src/shared/lib/poker`, перенос из курса `D:\personal\poker-course\js`: `cards.js`, `evaluator.js`,
+  `equity.js`, `pokermath.js` — только `nCk` и `outsEquity`; диапазоны и прочая математика курса не нужны).
+  Карта — 0..51 (ранг·4 + масть), `evaluate` — счёт руки 5–7 карт. `computeEquity(hands, board)` по `planEquity`:
+  точный перебор, если досок не больше `EXACT_BOARD_LIMIT` (250 000 — флоп, тёрн, ривер при любом числе игроков),
+  иначе (до флопа) Монте-Карло: `MC_EVAL_BUDGET / игроков` раздач (не меньше `MC_MIN_SAMPLES`; у двоих — 200 000),
+  seed — FNV-1a ключа раздачи `showdownKey` («AsKd|QhQc/2c7d9h»), генератор `mulberry32` курса; без `Date.now` и
+  `Math.random` — одни карты дают одни цифры на табло, у банкира и у игроков. Симметрия мастей
+  (`suitSymmetryGroups`): перестановки мастей (24), которые оставляют стол на месте, а руки переставляют между собой,
+  делят руки на группы с точно равными шансами; доли, победы и дележи группы усредняются (в Монте-Карло и в точном
+  переборе), сумма остаётся 100. Эталоны в тестах: cardfight.com
+  (AA–KK 81,71/0,46/81,95, AKs–QQ 45,83/0,43/46,05 — агрегат по мастям, точность 0,01), полный перебор
+  2 598 960 пятикарточных рук, выборка семикарточных, ауты против точного перебора.
+- **Ауты** (`computeOuts`/`analyzeShowdown`): у игрока, чья рука на текущем столе слабее лучшей, — карты из
+  невидимой колоды (52 без всех открытых рук и стола: сброшенные карты не видны, их считаем в колоде), после
+  которых на следующей улице он впереди один (`outs`) или делит лучшую руку (`splitOuts`). Флоп — ауты к тёрну
+  (одна карта; шансы до ривера с раннерами — в процентах), тёрн — к риверу (там ауты и есть шансы), до флопа —
+  только проценты, на ривере — итог. У лучшей руки (и у делящих её) аутов нет. На экране: «Ауты к тёрну: 9 · 20 %»
+  (`hitPct` = `outsEquity(аутов, 1, невидимых)`) и карты по рангам: «A ♠♥♦ · K ♠♥♦», отдельно «на делёж».
+  Побочные банки не считаются: шансы — выиграть раздачу у всех её участников.
+- **Производительность** (`useShowdownEquity`/`useShowdownAnalysis`): с флопа — меньше тысячи досок, считаем на
+  месте; до флопа Монте-Карло считает Web Worker (`equity.worker.ts`, `?worker`), без воркера — главный поток
+  кусками по 2 000 раздач между кадрами (`createMcJob`/`runMcJob`; нарезка на результат не влияет). Кеш — по
+  ключу раздачи (48 последних): опрос табло раз в 3 с и секундный тик часов не пересчитывают раздачу. Пока
+  считается — «…» и «Считаю шансы».
+- **Когда табло возвращается к таймеру**: «Закрыть раздачу» (`showdown_close`), новый олл-ин, finish — или само:
+  через 2 минуты после последней правки, если ривер открыт, и через 10 минут без правок на любой улице
+  (`visibleShowdown`). Раздача, спрятанная временем, в пульте не продолжается: «Отметить олл-ин» откроет новую.
+- Лента и отмена: `describeEvent` — «Олл-ин: Женя и Саша» (руки — подробностью), «Флоп: J♥ 10♥ 2♣», «Тёрн: 5♠»,
+  «Ривер: K♠», «Олл-ин закрыт» (правка — по числу карт стола); «Отменить последнее» и строка ленты отменяют
+  правку (подтверждение: «Табло покажет раздачу такой, какой она была до этой записи»). Итоги (`postCorrectedResults`,
+  пометка «итог устарел» в `FinishedView`) олл-ин не трогает, как и платежи.
+
 ## Проверки вне vitest
 - `supabase/tests/008_reopen_merge.sql` — SQL-проверки миграции 008 (открытие расчёта правкой, `merge_players`,
   `set_prediction` с гостем) в одной транзакции с rollback:
@@ -811,6 +931,11 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   строк, срок токена как у `board_state`, предел 100; `board_state` отдаёт `spoken_name`;
   `private.voice_manifest_input()`: активные игроки, `last_played_at`, форматы; `merge_players` переносит
   `spoken_name` гостя профилю без своего и не трогает своё).
+- `supabase/tests/017_showdown.sql` — то же для 017 (нормализация `showdown`/`showdown_close`, отказы 22023 по
+  картам, рукам, столу, игрокам не за столом и отменённому входу, ключ повтора сверяет карты, `board_state` отдаёт
+  олл-ин и имена его игроков, отменённую правку — нет, check типов в таблице, слияние гостя из руки олл-ина,
+  права служебных функций):
+  `docker exec -i supabase_db_poker-club psql -U postgres -v ON_ERROR_STOP=1 -q < supabase/tests/017_showdown.sql`.
 - `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed с новым Telegram-профилем в транзакции
   с rollback: replay, settlement, голоса и прогнозы каждого вечера после слияния совпадают с исходными
   с подменой id.

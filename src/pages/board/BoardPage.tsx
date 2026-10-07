@@ -5,6 +5,7 @@
 // Голос (useBoardVoice) объявляет события вечера клипами Silero — включается кнопкой.
 import { payouts } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
+import { visibleShowdown } from '@domain/showdown.ts';
 import { VOICE_CREDIT } from '@domain/voice.ts';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
@@ -32,6 +33,7 @@ import {
   type NameOf,
 } from '../evening/lib';
 import './board.css';
+import { ShowdownBoard } from './ShowdownBoard';
 import { useFullscreen, useWakeLock } from './useScreenControls';
 import { useBoardVoice, type BoardVoice } from './useBoardVoice';
 
@@ -130,9 +132,11 @@ function Board({
   const when = `${formatDateNumeric(evening.scheduled_at).slice(0, 5)} · ${formatTime(evening.scheduled_at)}`;
   const place = evening.location ? ` · ${evening.location}` : '';
   const finished = state.finished || evening.status === 'finished' || evening.status === 'settled';
+  // Олл-ин закрывает таймер и стол, пока банкир его не закроет (или табло не спрячет его само).
+  const showdown = visibleShowdown(state.showdown, nowMs);
 
   return (
-    <main className="bd">
+    <main className={showdown && !finished ? 'bd bd--showdown' : 'bd'}>
       <header className="bd-head">
         <p className="m-eyebrow">
           {when}
@@ -155,6 +159,8 @@ function Board({
 
       {finished ? (
         <FinishedBoard state={state} nameOf={nameOf} />
+      ) : showdown ? (
+        <ShowdownBoard showdown={showdown} state={state} format={format} nameOf={nameOf} />
       ) : state.timer.status === 'not_started' ? (
         <WaitingBoard state={state} nameOf={nameOf} />
       ) : (

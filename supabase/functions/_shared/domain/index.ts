@@ -2,6 +2,7 @@
 export * from './types.ts';
 export * from './format.ts';
 export * from './replay.ts';
+export * from './showdown.ts';
 export * from './money.ts';
 export * from './scoring.ts';
 export * from './summary.ts';

@@ -1,0 +1,513 @@
+/*
+ * Олл-ин: игральная карта (PlayingCard), значок масти (SuitPip) и панель раздачи (ShowdownView).
+ * Только переменные «Материи». Масти — четыре цвета плюс форма значка: ♠ ink, ♥ critical,
+ * ♦ синий из категориальной палитры регистра (слот, где он синий и контрастный: Кобальт — chart-1,
+ * тёмный Кобальт — chart-4, Янтарь — chart-5), ♣ positive. Контраст на surface — не ниже 4,5:1.
+ */
+
+[data-theme] {
+  --suit-s: var(--ink);
+  --suit-h: var(--critical);
+  --suit-d: var(--chart-1);
+  --suit-c: var(--positive);
+}
+
+[data-theme='kobalt-dark'] {
+  --suit-d: var(--chart-4);
+}
+
+[data-theme='yantar'] {
+  --suit-d: var(--chart-5);
+}
+
+.ui-card-suit--s {
+  color: var(--suit-s);
+}
+.ui-card-suit--h {
+  color: var(--suit-h);
+}
+.ui-card-suit--d {
+  color: var(--suit-d);
+}
+.ui-card-suit--c {
+  color: var(--suit-c);
+}
+
+.ui-suit {
+  display: inline-block;
+  flex: none;
+  inline-size: 1em;
+  block-size: 1em;
+  vertical-align: -0.12em;
+}
+
+/* ---------- Карта ---------- */
+
+.ui-card {
+  --card-w: 44px;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--card-w) * 0.05);
+  inline-size: var(--card-w);
+  block-size: calc(var(--card-w) * 1.4);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: calc(var(--card-w) * 0.12);
+  font-family: var(--m-font-display);
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.ui-card--sm {
+  --card-w: 30px;
+}
+
+.ui-card--md {
+  --card-w: 44px;
+}
+
+.ui-card--lg {
+  --card-w: 72px;
+}
+
+.ui-card__rank {
+  font-size: calc(var(--card-w) * 0.5);
+  letter-spacing: -0.03em;
+  font-variant-numeric: lining-nums;
+}
+
+.ui-card__suit {
+  inline-size: calc(var(--card-w) * 0.4);
+  block-size: calc(var(--card-w) * 0.4);
+}
+
+.ui-card--empty {
+  background: transparent;
+  border-style: dashed;
+}
+
+/* ---------- Панель раздачи ---------- */
+
+.ui-sd {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.ui-sd__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.ui-sd__head .m-eyebrow,
+.ui-sd__title {
+  margin: 0;
+}
+
+.ui-sd__board {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* Между флопом и тёрном — зазор шире: улицы видны сразу. */
+.ui-sd__turn {
+  margin-inline-start: var(--space-2);
+}
+
+.ui-sd__hands {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ui-sd__hand {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'cards who pct'
+    'bar bar bar'
+    'notes notes notes';
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.ui-sd__who {
+  grid-area: who;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ui-sd__name {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.ui-sd__made {
+  margin: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.3;
+  color: var(--ink-muted);
+}
+
+.ui-sd__cards {
+  grid-area: cards;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.ui-sd__pct {
+  grid-area: pct;
+  justify-self: end;
+  margin: 0;
+  font-family: var(--m-figure-family);
+  font-weight: var(--m-figure-weight);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: var(--m-figure-track);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ui-sd__pct-unit {
+  margin-inline-start: 0.1em;
+  font-size: 0.55em;
+  letter-spacing: 0;
+  color: var(--ink-muted);
+}
+
+.ui-sd__bar {
+  grid-area: bar;
+  block-size: 6px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-full);
+}
+
+.ui-sd__bar > span {
+  display: block;
+  block-size: 100%;
+  background: var(--ink-muted);
+  border-radius: inherit;
+  transition: inline-size var(--dur-calm) var(--m-ease);
+}
+
+.ui-sd__hand--lead .ui-sd__pct,
+.ui-sd__hand--win .ui-sd__pct {
+  color: var(--accent);
+}
+
+.ui-sd__hand--lead .ui-sd__bar > span,
+.ui-sd__hand--win .ui-sd__bar > span {
+  background: var(--accent);
+}
+
+.ui-sd__hand--lost .ui-sd__name,
+.ui-sd__hand--lost .ui-sd__pct {
+  color: var(--ink-muted);
+}
+
+.ui-sd__notes {
+  grid-area: notes;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+}
+
+.ui-sd__notes:empty {
+  display: none;
+}
+
+.ui-sd__tag {
+  margin: 0;
+  font-size: var(--m-small-size);
+  font-weight: 600;
+  color: var(--positive);
+}
+
+.ui-sd__note,
+.ui-sd__foot {
+  margin: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+.ui-sd__outs {
+  display: grid;
+  flex-basis: 100%;
+  gap: 2px;
+}
+
+.ui-sd__outs-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+}
+
+.ui-sd__outs-prefix {
+  color: var(--ink-muted);
+}
+
+.ui-sd__outs-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  white-space: nowrap;
+}
+
+.ui-sd__outs-rank {
+  margin-inline-end: 2px;
+  font-weight: 600;
+}
+
+/* Экран вечера в Mini App: панель — карточка, руки строками. */
+.ui-sd--compact {
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--m-r-card);
+  box-shadow: var(--m-card-shadow);
+}
+
+.ui-sd--compact .ui-sd__hand + .ui-sd__hand {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+/* Табло: крупные карты; на телефоне пять карт стола помещаются в ширину экрана. */
+.ui-sd--board {
+  gap: var(--space-6);
+}
+
+.ui-sd--board .ui-card--lg {
+  --card-w: min(96px, calc((100vw - 72px) / 5.4));
+}
+
+.ui-sd--board .ui-sd__hands {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-4);
+}
+
+.ui-sd--board .ui-sd__hand {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'who who'
+    'cards pct'
+    'bar bar'
+    'notes notes';
+  align-content: start;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--m-r-card);
+}
+
+.ui-sd--board .ui-sd__hand--lead,
+.ui-sd--board .ui-sd__hand--win {
+  border-color: var(--accent);
+}
+
+.ui-sd--board .ui-sd__name {
+  font-family: var(--m-font-display);
+  font-size: var(--m-h3-size);
+  text-transform: var(--m-display-case);
+}
+
+.ui-sd--board .ui-sd__pct {
+  font-size: var(--m-figure-size);
+}
+
+.ui-sd--board .ui-sd__bar {
+  block-size: 8px;
+}
+
+/*
+ * ТВ и ноутбук в горизонтали: панель целиком в экране — прокрутить табло на ТВ нечем. Размеры — в
+ * долях --sd-u, сотой высоты кадра 16:9, вписанного в экран (1920×1080 — 10,8 px, 1280×720 — 7,2 px),
+ * поэтому на любом ТВ раскладка одна и та же. Стол — справа от заголовка: высота достаётся рукам.
+ * Руки: до четырёх — в один ряд, больше — в два (5–6 по три, 7–8 по четыре, 9 по пять), карты и
+ * цифры мельче с каждым шагом. Имя и рука словами — в одну строку (длинное — с многоточием), ауты —
+ * сплошной строкой за подписью. Если что-то всё же не поместилось, ShowdownBoard (useFitToScreen)
+ * уменьшает всё через --sd-fit.
+ */
+@media (min-width: 1024px) and (orientation: landscape) {
+  .ui-sd--board {
+    /* Ширина панели — экран без полей табло (.bd: 48 px с каждой стороны; на время олл-ина
+       табло во всю ширину, ShowdownBoard), из неё — 164 доли: столько занимает ряд из четырёх рук. */
+    --sd-u: calc(min(1vh, (100vw - 96px) / 164) * var(--sd-fit, 1));
+    --sd-cols: 2;
+    --sd-board-w: calc(var(--sd-u) * 11);
+    --sd-hand-w: calc(var(--sd-u) * 16);
+    --sd-pct: calc(var(--sd-u) * 13);
+    --sd-name: calc(var(--sd-u) * 3.7);
+    --sd-text: calc(var(--sd-u) * 2);
+    --sd-pad: calc(var(--sd-u) * 2.2);
+    --sd-inner: calc(var(--sd-u) * 1.5);
+    --sd-hands-gap: calc(var(--sd-u) * 2.2);
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'head board'
+      'hands hands'
+      'foot foot';
+    align-content: center;
+    align-items: center;
+    gap: calc(var(--sd-u) * 2.5) calc(var(--sd-u) * 4);
+  }
+
+  .ui-sd--board[data-hands='3'] {
+    --sd-cols: 3;
+    --sd-hand-w: calc(var(--sd-u) * 12);
+    --sd-pct: calc(var(--sd-u) * 9.5);
+  }
+
+  .ui-sd--board[data-hands='4'] {
+    --sd-cols: 4;
+    --sd-hand-w: calc(var(--sd-u) * 9);
+    --sd-pct: calc(var(--sd-u) * 6.5);
+  }
+
+  /* Пятеро и больше — два ряда: всё плотнее. */
+  .ui-sd--board.ui-sd--rows2 {
+    --sd-cols: 3;
+    --sd-board-w: calc(var(--sd-u) * 9);
+    --sd-hand-w: calc(var(--sd-u) * 7);
+    --sd-pct: calc(var(--sd-u) * 6);
+    --sd-name: calc(var(--sd-u) * 3);
+    --sd-text: calc(var(--sd-u) * 1.8);
+    --sd-pad: calc(var(--sd-u) * 1.6);
+    --sd-inner: var(--sd-u);
+  }
+
+  .ui-sd--board[data-hands='7'],
+  .ui-sd--board[data-hands='8'] {
+    --sd-cols: 4;
+  }
+
+  .ui-sd--board[data-hands='9'] {
+    --sd-cols: 5;
+    --sd-pct: calc(var(--sd-u) * 5);
+  }
+
+  .ui-sd--board .ui-sd__head {
+    grid-area: head;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: calc(var(--sd-u) * 0.8);
+  }
+
+  .ui-sd--board .ui-sd__title {
+    font-size: calc(var(--sd-u) * 3.7);
+    line-height: 1.05;
+  }
+
+  .ui-sd--board .ui-sd__board {
+    grid-area: board;
+    gap: calc(var(--sd-u) * 0.8);
+  }
+
+  .ui-sd--board .ui-sd__turn {
+    margin-inline-start: calc(var(--sd-u) * 0.8);
+  }
+
+  .ui-sd--board .ui-sd__board .ui-card--lg {
+    --card-w: var(--sd-board-w);
+  }
+
+  .ui-sd--board .ui-sd__hands {
+    grid-area: hands;
+    grid-template-columns: repeat(var(--sd-cols), minmax(0, 1fr));
+    gap: var(--sd-hands-gap);
+  }
+
+  .ui-sd--board .ui-sd__hand {
+    gap: var(--sd-inner) calc(var(--sd-inner) * 1.5);
+    padding: var(--sd-pad);
+  }
+
+  .ui-sd--board .ui-sd__hand .ui-card--lg {
+    --card-w: var(--sd-hand-w);
+  }
+
+  .ui-sd--board .ui-sd__cards {
+    gap: calc(var(--sd-u) * 0.4);
+  }
+
+  .ui-sd--board .ui-sd__name,
+  .ui-sd--board .ui-sd__made {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .ui-sd--board .ui-sd__name {
+    font-size: var(--sd-name);
+    line-height: 1.05;
+  }
+
+  .ui-sd--board .ui-sd__made,
+  .ui-sd--board .ui-sd__note,
+  .ui-sd--board .ui-sd__tag,
+  .ui-sd--board .ui-sd__outs-list {
+    font-size: var(--sd-text);
+    line-height: 1.3;
+  }
+
+  .ui-sd--board .ui-sd__notes {
+    gap: 0 calc(var(--sd-u) * 1.5);
+  }
+
+  /* Ауты — сплошной строкой: «Ауты к тёрну: 9 · 20 %  A ♠♥♦  K ♠♥♦  на делёж: …». */
+  .ui-sd--board .ui-sd__outs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    flex-basis: auto;
+    gap: 0 calc(var(--sd-u) * 1.5);
+    min-width: 0;
+  }
+
+  .ui-sd--board .ui-sd__outs-list {
+    gap: 0 calc(var(--sd-u) * 1.2);
+  }
+
+  .ui-sd--board .ui-sd__foot {
+    grid-area: foot;
+    font-size: var(--sd-text);
+  }
+
+  .ui-sd--board .ui-sd__pct {
+    font-size: var(--sd-pct);
+  }
+
+  .ui-sd--board .ui-sd__bar {
+    block-size: max(4px, calc(var(--sd-u) * 1.1));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-sd__bar > span {
+    transition: none;
+  }
+}

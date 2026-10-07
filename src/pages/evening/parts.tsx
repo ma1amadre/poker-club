@@ -205,6 +205,8 @@ const EVENT_ICON: Record<EventType, IconName> = {
   hand: 'layers',
   payment: 'wallet',
   finish: 'flag',
+  showdown: 'eye',
+  showdown_close: 'eye',
 };
 
 export function EventIcon({ type }: { type: EventType }) {

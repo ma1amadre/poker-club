@@ -3,6 +3,7 @@
 // закрытого вечера (отмена записей, возврат вечера в игру).
 import { computeMoney } from '@domain/money.ts';
 import { eveningPoints, eveningScoring } from '@domain/scoring.ts';
+import { isShowdownEvent } from '@domain/showdown.ts';
 import { useState } from 'react';
 import {
   notifyEveningFinished,
@@ -85,13 +86,14 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
   const reopened = reopenedNotice(evening, canControl, iPlayed);
   const toast = useToast();
   const [publishing, setPublishing] = useState(false);
-  // Журнал правили после поста итогов (платежи на итог не влияют) — пост в группе устарел.
+  // Журнал правили после поста итогов (платежи и олл-ин на итог не влияют) — пост в группе устарел.
   const postedAt = evening.results_posted_at ? Date.parse(evening.results_posted_at) : null;
   const resultsOutdated =
     postedAt !== null &&
     events.some(
       (e) =>
         e.type !== 'payment' &&
+        !isShowdownEvent(e.type) &&
         (Date.parse(e.at) > postedAt || (e.voidedAt !== null && Date.parse(e.voidedAt) > postedAt)),
     );
 

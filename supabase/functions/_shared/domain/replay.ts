@@ -19,6 +19,7 @@ import {
   type PlayerState,
   type TournamentFormat,
 } from './types.ts';
+import { readShowdown, readShowdownId } from './showdown.ts';
 
 const MINUTE_MS = 60_000;
 
@@ -110,6 +111,7 @@ function initialState(format: TournamentFormat): EveningState {
     finished: false,
     places: [],
     firstBustPlayerId: null,
+    showdown: null,
     errors: [],
   };
 }
@@ -244,6 +246,25 @@ function validate(
       return s.timer.status === 'not_started' ? 'Таймер не запущен' : null;
     case 'finish':
       return s.aliveCount === 1 ? null : 'Завершить можно, когда в игре остался один игрок';
+    case 'showdown': {
+      const read = readShowdown(payload);
+      if (!read.ok) return read.error;
+      // Новая раздача — только из тех, кто в игре. Правка открытой может оставить в ней и того,
+      // кто уже вылетел: олл-ин вводят до вылета, а опечатку в карте замечают и после него.
+      const prev = s.showdown?.showdownId === read.value.showdownId ? s.showdown : null;
+      for (const hand of read.value.hands) {
+        const p = s.players[hand.playerId];
+        if (!p) return 'Олл-ин: игрок не входил в турнир';
+        if (!p.alive && !prev?.hands.some((h) => h.playerId === hand.playerId))
+          return 'Олл-ин: игрок уже выбыл — в раздачу берутся только те, кто в игре';
+      }
+      return null;
+    }
+    case 'showdown_close': {
+      const id = readShowdownId(payload);
+      if (id === null) return 'Олл-ин: нет id раздачи';
+      return s.showdown?.showdownId === id ? null : 'Эта раздача олл-ина уже закрыта';
+    }
     default:
       return 'Неизвестный тип события';
   }
@@ -358,9 +379,28 @@ function apply(
       s.finished = true;
       // Время после завершения не идёт; статус 'paused' — ближайший из контрактных.
       if (t.status === 'running') t.status = 'paused';
+      // Итог вечера важнее последней раздачи: финиш закрывает олл-ин (отмена финиша вернёт его).
+      s.showdown = null;
       return;
     case 'payment':
       // На состояние игры не влияет; платежи собирает money.paymentsFromEvents.
+      return;
+    case 'showdown': {
+      // Только показ: игроков, деньги и таймер раздача не трогает.
+      const read = readShowdown(payload);
+      if (!read.ok) return;
+      const prev = s.showdown?.showdownId === read.value.showdownId ? s.showdown : null;
+      s.showdown = {
+        ...read.value,
+        openedEventId: prev?.openedEventId ?? ev.id,
+        openedAt: prev?.openedAt ?? ev.at,
+        eventId: ev.id,
+        updatedAt: ev.at,
+      };
+      return;
+    }
+    case 'showdown_close':
+      s.showdown = null;
       return;
   }
 }

@@ -99,4 +99,6 @@ export { BottomNav, type BottomNavItem, type BottomNavProps } from './BottomNav'
 export { List, ListItem, type ListItemProps, type ListProps } from './List';
 export { Page, type PageProps } from './Page';
 export { PlayerPicker, type PickerPlayer, type PlayerPickerProps } from './PlayerPicker';
+export { PlayingCard, SuitPip, type PlayingCardProps, type PlayingCardSize } from './PlayingCard';
+export { ShowdownView, type ShowdownViewProps } from './ShowdownView';
 export { Sheet, type SheetProps } from './Sheet';
