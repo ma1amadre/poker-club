@@ -264,7 +264,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         </Section>
       ) : (
         <Section title="Игроки" aside={`${state.aliveCount} в игре`}>
-          <PlayersList state={state} nameOf={nameOf} playersById={playersById} />
+          <PlayersList state={state} format={format} nameOf={nameOf} playersById={playersById} />
         </Section>
       )}
 
@@ -308,6 +308,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         title="Журнал вечера"
         events={events}
         nameOf={nameOf}
+        format={format}
         errorsById={errorsById}
         onVoid={isAdmin ? (ev) => void actions.voidWithConfirm(ev) : undefined}
         limit={8}

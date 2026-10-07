@@ -66,9 +66,9 @@ export interface BlindLevel { sb: number; bb: number; ante?: number; trigger: Le
 
 export interface TournamentFormat {
   name: string;
-  buyInRub: number;        // 500 — цена входа и ребая
-  startingChips: number;   // 500 — фишек за вход и за ребай
-  bountyRub: number;       // 100 — из каждого входа/ребая «за голову»; в фонд идёт buyIn - bounty
+  buyInRub: number;        // 500 — цена стандартного входа и ребая (вход ×k — buyInRub·k)
+  startingChips: number;   // 500 — фишек за стандартный вход и ребай (×k — startingChips·k)
+  bountyRub: number;       // 100 — из каждого входа/ребая «за голову»; в фонд идёт buyIn - bounty (×k — всё ×k)
   rebuyUntilLevel: number; // 5 — вход/ребай разрешён, пока номер текущего уровня (с 1) <= этого
   rebuyLimit: number | null; // null = без лимита (решение клуба)
   payoutPct: number[];     // [70, 30]
@@ -81,8 +81,10 @@ export type EventType =
   | 'level_next' | 'level_prev' | 'hand'
   | 'payment' | 'finish';
 
+export const MAX_ENTRY_STACKS = 10;
+
 export type EventPayload =
-  | { playerId: PlayerId }                                   // join, rebuy
+  | { playerId: PlayerId; stacks?: number }                  // join, rebuy; stacks — кратность k (1..10, нет = 1)
   | { playerId: PlayerId; by: PlayerId[] }                   // bust; by = кто выбил (0..n)
   | { playerId: PlayerId; amountRub: number; note?: string } // payment: + игрок→банкир, − банкир→игрок
   | Record<string, never>;                                   // timer_*, level_*, hand, finish
@@ -96,13 +98,22 @@ export interface EveningEvent {
 
 ### Правила replay (replay.ts → `replay(format, events, nowMs): EveningState`)
 - События сортируются по `id` (порядок вставки), voided пропускаются.
-- `join`: игрок входит (entries += 1, alive). Разрешён, пока вход открыт (`rebuysOpen`) — то есть
-  это и поздняя регистрация. Повторный join того же игрока — ошибка.
-- `rebuy`: только для вылетевшего игрока (alive=false), пока `rebuysOpen` и не превышен лимит.
+- **Кратность входа** (миграция 015): у `join` и `rebuy` необязательное `stacks` = k — целое 1..10
+  (`MAX_ENTRY_STACKS`), нет поля — 1 (так выглядят все события до 015, миграции данных нет). Вход ×k —
+  это k стандартных входов по всем статьям: взнос `buyInRub·k`, фишки `startingChips·k`, голова этого
+  входа `bountyRub·k`, в фонд `(buyInRub − bountyRub)·k`. Пример: вход на 1 000 ₽ — голова 200, в
+  фонд 800. Некорректное `stacks` (0, 11, дробь, строка, null) — событие отбрасывается с ошибкой
+  «Кратность входа — целое число от 1 до 10» (`readStacks` → null). Число входов (`entries`,
+  `totalEntries`) считается штуками, деньги и фишки — по сумме кратностей.
+- `join`: игрок входит (entries += 1, stacks = currentStacks = k, alive). Разрешён, пока вход открыт
+  (`rebuysOpen`) — то есть это и поздняя регистрация. Повторный join того же игрока — ошибка.
+- `rebuy`: только для вылетевшего игрока (alive=false), пока `rebuysOpen` и не превышен лимит;
+  stacks += k, currentStacks = k (своя кратность у каждого ребая).
 - `bust {playerId, by}`: игрок вылетел. Каждый игрок из `by` получает +1 нокаут (KO засчитывается
-  каждому при дележе). «Голова» жертвы (`bountyRub`) делится поровну между `by` в целых рублях,
-  остаток — первому в списке; если `by` пуст — голова «сиротская» и уходит победителю.
-  Каждый bust считается нокаутом, даже если жертва потом сделала ребай.
+  каждому при дележе). «Голова» жертвы — голова её ТЕКУЩЕГО входа, `bountyRub·currentStacks` —
+  делится поровну между `by` в целых рублях, остаток — первому в списке; если `by` пуст — голова
+  «сиротская» и уходит победителю (со своей суммой). Каждый bust считается нокаутом, даже если
+  жертва потом сделала ребай.
 - Таймер: `timer_start` запускает уровень 1; `timer_pause`/`timer_resume`; время уровня считается
   только в состоянии running. Уровень с триггером `time` сам переходит в следующий, когда время
   истекло (переход вычисляется, отдельного события нет; лишнее время переносится в следующий
@@ -116,18 +127,25 @@ export interface EveningEvent {
   тогда finish их закрывает). `finished = true` только после события finish. Время после finish не
   идёт; чтобы отмена finish не запускала таймер задним числом, `add_event` при идущем таймере пишет
   перед finish явный `timer_pause` с тем же `at` (миграция 007).
-- Деньги (money.ts): `prizePoolRub = totalEntries * (buyInRub - bountyRub)`; выплаты по `payoutPct`
+- Деньги (money.ts): `totalStacks = Σ k` по всем входам и ребаям; `prizePoolRub = totalStacks *
+  (buyInRub - bountyRub)`, `bountyPoolRub = totalStacks * bountyRub`, `totalChips = totalStacks *
+  startingChips`; взнос игрока `owesRub = stacks * buyInRub`. Выплаты по `payoutPct`
   для первых min(n_игроков, payoutPct.length) мест с перенормировкой до 100%, вниз до рубля, остаток
-  1-му месту. Победитель забирает свою голову и сиротские. Сумма всех выплат + баунти ровно равна
-  сумме всех взносов — это инвариант, его проверяют тесты.
+  1-му месту. Победитель забирает голову своего текущего входа и сиротские (нераспределённое =
+  `bountyPoolRub` − розданное за нокауты). Сумма всех выплат + баунти ровно равна сумме всех
+  взносов — это инвариант, его проверяют тесты (`money.test.ts`: ручные сценарии, 3000
+  сгенерированных вечеров со смешанными кратностями и независимым пересчётом голов, полный перебор
+  ~22 тыс. вечеров на троих с головой 75 ₽).
 - Ошибочные события (ребай живого, bust мёртвого, join после закрытия) не ломают replay: они
   пропускаются и попадают в `state.errors: {eventId, message}[]`. `canApply(format, state, type, payload, nowMs)`
   возвращает текст ошибки или null — фронт проверяет перед отправкой.
 
 ```ts
 export interface PlayerState {
-  playerId: PlayerId; joinedAt: string; entries: number; rebuys: number; alive: boolean;
-  busts: number; finalBustEventId: number | null; place: number | null;
+  playerId: PlayerId; joinedAt: string; entries: number; rebuys: number;
+  stacks: number;        // Σ k входа и ребаев: взнос = stacks × buyInRub
+  currentStacks: number; // k текущего входа: голова на кону = currentStacks × bountyRub
+  alive: boolean; busts: number; finalBustEventId: number | null; place: number | null;
   kos: number; koVictims: PlayerId[]; bountyWonRub: number; bustLevel: number | null;
 }
 export interface TimerState {
@@ -143,8 +161,9 @@ export interface EveningState {
   joinOrder: PlayerId[];
   timer: TimerState;
   currentLevel: BlindLevel; nextLevel: BlindLevel | null;
-  rebuysOpen: boolean; aliveCount: number; totalEntries: number; totalChips: number;
-  prizePoolRub: number; finished: boolean;
+  rebuysOpen: boolean; aliveCount: number; totalEntries: number; // штуки
+  totalStacks: number; totalChips: number; prizePoolRub: number; bountyPoolRub: number; // по кратностям
+  finished: boolean;
   places: PlayerId[];          // index 0 = 1-е место; полон только при finished
   firstBustPlayerId: PlayerId | null; // для прогноза «кто вылетит первым» = первый bust вечера
   errors: { eventId: number; message: string }[];
@@ -152,7 +171,9 @@ export interface EveningState {
 ```
 
 ### Остальные модули
-- `money.ts`: `computeMoney(format, state) → Record<PlayerId, {owesRub, prizeRub, bountyRub, netRub}>`;
+- `money.ts`: `entryAmounts(format, k=1) → {stacks, rub, chips, bountyRub, poolRub}` — во что обходится
+  вход/ребай кратности k (пульт банкира, подписи ленты);
+  `computeMoney(format, state) → Record<PlayerId, {owesRub, prizeRub, bountyRub, netRub}>`;
   `settlement(money, payments: {playerId, amountRub}[]) → Record<PlayerId, {dueRub, paidRub, remainingRub, status: 'owes'|'awaits'|'settled'}>`
   (`dueRub = owesRub - prizeRub - bountyRub`, >0 — игрок платит банкиру; `paid` — сумма payment;
   `remaining = due - paid`; settled при 0). `isSettled(...)`.
@@ -273,14 +294,20 @@ export interface EveningState {
   банкир вечера или админ. После `finished` банкир может добавлять только `payment`; остальное — только
   админ (правка закрытого вечера). `p_client_id` — ключ повтора (один на намерение пользователя): если
   событие с тем же ключом уже есть, возвращается оно, без вставки и до проверки состояния вечера
-  (тип/игрок не совпадают → 22023). Клиент держит ключ неудавшейся записи 2 минуты (useEveningActions).
+  (тип/игрок/кратность не совпадают → 22023). Клиент держит ключ неудавшейся записи 2 минуты (useEveningActions).
+  Payload `join`/`rebuy` — `{playerId, stacks?}` (миграция 015): `stacks` — целое 1..10, иначе 22023
+  «Кратность входа — целое число от 1 до 10» (`private.json_entry_stacks`); в нормализованной копии
+  хранится только при k > 1 — стандартный вход неотличим от событий до 015. Клиент тоже шлёт `stacks`
+  только при k > 1 (`entryPayload` в `pages/evening/lib.ts`).
   `finish` у вечера в `announced` → P0001. Побочные эффекты: первый `timer_start` → `status='live'`,
   `started_at=now()`; `finish` (из `live`) → при идущем таймере сначала `timer_pause`, затем
   `status='finished'`, `finished_at=now()`, `voting_closes_at=now()+interval '24 hours'`.
-- `add_guest(p_evening uuid, p_name text) → uuid` — банкир вечера или админ (права как у `add_event` для `join`):
-  создаёт игрока `is_guest = true` (имя 1–40 символов, пробелы схлопываются) и сразу добавляет его `join`
-  в этот вечер (через `add_event`). Возвращает id гостя. Миграция 006. Клиент — `addGuest` / `useAddGuest`
-  в `src/shared/api/rpc.ts`.
+- `add_guest(p_evening uuid, p_name text, p_stacks integer default 1) → uuid` — банкир вечера или админ
+  (права как у `add_event` для `join`): создаёт игрока `is_guest = true` (имя 1–40 символов, пробелы
+  схлопываются) и сразу добавляет его `join` кратности `p_stacks` (1..10, проверка до создания игрока)
+  в этот вечер (через `add_event`). Возвращает id гостя. Миграция 006, `p_stacks` — 015 (сигнатура
+  `(uuid, text)` удалена, вызов с двумя аргументами работает). Клиент — `addGuest(eveningId, name,
+  stacks)` / `useAddGuest` в `src/shared/api/rpc.ts` (`p_stacks` шлёт только при k > 1).
 - **Правка журнала открывает закрытый расчёт** (миграция 008): любой новый `evening_events` (add_event любого
   типа, в том числе платёж банкира и join из `add_guest`) или отмена события (`voided_at` null → не null) у вечера
   в `settled` в той же транзакции возвращает его в `finished`: `settled_at = null`, `settle_reopened_at = now()`.
@@ -634,6 +661,17 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   личные рекорды с пометкой «Рекорд клуба», доля вечеров в призах, среднее место) и ачивки с прогрессом
   (`progress.ts`: полученные / «На подходе» / сезон / остальные). Гости в ленте и моментах — как есть, ачивок, званий,
   рекордов игрока и прогресса у них нет.
+- Кратность входа на пульте банкира (`pages/evening/StacksPicker.tsx`): «−» / «×k» / «+», ×1 по умолчанию,
+  до ×10, под значением — сумма и фишки («1 000 ₽ · 1 000 фишек», `stacksAmountText`), подсказка — голова и
+  доля фонда (`stacksHint`). В шторке «Кто пришёл» / «Опоздавший игрок» (`SeatSheet`) — одна кратность на всех,
+  кого сажают этим нажатием, и на гостя; после гостя кратность возвращается к ×1, при ×k сумма — на главной
+  кнопке («Посадить за стол: 6 · по 1 000 ₽», `seatButtonLabel`); в шторке ребая (`PlayerSheet`) — своя у
+  каждого ребая. Лента:
+  `describeEvent(ev, nameOf, formatRub, format)` — при k > 1 подпись «вход на 1 000 ₽» / «ребай на 1 500 ₽»;
+  строка игрока (`playerLine(p, format)`) — «взнос 2 500 ₽», если хоть один вход был кратным; «Баунти»
+  на экране вечера — `state.bountyPoolRub`, подпись — головы тех, кто в игре, по текущим входам
+  (`bountyNote`: «200 ₽ за голову» или «100–300 ₽ за голову»). Вылет — голова
+  текущего входа жертвы (`currentStacks`) в подсказках шторки.
 - Время вечера: `useNow(1000)` + `replay(format, events, now)`; `now` — по часам сервера
   (`src/shared/lib/serverClock.ts`: смещение по замерам `server_now` при старте и возврате на экран,
   `board_state.server_now` на каждом опросе табло и `at` из ответов `add_event`; берётся замер с
@@ -654,6 +692,9 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
 - `supabase/tests/014_gameday_post.sql` — то же для 014 (`gameday_hours_before`: умолчание, границы 1–48, правка
   админом и только им; `service_role` пишет `gameday_posted_at`; перенос в пределах московского дня отметку не
   снимает — в том числе через полночь UTC, на другой день — снимает, в том числе upsert формы админки).
+- `supabase/tests/015_entry_stacks.sql` — то же для 015 (`stacks` у join/rebuy: хранение только при k > 1,
+  отказы 22023, ключ повтора сверяет кратность, `add_guest` с `p_stacks` и двумя аргументами, права,
+  `payload_replace_player` сохраняет `stacks`).
 - `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed с новым Telegram-профилем в транзакции
   с rollback: replay, settlement, голоса и прогнозы каждого вечера после слияния совпадают с исходными
   с подменой id.

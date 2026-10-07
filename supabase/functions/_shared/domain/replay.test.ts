@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FORMAT, validateFormat } from './format.ts';
-import { canApply, replay, replayLog } from './replay.ts';
+import { canApply, readStacks, replay, replayLog } from './replay.ts';
 import { journal, MIN } from './test-utils.ts';
-import type { BlindLevel, TournamentFormat } from './types.ts';
+import { MAX_ENTRY_STACKS, type BlindLevel, type TournamentFormat } from './types.ts';
 
 const F = DEFAULT_FORMAT;
 const errorsOf = (s: { errors: { eventId: number; message: string }[] }) =>
@@ -534,5 +534,84 @@ describe('отмена finish и пауза перед ним', () => {
     const back = replay(F, j.events, j.now());
     expect(back.timer.status).toBe('running');
     expect(back.rebuysOpen).toBe(false);
+  });
+});
+
+describe('кратность входа и ребая (stacks)', () => {
+  it('readStacks: нет поля — 1, иначе целое 1..10; остальное — null', () => {
+    expect(readStacks({ playerId: 'A' })).toBe(1);
+    expect(readStacks({ playerId: 'A', stacks: undefined })).toBe(1);
+    expect(readStacks({ playerId: 'A', stacks: 1 })).toBe(1);
+    expect(readStacks({ playerId: 'A', stacks: 2 })).toBe(2);
+    expect(readStacks({ playerId: 'A', stacks: MAX_ENTRY_STACKS })).toBe(MAX_ENTRY_STACKS);
+    for (const bad of [
+      0,
+      -1,
+      11,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      '2',
+      null,
+      true,
+      [2],
+      {},
+    ])
+      expect(readStacks({ playerId: 'A', stacks: bad }), String(bad)).toBeNull();
+  });
+
+  it('некорректная кратность: join и rebuy отклоняются с понятной ошибкой, canApply — так же', () => {
+    const msg = 'Кратность входа — целое число от 1 до 10';
+    const j = journal().join('A', 'B');
+    const badJoin = j.add('join', { playerId: 'C', stacks: 0 });
+    const badJoin2 = j.add('join', { playerId: 'D', stacks: 11 });
+    j.bust('B', ['A']);
+    const badRebuy = j.add('rebuy', { playerId: 'B', stacks: 2.5 });
+    const badRebuy2 = j.add('rebuy', { playerId: 'B', stacks: '2' } as never);
+    const s = replay(F, j.events, j.now());
+    expect(s.errors).toEqual([
+      { eventId: badJoin, message: msg },
+      { eventId: badJoin2, message: msg },
+      { eventId: badRebuy, message: msg },
+      { eventId: badRebuy2, message: msg },
+    ]);
+    expect(s.joinOrder).toEqual(['A', 'B']);
+    expect(s.players.B).toMatchObject({ alive: false, entries: 1, stacks: 1 });
+    expect(canApply(F, s, 'join', { playerId: 'C', stacks: 0 }, j.now())).toBe(msg);
+    expect(canApply(F, s, 'join', { playerId: 'C', stacks: 10 }, j.now())).toBeNull();
+    expect(canApply(F, s, 'rebuy', { playerId: 'B', stacks: 11 }, j.now())).toBe(msg);
+    expect(canApply(F, s, 'rebuy', { playerId: 'B', stacks: 3 }, j.now())).toBeNull();
+    // Кратность не обходит остальные правила: ребай живого — та же ошибка, что раньше.
+    expect(canApply(F, s, 'rebuy', { playerId: 'A', stacks: 2 }, j.now())).toBe(
+      'Игрок ещё в игре — ребай только после вылета',
+    );
+  });
+
+  it('фишки, фонд и головы — по сумме кратностей; число входов — штуками', () => {
+    const j = journal();
+    j.joinStacks('A', 3);
+    j.join('B');
+    j.bust('B', ['A']);
+    j.rebuy('B', 2);
+    const s = replay(F, j.events, j.now());
+    expect(s.totalEntries).toBe(3);
+    expect(s.totalStacks).toBe(6);
+    expect(s.totalChips).toBe(3000);
+    expect(s.prizePoolRub).toBe(2400);
+    expect(s.bountyPoolRub).toBe(600);
+    expect(s.players.B).toMatchObject({ entries: 2, rebuys: 1, stacks: 3, currentStacks: 2 });
+    expect(s.players.A).toMatchObject({ stacks: 3, currentStacks: 3, bountyWonRub: 100 });
+  });
+
+  it('отмена кратного ребая возвращает голову прежнего входа', () => {
+    const j = journal().join('A', 'B', 'C');
+    j.bust('C', ['A']);
+    const rb = j.rebuy('C', 3);
+    j.voidEvent(rb);
+    j.rebuy('C');
+    j.bust('C', ['B']);
+    const s = replay(F, j.events, j.now());
+    expect(s.players.C).toMatchObject({ stacks: 2, currentStacks: 1 });
+    expect(s.players.B?.bountyWonRub).toBe(100);
   });
 });

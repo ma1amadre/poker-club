@@ -190,7 +190,7 @@ function LiveBoard({
   // Выплаты по местам — доменная раскладка фонда (та же, что попадёт в итог).
   const prizes = payouts(state.prizePoolRub, format.payoutPct, state.joinOrder.length);
   const koEvent = [...applied].reverse().find((e) => e.type === 'bust');
-  const koLine = koEvent ? describeEvent(koEvent, nameOf, formatRub) : null;
+  const koLine = koEvent ? describeEvent(koEvent, nameOf, formatRub, format) : null;
   const rebuys = totalRebuys(state);
   const alive = orderedPlayers(state).filter((p) => p.alive);
 

@@ -159,6 +159,7 @@ function PaymentSheetInner({
                   key={ev.id}
                   event={ev}
                   nameOf={nameOf}
+                  format={model.evening.format}
                   onVoid={(e) => {
                     // Окно поверх окна «Материя» запрещает: сначала закрываем шторку.
                     onClose();

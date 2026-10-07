@@ -1,10 +1,13 @@
 // Пульт одного игрока у банкира: «Отметить вылет» (кто выбил — один, несколько при дележе
-// или «не знаю») для живого и «Записать ребай» для вылетевшего, пока ребаи открыты.
+// или «не знаю») для живого и «Записать ребай» для вылетевшего, пока ребаи открыты. Ребай —
+// с выбором кратности (×1 по умолчанию): у нового входа своя голова.
+import { entryAmounts } from '@domain/money.ts';
 import type { PlayerState } from '@domain/types.ts';
 import { useState } from 'react';
-import { formatNumber, formatRub, joinNames, plural } from '../../shared/lib';
+import { formatNumber, formatRub, joinNames, NBSP, plural } from '../../shared/lib';
 import { Button, FieldGroup, Notice, PlayerPicker, Sheet, Switch } from '../../shared/ui';
-import { playerLine, rebuyWindow } from './lib';
+import { entryPayload, playerLine, rebuyWindow } from './lib';
+import { StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
@@ -40,7 +43,12 @@ function PlayerSheetInner({
   const [killers, setKillers] = useState<string[]>([]);
   const [split, setSplit] = useState(false);
   const [unknown, setUnknown] = useState(false);
+  const [stacks, setStacks] = useState(1);
   const [sending, setSending] = useState(false);
+  const format = evening.format;
+  // Голова на кону — текущего входа игрока (вход ×2 — двойная).
+  const headRub = entryAmounts(format, current.currentStacks).bountyRub;
+  const rebuyAmounts = entryAmounts(format, stacks);
   // Пока идёт своя отправка, статус меняет наша же запись — это не «чужая» правка.
   const overtaken = !sending && (mode === 'bust') !== current.alive;
 
@@ -55,12 +63,11 @@ function PlayerSheetInner({
   const by = unknown ? [] : killers;
   const bustPayload = { playerId: current.playerId, by };
   const bustProblem = current.alive ? actions.check('bust', bustPayload) : null;
-  const rebuyProblem = current.alive
-    ? null
-    : actions.check('rebuy', { playerId: current.playerId });
+  const rebuyPayload = entryPayload(current.playerId, stacks);
+  const rebuyProblem = current.alive ? null : actions.check('rebuy', rebuyPayload);
   const ready = unknown || killers.length > 0;
   // Ребаи вот-вот закроются: запись, отправленная сейчас, может прийти на сервер уже после.
-  const win = rebuyWindow(evening.format, state);
+  const win = rebuyWindow(format, state);
   const closingSoon = win.kind === 'open' && win.msLeft !== null && win.msLeft < REBUY_EDGE_MS;
 
   const bust = async () => {
@@ -79,16 +86,16 @@ function PlayerSheetInner({
 
   const rebuy = async () => {
     setSending(true);
-    const record = await actions.send(
-      'rebuy',
-      { playerId: current.playerId },
-      { success: `Ребай записан: ${name}`, undo: true },
-    );
+    const record = await actions.send('rebuy', rebuyPayload, {
+      success: `Ребай записан: ${name}`,
+      detail: stacks > 1 ? `Ребай на ${formatRub(rebuyAmounts.rub)}.` : undefined,
+      undo: true,
+    });
     setSending(false);
     if (record) onClose();
   };
 
-  const line = playerLine(current);
+  const line = playerLine(current, format);
   const description = [current.alive ? 'В игре' : 'Вне игры', line].filter(Boolean).join(' · ');
 
   if (overtaken) {
@@ -136,9 +143,9 @@ function PlayerSheetInner({
             label="Кто выбил"
             hint={
               unknown
-                ? `Голова уйдёт победителю вечера (${formatRub(evening.format.bountyRub)}).`
+                ? `Голова уйдёт победителю вечера (${formatRub(headRub)}).`
                 : split
-                  ? 'Голова делится поровну, нокаут засчитывается каждому.'
+                  ? `Голова (${formatRub(headRub)}) делится поровну, нокаут засчитывается каждому.`
                   : 'Выбери одного игрока или включи делёж.'
             }
           >
@@ -216,14 +223,22 @@ function PlayerSheetInner({
             {rebuyProblem}.
           </Notice>
         ) : (
-          <p className="m-body">
-            Ещё {formatRub(evening.format.buyInRub)} банкиру и{' '}
-            {formatNumber(evening.format.startingChips)}
-            {' '}
-            {plural(evening.format.startingChips, ['фишка', 'фишки', 'фишек'])} — игрок возвращается
-            за стол.
-            {current.rebuys > 0 ? ` Ребаев у игрока: ${current.rebuys}.` : ''}
-          </p>
+          <>
+            <StacksPicker
+              format={format}
+              value={stacks}
+              onChange={setStacks}
+              label="Ребай"
+              disabled={sending}
+            />
+            <p className="m-body">
+              Ещё {formatRub(rebuyAmounts.rub)} банкиру и {formatNumber(rebuyAmounts.chips)}
+              {NBSP}
+              {plural(rebuyAmounts.chips, ['фишка', 'фишки', 'фишек'])} — игрок возвращается за
+              стол.
+              {current.rebuys > 0 ? ` Ребаев у игрока: ${current.rebuys}.` : ''}
+            </p>
+          </>
         )}
       </div>
     </Sheet>

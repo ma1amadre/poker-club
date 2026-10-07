@@ -112,7 +112,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
   const voidWithConfirm = useCallback(
     async (event: EveningEventRecord, copy: VoidCopy = {}) => {
       const current = modelRef.current;
-      const line = describeEvent(event, current.nameOf, formatRub);
+      const line = describeEvent(event, current.nameOf, formatRub, current.evening.format);
       const { revived, stillFinished } = voidEffect(current, event.id);
       const consequence =
         event.type === 'finish'
@@ -128,7 +128,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
         revived.length > 0
           ? ` Вместо неё вступит в силу ${revived.length > 1 ? 'записи' : 'запись'}, которую журнал сейчас не принимает: ${revived
               .map((e) => {
-                const l = describeEvent(e, current.nameOf, formatRub);
+                const l = describeEvent(e, current.nameOf, formatRub, current.evening.format);
                 return `«${l.title}${l.detail ? `, ${l.detail}` : ''}», ${formatTime(e.at)}`;
               })
               .join('; ')}. Если она тоже лишняя — отмени и её.`

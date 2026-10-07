@@ -283,11 +283,16 @@ export async function mergePlayers(guestId: string, targetId: string): Promise<M
 }
 
 /**
- * Создать гостя и сразу посадить его за стол (join) — миграция 006. Права как у add_event для
- * join: банкир вечера или админ. Возвращает id нового игрока.
+ * Создать гостя и сразу посадить его за стол (join) — миграция 006; `stacks` — кратность входа
+ * (миграция 015, 1..10). Права как у add_event для join: банкир вечера или админ. Возвращает id
+ * нового игрока. Стандартный вход уходит без p_stacks — как до 015.
  */
-export async function addGuest(eveningId: string, name: string): Promise<string> {
-  const { data, error } = await supabase.rpc('add_guest', { p_evening: eveningId, p_name: name });
+export async function addGuest(eveningId: string, name: string, stacks = 1): Promise<string> {
+  const { data, error } = await supabase.rpc('add_guest', {
+    p_evening: eveningId,
+    p_name: name,
+    ...(stacks > 1 ? { p_stacks: stacks } : {}),
+  });
   if (error) throw toError(error);
   if (typeof data !== 'string') throw new Error('Сервер не вернул id гостя. Повтори попытку.');
   return data;
@@ -354,7 +359,8 @@ export function useVoidEvent(eveningId: string) {
 export function useAddGuest(eveningId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => addGuest(eveningId, name),
+    mutationFn: ({ name, stacks = 1 }: { name: string; stacks?: number }) =>
+      addGuest(eveningId, name, stacks),
     onSuccess: () => {
       // Новый игрок нужен в справочнике (имя в ленте), новый join — в журнале.
       void queryClient.invalidateQueries({ queryKey: queryKeys.players });

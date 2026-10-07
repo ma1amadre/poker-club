@@ -15,7 +15,10 @@ export interface Journal {
   wait(minutes: number): Journal;
   add(type: EventType, payload?: EventPayload): number;
   join(...ids: PlayerId[]): Journal;
-  rebuy(id: PlayerId): number;
+  /** Вход кратности stacks (payload с полем stacks). */
+  joinStacks(id: PlayerId, stacks: number): number;
+  /** Ребай; stacks — кратность (без него payload как у событий до кратных входов). */
+  rebuy(id: PlayerId, stacks?: number): number;
   bust(id: PlayerId, by?: PlayerId[]): number;
   start(): number;
   pause(): number;
@@ -48,7 +51,9 @@ export function journal(startIso = '2026-10-08T16:00:00.000Z'): Journal {
       for (const p of ids) j.add('join', { playerId: p });
       return j;
     },
-    rebuy: (p) => j.add('rebuy', { playerId: p }),
+    joinStacks: (p, stacks) => j.add('join', { playerId: p, stacks }),
+    rebuy: (p, stacks) =>
+      j.add('rebuy', stacks === undefined ? { playerId: p } : { playerId: p, stacks }),
     bust: (p, by = []) => j.add('bust', { playerId: p, by }),
     start: () => j.add('timer_start'),
     pause: () => j.add('timer_pause'),
@@ -79,7 +84,8 @@ export function prng(seed: number): () => number {
   };
 }
 
-export type Step = ['bust', PlayerId, PlayerId[]] | ['rebuy', PlayerId];
+/** Шаг вечера; у ребая — необязательная кратность. */
+export type Step = ['bust', PlayerId, PlayerId[]] | ['rebuy', PlayerId, number?];
 
 /**
  * Завершённый вечер для статистики: все входят, таймер стартует, шаги по порядку, затем finish.
@@ -98,7 +104,7 @@ export function playEvening(
   for (const s of steps) {
     j.wait(1);
     if (s[0] === 'bust') j.bust(s[1], s[2]);
-    else j.rebuy(s[1]);
+    else j.rebuy(s[1], s[2]);
   }
   j.finish();
   return summarize(eveningId, dateIso, format, j.events, DEFAULT_SCORING);

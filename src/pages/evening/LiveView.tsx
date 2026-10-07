@@ -31,6 +31,7 @@ import {
 } from '../../shared/ui';
 import {
   averageStackBb,
+  bountyNote,
   clockView,
   describeEvent,
   formatBbValue,
@@ -75,7 +76,8 @@ export function LiveView({ model, actions }: LiveViewProps) {
   const avg = averageStackBb(state);
   const lastAlive =
     state.aliveCount === 1 ? state.joinOrder.find((id) => state.players[id]?.alive) : undefined;
-  const bountyPoolRub = state.totalEntries * format.bountyRub;
+  // Все головы вечера — по кратностям входов (домен); подпись — головы тех, кто сейчас в игре.
+  const bountyPoolRub = state.bountyPoolRub;
   const money = computeMoney(format, state);
   const owedRub = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
 
@@ -307,7 +309,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
             </div>
             {undoTarget && (
               <p className="m-small">
-                Последняя запись — «{describeEvent(undoTarget, nameOf, formatRub).title}»,{' '}
+                Последняя запись — «{describeEvent(undoTarget, nameOf, formatRub, format).title}»,{' '}
                 {formatTime(undoTarget.at)}
               </p>
             )}
@@ -326,7 +328,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
           label="Баунти"
           value={formatNumber(bountyPoolRub)}
           unit="₽"
-          note={`${formatRub(format.bountyRub)} за голову`}
+          note={bountyNote(state, format)}
         />
         <Stat
           label="В игре"
@@ -363,6 +365,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
         {state.joinOrder.length > 0 ? (
           <PlayersList
             state={state}
+            format={format}
             nameOf={nameOf}
             playersById={playersById}
             onSelect={canControl ? setSelected : undefined}
@@ -375,6 +378,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
       <EventFeed
         events={events}
         nameOf={nameOf}
+        format={format}
         errorsById={errorsById}
         onVoid={canControl ? (ev) => void actions.voidWithConfirm(ev) : undefined}
       />

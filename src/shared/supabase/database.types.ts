@@ -503,7 +503,10 @@ export type Database = {
           isSetofReturn: false;
         };
       };
-      add_guest: { Args: { p_evening: string; p_name: string }; Returns: string };
+      add_guest: {
+        Args: { p_evening: string; p_name: string; p_stacks?: number };
+        Returns: string;
+      };
       board_state: { Args: { p_token: string }; Returns: Json };
       can_upload_vote_photo: { Args: { p_evening: string; p_player: string }; Returns: boolean };
       cast_vote: {
