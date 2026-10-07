@@ -21,6 +21,35 @@ export async function fetchBoardState(token: string): Promise<BoardState | null>
   return state;
 }
 
+/** Клип голоса табло из board_voice_clips (миграция 016): MP3 в base64. */
+export interface VoiceClipData {
+  hash: string;
+  mime: string;
+  duration_ms: number;
+  audio: string;
+}
+
+/** Сколько хешей просить за раз: сервер принимает до 100, ответ держим в пределах ~1–2 МБ. */
+export const VOICE_CLIPS_CHUNK = 40;
+
+/**
+ * Клипы голоса по хешам — те, что уже озвучены (остальных в ответе нет). Без входа, по токену
+ * табло, с теми же правилами срока, что у board_state; null — ссылка погасла.
+ */
+export async function fetchVoiceClips(
+  token: string,
+  voice: string,
+  hashes: string[],
+): Promise<VoiceClipData[] | null> {
+  const { data, error } = await supabase.rpc('board_voice_clips', {
+    p_token: token,
+    p_voice: voice,
+    p_hashes: hashes,
+  });
+  if (error) throw toError(error);
+  return (data as unknown as VoiceClipData[] | null) ?? null;
+}
+
 export function useBoardState(token: string | undefined) {
   return useQuery({
     queryKey: queryKeys.board(token ?? ''),

@@ -1,5 +1,6 @@
 // Сгенерировано: `npx supabase gen types typescript --local` (+ prettier). Руками не править —
 // сужение до доменных типов делает src/shared/api/types.ts.
+
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type Database = {
@@ -234,6 +235,7 @@ export type Database = {
           is_admin: boolean;
           is_guest: boolean;
           photo_url: string | null;
+          spoken_name: string | null;
           tg_id: number | null;
           username: string | null;
         };
@@ -246,6 +248,7 @@ export type Database = {
           is_admin?: boolean;
           is_guest?: boolean;
           photo_url?: string | null;
+          spoken_name?: string | null;
           tg_id?: number | null;
           username?: string | null;
         };
@@ -258,6 +261,7 @@ export type Database = {
           is_admin?: boolean;
           is_guest?: boolean;
           photo_url?: string | null;
+          spoken_name?: string | null;
           tg_id?: number | null;
           username?: string | null;
         };
@@ -426,6 +430,36 @@ export type Database = {
           },
         ];
       };
+      voice_clips: {
+        Row: {
+          audio: string;
+          created_at: string;
+          duration_ms: number;
+          mime: string;
+          text: string;
+          text_hash: string;
+          voice: string;
+        };
+        Insert: {
+          audio: string;
+          created_at?: string;
+          duration_ms: number;
+          mime?: string;
+          text: string;
+          text_hash: string;
+          voice: string;
+        };
+        Update: {
+          audio?: string;
+          created_at?: string;
+          duration_ms?: number;
+          mime?: string;
+          text?: string;
+          text_hash?: string;
+          voice?: string;
+        };
+        Relationships: [];
+      };
       votes: {
         Row: {
           caption: string | null;
@@ -508,6 +542,10 @@ export type Database = {
         Returns: string;
       };
       board_state: { Args: { p_token: string }; Returns: Json };
+      board_voice_clips: {
+        Args: { p_hashes: string[]; p_token: string; p_voice: string };
+        Returns: Json;
+      };
       can_upload_vote_photo: { Args: { p_evening: string; p_player: string }; Returns: boolean };
       cast_vote: {
         Args: {
@@ -535,6 +573,7 @@ export type Database = {
       merge_players_preview: { Args: { p_guest: string; p_target: string }; Returns: Json };
       server_now: { Args: Record<PropertyKey, never>; Returns: string };
       set_my_name: { Args: { p_name: string }; Returns: undefined };
+      set_my_spoken_name: { Args: { p_name: string }; Returns: string };
       set_payout: { Args: { p_evening: string; p_pct: number[] }; Returns: undefined };
       set_prediction: {
         Args: { p_evening: string; p_first_out: string; p_winner: string };

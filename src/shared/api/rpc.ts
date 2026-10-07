@@ -309,6 +309,16 @@ export async function setMyName(name: string): Promise<void> {
   if (error) throw toError(error);
 }
 
+/**
+ * Своё имя для озвучки на табло (миграция 016). Пустая строка — сбросить: голос возьмёт имя в
+ * клубе, если оно кириллическое. Возвращает то, что сохранил сервер (null — сброшено).
+ */
+export async function setMySpokenName(name: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('set_my_spoken_name', { p_name: name });
+  if (error) throw toError(error);
+  return typeof data === 'string' && data !== '' ? data : null;
+}
+
 // --- Хуки-мутации ----------------------------------------------------------------------------
 
 /** Изменился вечер: его карточка, списки вечеров и (для завершённых) статистика клуба. */
@@ -479,6 +489,21 @@ export function useMergePlayers() {
       void queryClient.invalidateQueries({
         predicate: (query) => query.queryKey[0] !== 'merge-preview',
       });
+    },
+  });
+}
+
+/** Своё имя для озвучки; обновляет список игроков, историю клуба и игрока в контексте входа. */
+export function useSetMySpokenName() {
+  const queryClient = useQueryClient();
+  const { updatePlayer } = useAuth();
+  return useMutation({
+    mutationFn: (name: string) => setMySpokenName(name),
+    meta: { silent: true }, // ошибку шторка показывает под полем
+    onSuccess: (saved) => {
+      updatePlayer({ spoken_name: saved });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.players });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
     },
   });
 }

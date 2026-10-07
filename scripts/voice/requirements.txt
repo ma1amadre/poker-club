@@ -1,0 +1,20 @@
+# Генератор голоса табло (generate.py) целиком: база + синтез Silero на CPU.
+# Установка: python -m pip install -r scripts/voice/requirements.txt (Python 3.14 — на нём проверено;
+# numpy 2.5.3 требует 3.12+). torch — сборка CPU с индекса PyTorch (без CUDA, около 200 МБ вместо
+# нескольких ГБ); остальное — с PyPI. Зависимости torch закреплены тоже, чтобы установка не
+# менялась сама по себе. Пакет silero не нужен: модель — самодостаточный torch.package
+# (внешние модули — только torch и стандартная библиотека).
+--only-binary=:all:
+--extra-index-url https://download.pytorch.org/whl/cpu
+-r requirements-db.txt
+torch==2.14.1+cpu
+numpy==2.5.3
+filelock==3.32.3
+fsspec==2026.7.0
+jinja2==3.1.6
+markupsafe==3.0.3
+networkx==3.6.1
+setuptools==78.1.0
+sympy==1.14.0
+mpmath==1.3.0
+typing-extensions==4.16.0

@@ -28,7 +28,11 @@
   gap: var(--space-2);
 }
 
-.pl-head__rename {
+/* Кнопки «Сменить имя» и «Имя на табло»: ghost-кнопки выровнены по тексту, не по своей рамке. */
+.pl-head__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
   margin-left: calc(-1 * var(--space-3));
 }
 

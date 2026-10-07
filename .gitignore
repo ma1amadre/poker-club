@@ -12,3 +12,6 @@ supabase/.branches/
 supabase/functions/.env
 .vscode/
 .idea/
+# Генератор голоса (scripts/voice): кеш Python и локальный venv.
+__pycache__/
+.venv/

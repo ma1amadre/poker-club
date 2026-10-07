@@ -40,6 +40,9 @@ src/
 public/fonts/                    # woff2 шрифтов «Материи» + OFL.txt (scripts/fetch-fonts.mjs)
 scripts/                         # node-скрипты разработки (check-merge-replay.mjs — слияние на seed;
                                  # sync-materia.mjs — вендоринг «Материи»; fetch-fonts.mjs — шрифты)
+scripts/voice/                   # генератор голоса табло (его запускает voice.yml в poker-club-ops):
+                                 # manifest.mjs — манифест фраз (Node), generate.py — Silero → MP3 →
+                                 # voice_clips, requirements*.txt, test_generate.py
 ```
 
 Правило импорта домена: во фронте `import { replay } from '@domain/replay.ts'` (alias в vite и
@@ -236,13 +239,39 @@ export interface EveningState {
   делал прогноз; null — не играл и прогноза не было.
 - `format.ts`: `DEFAULT_FORMAT` (клубный: 500 ₽/500 фишек, баунти 100, ребаи до конца 5-го уровня без лимита,
   70/30, уровни по 40 мин: 5/10, 10/20, 15/30, 20/40, 25/50, 50/100, 75/150, 100/200), `validateFormat`.
+- `voice.ts` — голос табло (миграция 016), один источник текста фраз для табло и генератора озвучки. Silero
+  v5_5_ru выбрасывает латиницу и не читает цифры (проверено на модели), поэтому: `numberWords(n)` — целое
+  0…999 999 999 999 словами, именительный, мужской род (5 → «пять», 1000 → «тысяча», 2500 → «две тысячи пятьсот»,
+  21 000 → «двадцать одна тысяча»; иначе RangeError); имена — только кириллица, ударение — «+» перед гласной.
+  `VOICE_ID = 'silero-v5_5-xenia'`, `VOICE_CREDIT` (подпись «Голос: Silero (CC BY-NC-SA 4.0)»). Текст клипа —
+  `normalizeSpeech` (NFC, любые пробелы → один обычный, без краёв); **хеш** — `clipHash(text, voice)` = SHA-256
+  (hex) от UTF-8 строки «voice + перевод строки + normalizeSpeech(text)» через WebCrypto (браузер, Node, Deno) —
+  тот же, что проверяет constraint `voice_clips_hash_matches`. Фразы (решения пользователя: без обращения, имена
+  без склонения): `startPhrase` «Поехали! Блайнды пять — десять.», `levelPhrase` «Новый уровень. Блайнды десять —
+  двадцать.» (+ «, анте пять» при ante > 0; так же и у старта), `PHRASES` — «Минута до повышения блайндов.»,
+  «Ребаи закрыты.», «Пауза.», «Продолжаем.», «Нокаут!» (назвать некого), «Игра окончена!» (победителя назвать
+  нельзя); `knockoutPhrase(victim, killers)` — «Нокаут! Вылетает Эрдни. Выбил Саша.» / «… Выбили Саша и Дима.» /
+  «… Выбили Саша, Дима и Женя.» / без выбивших «Нокаут! Вылетает Эрдни.» / без жертвы «Нокаут! Выбил Саша.»;
+  `winnerPhrase` — «Победитель вечера — Женя!». Куски для сборки (`SEGMENTS`, `knockoutSegments`): «Нокаут!
+  Вылетает», «Выбил», «Выбили», «и», «Победитель вечера —» и имя отдельным клипом.
+  Имена: `speakableName({display_name, spoken_name})` — `spoken_name`, иначе отображаемое имя, если оно целиком
+  из русских букв, пробелов, дефисов и апострофов, иначе null (фраза звучит без имени); `normalizeSpokenName` /
+  `spokenNameError` — те же правила, что у constraint и RPC (тексты на «ты»).
+  `announcementVariants(announcement, nameOf)` — варианты от полного к запасным (вариант = клипы подряд): целая
+  фраза → она же кусками → с меньшим числом имён → без имён; выбивших называем всех или никого.
+  Что нужно: `eveningVoiceTexts(format, names)` — всё, что табло может сказать на вечере (фиксированные и куски,
+  уровни формата, на игрока — имя, «Вылетает X.», «Выбил X.», победитель; целые фразы всех упорядоченных пар);
+  `voiceManifestTexts(input, {pairPlayers = 16, maxTexts = 1000}) → {texts, notes}` и `voiceManifest(input) →
+  {clips: [{voice, hash, text}], notes}` — то же по всему клубу: вход — `private.voice_manifest_input()`, только
+  активные игроки с озвучиваемым именем; целые фразы пар — для 16 недавних (по `last_played_at`), остальным
+  нокауты собираются кусками; что урезано — в `notes`. Уровни формата — до первого нечитаемого (`speakableLevels`).
 - `index.ts` — реэкспорт всего.
 
 ## База данных (public)
 
 | Таблица | Колонки |
 |---|---|
-| `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at` |
+| `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at`, `spoken_name text` (имя для озвучки на табло: 1–50 символов, русские буквы, пробел, дефис, апостроф и «+» только перед гласной, хотя бы одна буква, без пробелов по краям и двойных — constraint `players_spoken_name_shape`; null — голос берёт `display_name`, если оно кириллическое; миграция 016) |
 | `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `gameday_hours_before int default 5` (1–48: за сколько часов до начала пост в день игры; миграция 014), `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at` |
 | `formats` | `id uuid pk`, `name text`, `config jsonb` (TournamentFormat), `is_archived bool default false`, `created_at` |
 | `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `gameday_posted_at` (пост в день игры ушёл или не понадобился; пишет только cron-tick; перенос на другой московский день снимает отметку — триггер `evenings_reset_gameday_post`, before update of `scheduled_at`, любой путь записи, включая upsert формы админки; перенос в пределах дня не трогает; миграция 014), `results_posted_at`, `voting_posted_at`, `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `scoring jsonb` (снимок правил очков `{koPoints, winBonus}` из settings в момент завершения; есть ровно у `finished`/`settled` — constraint `evenings_scoring_when_closed`, форма — `evenings_scoring_shape`; ставит и снимает триггер `evenings_scoring_snapshot`, снаружи не пишется; миграция 013), `created_by`, `created_at` |
@@ -252,6 +281,7 @@ export interface EveningState {
 | `votes` | pk `(evening_id, voter_id, category)`, `category text check in ('hand','bluff','badbeat')`, `nominee_id uuid → players`, `caption text check (char_length <= 200)`, `photo_path text`, `created_at`; `check (voter_id <> nominee_id)` |
 | `season_rules` | `season_key text pk` (`'2026-Q3'`, квартал по Москве, как `seasonKey` домена), `best_n int ≥ 1`, `frozen_at timestamptz default now()` — «лучшие N» закрытых сезонов; пишет только триггер `settings_freeze_season_best_n` (и backfill 013); `authenticated` — select (RLS: участник клуба), `service_role` — select/insert/update/delete. Миграция 013 |
 | `admin_alerts` | `key text pk` (1–200 символов: вид сбоя или `telegram:<код>`), `last_sent_at timestamptz not null`, `suppressed_count int ≥ 0 default 0`, `updated_at timestamptz default now()` — журнал троттлинга оповещений админа о сбоях (`_shared/alerts.ts`, раздел Edge Functions). RLS без политик, права только у `service_role` (select/insert/update/delete); клиенту не виден. Миграция 012 |
+| `voice_clips` | pk `(voice, text_hash)`; `voice text` (`^[a-z0-9][a-z0-9_.-]{0,63}$`, сейчас `silero-v5_5-xenia`), `text_hash text` (64 hex = SHA-256 от «voice + перевод строки + text» в UTF-8 — constraint `voice_clips_hash_matches`), `text text` (что озвучено: 1–300 символов, NFC, без пробелов по краям, двойных и переводов строк — `voice_clips_text_normalized`), `audio bytea` (1 байт – 256 КБ), `mime text default 'audio/mpeg'` (только MP3), `duration_ms int` (1–30 000), `created_at` — клипы голоса табло (MP3 моно). Пишет генератор (`scripts/voice/generate.py`, запуск — `voice.yml` в `poker-club-ops`) ролью `postgres` (владелец таблицы, RLS его не касается); RLS без политик, у `anon`/`authenticated` прав нет, `service_role` — select/insert/update/delete; табло читает через `board_voice_clips`. Миграция 016 |
 
 **Правила подсчёта не переписывают прошлое** (миграция 013):
 - Очки вечера. Триггер `evenings_scoring_snapshot` (before insert/update на `evenings`, security definer): вечер
@@ -348,7 +378,9 @@ export interface EveningState {
   точной заменой значения (порядок `by` сохраняется, `private.payload_replace_player`), `created_by`/`voided_by`;
   `rsvps`, `predictions` (свои строки и `winner_id`/`first_out_id`), `votes` (`voter_id`, `nominee_id`) —
   удалить и вставить заново с прежними `updated_at`/`created_at`; `evenings.banker_id`/`created_by`;
-  `p_target.is_guest = false`; гость удаляется. Все внешние ключи на `players` — `on delete cascade`/`set null`,
+  `p_target.is_guest = false`; `spoken_name` гостя переходит профилю, если у профиля своего нет (миграция 016:
+  имя для озвучки чаще задают гостю, а Telegram-профиль бывает с латинским именем); гость удаляется. Все внешние
+  ключи на `players` — `on delete cascade`/`set null`,
   удаление само не упало бы, поэтому перед ним `private.player_references` обходит `pg_constraint` (каждый внешний
   ключ на `players`, новые таблицы — автоматически) и payload журнала: осталась ссылка — отказ XX000, слияние
   откатывается целиком (миграция 010).
@@ -376,8 +408,21 @@ export interface EveningState {
 - `set_my_name(p_name text)` — 1–40 символов, пробелы схлопываются; имя другого активного игрока
   (без учёта регистра) → 23505 «уже занято». Уникального индекса нет: тёзки из Telegram и гости законны.
 - `board_state(p_token uuid) → jsonb` — **доступен anon**; для `status in ('announced','live')` или
-  `finished` не старше 6 часов: `{evening:{id,scheduled_at,location,status,started_at,finished_at}, format, events:[без payment, без voided], players:[{id,display_name}], server_now}`
-  (`players` — только упомянутые в событиях); иначе null.
+  `finished`/`settled` не старше 6 часов (правило — `private.board_evening_id(p_token) → uuid`, миграция 016: одно
+  на все RPC табло): `{evening:{id,scheduled_at,location,status,started_at,finished_at}, format, events:[без payment, без voided], players:[{id,display_name,spoken_name}], server_now}`
+  (`players` — только упомянутые в событиях; `spoken_name` — с 016); иначе null.
+- `board_voice_clips(p_token uuid, p_voice text, p_hashes text[]) → jsonb` — **доступен anon** (миграция 016): по
+  живому токену (то же правило) — `[{hash, mime, duration_ms, audio}]` найденных клипов `voice_clips` этого голоса
+  (`audio` — base64 без переводов строк); не озвученных в ответе нет; токен погас — null; больше 100 хешей — 22023.
+  Клиент — `fetchVoiceClips` в `src/shared/api/board.ts` (пачками по 40).
+- `set_my_spoken_name(p_name text) → text` — своё имя для озвучки (миграция 016): нормализация как
+  `normalizeSpokenName` (типографские апострофы → «'», пробелы схлопываются), пустое — сброс в null, иначе
+  проверки и тексты 22023 как у `spokenNameError` домена; возвращает сохранённое. Клиент — `setMySpokenName` /
+  `useSetMySpokenName`. Чужое имя для озвучки пишет только админ — формой «Игроки» (upsert `players` под RLS).
+- `private.voice_manifest_input() → jsonb` — для генератора озвучки (роль `postgres`; у anon/authenticated права
+  нет): `{players: [{id, display_name, spoken_name, is_guest, is_active, last_played_at}], formats: [TournamentFormat]}`
+  — активные игроки (с гостями), `last_played_at` — `scheduled_at` последнего вечера с их неотменённым `join`;
+  форматы — `config` неархивных `formats` и снимки `evenings.format` вечеров `announced`/`live`. Миграция 016.
 - Служебные функции — в схеме `private` (не выставлена в API). Коды ошибок RPC: 42501 нет прав,
   22023 неверные данные (лишний ключ в payload — тоже), P0001 недопустимо в текущем состоянии.
 
@@ -385,10 +430,11 @@ export interface EveningState {
 - Все таблицы: `select` для `current_player_id() is not null` (активный участник клуба), кроме:
   `predictions` — свои всегда, чужие только когда вечер уже не `announced`;
   `votes` — свои всегда, чужие только после `voting_closes_at`;
-  `admin_alerts` — RLS включён без политик: клиенту не видна вовсе (только `service_role`, миграция 012).
+  `admin_alerts` — RLS включён без политик: клиенту не видна вовсе (только `service_role`, миграция 012);
+  `voice_clips` — так же (016): табло читает клипы только через `board_voice_clips`.
 - `evening_events`, `rsvps`, `predictions`, `votes` — запись только через RPC.
 - `players`, `settings`, `formats`, `evenings` — insert/update только `is_admin()`; игрок может менять
-  у себя только `display_name` (через RPC `set_my_name(p_name text)`).
+  у себя только `display_name` (через RPC `set_my_name(p_name text)`) и `spoken_name` (`set_my_spoken_name`, 016).
 - Storage: приватный бакет `vote-photos`, лимит 2 МБ, `image/jpeg`/`image/webp`; путь
   `{evening_id}/{player_id}/{12 hex}.jpg` (номинации в имени нет); загрузка — только в свою папку,
   участнику вечера при открытом голосовании, по шаблону имени и не больше 6 файлов на игрока и вечер
@@ -401,8 +447,9 @@ export interface EveningState {
 `anon`/`authenticated`/`service_role` права на новые объекты `public` (changelog «Tables not exposed to Data
 and GraphQL API automatically»); локально так же — `[api] auto_expose_new_tables = false` в `config.toml`.
 - `authenticated` — ровно нужное, миграция 002 (select на все таблицы, insert/update на `players`, `settings`,
-  `formats`, `evenings`; `season_rules` — select, миграция 013); `anon` — только RPC `board_state`, `server_now`.
-  Исключение — `admin_alerts` (012): у `anon`/`authenticated` прав нет вовсе (`revoke all`), только `service_role`.
+  `formats`, `evenings`; `season_rules` — select, миграция 013); `anon` — только RPC `board_state`, `server_now`,
+  `board_voice_clips` (016). Исключения — `admin_alerts` (012) и `voice_clips` (016): у `anon`/`authenticated` прав нет
+  вовсе (`revoke all`), только `service_role`.
 - `service_role` (Edge Functions через `adminClient`) — select/insert/update/delete на все таблицы и
   usage/select на sequences `public`, миграция 011; execute на RPC — поимённо в миграциях.
 - **Правило:** новая таблица (sequence) в миграции — сразу с явным `grant` для `service_role` и, если нужна
@@ -679,6 +726,69 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   её не принял (например, ребай пришёл после закрытия), вместо «записан» — предупреждение.
   События вечера — запрос + Realtime-подписка на `evening_events` с фильтром `evening_id=eq.<id>`;
   табло без авторизации опрашивает `board_state` раз в 3 с.
+- **Голос табло** (миграция 016; Silero TTS v5_5_ru, диктор xenia, CC BY-NC-SA 4.0 — клуб некоммерческий). Только
+  голос, без звуковых сигналов. Silero работает только в Python, поэтому клипы озвучиваются заранее генератором
+  (`scripts/voice/`, запускает `voice.yml` в `poker-club-ops` раз в сутки и вручную) и лежат в БД; табло их скачивает.
+  - Генератор: `private.voice_manifest_input()` (psql) → `scripts/voice/manifest.mjs` (домен `voiceManifest`; Node
+    23.6+ исполняет `.ts` без сборки, npm ci не нужен) → `scripts/voice/generate.py`. Он проверяет манифест (хеш —
+    sha256 от «voice + перевод строки + text», форма текста — как constraint `voice_clips`, голос — из `VOICES`),
+    берёт из `voice_clips` уже озвученное и синтезирует только отсутствующее, текст — ровно как в манифесте (с «+»
+    и «—»): Silero v5_5_ru (`torch.package`; sha256 файла модели закреплён в `VOICES` — загрузка исполняет код из
+    файла), диктор xenia, 48 кГц, `put_accent`/`put_yo`, 4 потока → тишина по краям не длиннее 80 мс (порог −45 дБ
+    от пика) с подъёмом и спадом по 5 мс → громкость речи −17 dBFS (RMS звучащих кусков по 20 мс), пик не выше
+    −1 dBFS → ffmpeg libmp3lame: MP3 CBR 64 kbps, моно, 48 кГц, без ID3, с заголовком Xing/LAME → `insert … on
+    conflict do nothing` по одному клипу (прерванный запуск сделанного не теряет, повторный ничего не озвучивает).
+    Одна фраза не озвучилась (Silero, ffmpeg, предел 256 КБ / 30 с, constraint) — остальные идут дальше, код
+    выхода 1. `--plan` (без torch, только psycopg) печатает `missing=N` и модель (`model_url`, `model_sha256`,
+    `model_file`) для `$GITHUB_OUTPUT`: workflow ставит torch, берёт модель и ffmpeg, только когда есть что
+    озвучить. `--prune` — после озвучки без ошибок удаляет клипы любого голоса, которых в манифесте нет (весь
+    манифест в этот момент в базе, табло другого не попросит). Строка подключения — только из `SUPABASE_DB_URL`
+    (`--db-url-env`), пароль вырезается из текстов ошибок и трассировок. Зависимости — `requirements.txt` (torch
+    2.14.1+cpu с индекса PyTorch, numpy, psycopg и зависимости torch — точные версии, только колёса) и
+    `requirements-db.txt` (часть для `--plan`); пакет `silero` не нужен (модель тянет только torch и stdlib).
+  - Кнопка в шапке табло «Включить голос» / «Выключить голос» (`VoiceButton` в `BoardPage`): звук браузер даёт
+    только после нажатия, на ТВ хватает одного нажатия пульта. Что голос включён, табло помнит в localStorage
+    (`poker-club:board-voice`, только удобство, всё в try/catch): после перезагрузки звук будится сразу, если
+    браузер позволит, иначе первым нажатием любой кнопки (pointerdown/keydown на document). Нажатие самой кнопки
+    голоса этот обработчик пропускает (`data-voice-toggle`, `isVoiceToggleGesture` в `voicePlayer.ts`): звук будит
+    её `press`, решая «включить или выключить» по состоянию до нажатия — иначе к её click звук уже играл бы, и
+    «Включить голос» выключало бы голос. Подвал — `VOICE_CREDIT`
+    (атрибуция лицензии) и, когда часть фраз вечера ещё не озвучена, пометка, что табло скажет их короче.
+    Без WebAudio или WebCrypto (`crypto.subtle` — только https/localhost) кнопки и подписи нет.
+  - `useBoardVoice` (`pages/board/useBoardVoice.ts`): тексты вечера — `eveningVoiceTexts(format, имена из
+    board_state)`, хеши — `clipHash`; пока голос включён, клипы подгружаются `board_voice_clips` пачками по 40.
+    Что и когда просить, решает `ClipLoader` (`pages/board/clipLoader.ts`, без React, vitest): новые игроки —
+    дозагрузка, не озвученные ещё хеши (сервер ответил, клипа нет) перепроверяются раз в 5 минут, упавший запрос
+    (сеть, 4xx/5xx, ссылка погасла — null) — не раньше чем через 30 с (пачка и все следующие; пришедшее остаётся).
+    Хук проверяет раз в 5 с и при новых текстах; пока идёт загрузка, новая не начинается.
+  - `VoicePlayer` (`pages/board/voicePlayer.ts`): клипы — байтами MP3 в памяти, декодируются (WebAudio,
+    `decodeAudioData` в форме с колбэками — для старых ТВ-браузеров) при первом проигрывании, кеш 24
+    декодированных; объявления — строго по очереди, без наложений (пауза 60 мс между кусками, 400 мс между
+    объявлениями, в очереди не больше 6); контекст уснул — новые объявления не копятся.
+  - Детектор `voiceStep(format, prev, next) → {say, frame}` (`detectAnnouncements` — только `say`;
+    `pages/board/announcer.ts`, чистый, vitest): кадр — `voiceFrame(events, replayLog, nowMs)` раз в секунду
+    (useNow) и на каждый опрос, шаг идёт и при выключенном голосе; первый кадр — точка отсчёта (история при
+    открытии и до включения голоса не зачитывается). Новые события (id, которого не было в прошлом
+    кадре, `at` не старше 90 с) по порядку журнала: `timer_start` → старт, `timer_pause` → «Пауза.» (кроме
+    служебной паузы перед `finish` из `add_event`), `timer_resume` → «Продолжаем.», `bust` → нокаут, `finish` →
+    победитель. По состоянию replay: уровень вырос (таймер, `level_next`, вылеты/раздачи) → «Новый уровень»
+    (на месте `level_next` в журнале, иначе после событий), ребаи закрылись не из-за finish → «Ребаи закрыты.»
+    сразу за уровнем; «Минута до повышения» — уровень по времени, таймер идёт, следующий уровень есть, остаток
+    пересёк 60 с в этом шаге и не ниже 45 с. `level_prev` не объявляется. Отмена (void) не объявляется: пропало
+    событие — изменения состояния в этом шаге молчат (кроме уровня от нового `level_next`).
+    Один раз на уровень: кадр несёт память сказанного (`heard`: наибольший уровень, уровень с отзвучавшей минутой,
+    ребаи уже закрыты; у первого кадра — по его состоянию). Табло узнаёт о паузе с задержкой опроса (до ~3 с):
+    replay успевает перевести уровень (или остаток через 60 с), запоздавшая пауза откатывает его, и после
+    «Продолжаем» граница пересекается снова — повторно это не объявляется. Память сбрасывается к текущему
+    состоянию только настоящим откатом: новый `level_prev`, `timer_start` или отмена (void).
+  - Выбор варианта: первый из `announcementVariants`, все клипы которого загружены (имя гостя, заведённого в
+    этот вечер, ещё не озвучено — фраза звучит без него).
+- **Имя для озвучки** (`players.spoken_name`, 016). Карточка игрока: своя — «Сменить имя» и «Имя на табло»
+  (`SpokenNameSheet`, RPC `set_my_spoken_name`), у админа на любой карточке — «Имя на табло» (upsert под RLS);
+  если голос не может назвать тебя (латиница без имени для озвучки) — пометка «Табло не назовёт тебя по имени».
+  Админка «Игроки»: у таких игроков в строке «имя не звучит на табло», в шторке игрока — поле «Имя для озвучки».
+  Подписи — `shared/lib/spokenName.ts` (`SPOKEN_NAME_HINT` дословно: «Как произносить имя на табло — кириллицей.
+  Ударение — знак + перед гласной: Эрдн+и», что скажет табло при пустом поле, тост об озвучке раз в сутки).
 
 ## Проверки вне vitest
 - `supabase/tests/008_reopen_merge.sql` — SQL-проверки миграции 008 (открытие расчёта правкой, `merge_players`,
@@ -695,14 +805,38 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
 - `supabase/tests/015_entry_stacks.sql` — то же для 015 (`stacks` у join/rebuy: хранение только при k > 1,
   отказы 22023, ключ повтора сверяет кратность, `add_guest` с `p_stacks` и двумя аргументами, права,
   `payload_replace_player` сохраняет `stacks`).
+- `supabase/tests/016_board_voice.sql` — то же для 016 (форма `spoken_name`, `set_my_spoken_name`: нормализация,
+  тексты отказов, сброс, права; админ правит чужое upsert-ом; `voice_clips`: хеш SQL = хеш домена, отказы
+  constraint, повтор генератора, RLS и права; `board_voice_clips`: только найденные клипы, base64 без переводов
+  строк, срок токена как у `board_state`, предел 100; `board_state` отдаёт `spoken_name`;
+  `private.voice_manifest_input()`: активные игроки, `last_played_at`, форматы; `merge_players` переносит
+  `spoken_name` гостя профилю без своего и не трогает своё).
 - `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed с новым Telegram-профилем в транзакции
   с rollback: replay, settlement, голоса и прогнозы каждого вечера после слияния совпадают с исходными
   с подменой id.
+- `scripts/voice/test_generate.py` — генератор голоса без базы и модели: хеш совпадает с доменом, отказы манифеста,
+  пароль вырезается из ошибок, обрезка тишины и громкость, MP3 моно 48 кГц 64 kbps (если найдётся ffmpeg):
+  `python -m unittest scripts/voice/test_generate.py` в venv с `requirements.txt` (Python 3.14).
+- Генератор голоса целиком на локальном стеке — venv с `requirements.txt`, модель
+  (https://models.silero.ai/models/tts/ru/v5_5_ru.pt, sha256 — в `VOICES` generate.py), ffmpeg с libmp3lame в PATH
+  или в `FFMPEG` (на Windows без ffmpeg — `pip install imageio-ffmpeg` в тот же venv, путь —
+  `python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"`):
+  ```bash
+  docker exec supabase_db_poker-club psql -X -U postgres -At -c 'select private.voice_manifest_input()' > input.json
+  node scripts/voice/manifest.mjs input.json > manifest.json
+  export SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:57322/postgres PYTHONUTF8=1
+  python scripts/voice/generate.py manifest.json --plan
+  python scripts/voice/generate.py manifest.json --model v5_5_ru.pt --prune
+  ```
+  На seed (семь игроков с гостем, клубный формат; 07.10.2026, Windows, 4 потока torch): 89 фраз, 1 780 224 байта
+  MP3, 217 с звука; синтез 6–8 с, весь запуск генератора 15–17 с; повторный — 0,4 с, без torch. `db:reset` клипы
+  стирает.
 
 ## Тестовые данные (seed.sql, только локально)
 Игроки с `tg_id` 1001–1006 (1001 — админ), один гость, settings (четверг 19:00 МСК, анонс за 48 ч, пост в день игры за 5 ч; клубный формат
 создаёт миграция 011, seed на него ссылается), `cron_secret` = `local-cron-secret`, `project_url`, 4–6 завершённых вечеров с реалистичными событиями (ребаи, сплит-нокаут,
-платежи) и один `announced` вечер — чтобы рейтинг, ачивки и карточки игроков было на чём смотреть.
+платежи) и один `announced` вечер — чтобы рейтинг, ачивки и карточки игроков было на чём смотреть. У гостя «Вова (гость)» — имя
+для озвучки «В+ова» (миграция 016: скобки голос не прочитал бы).
 
 ## Деплой в облако
 Процесс целиком — `DEPLOY.md`. `.github/workflows/deploy.yml` (push в `main` + вручную; триггеров
@@ -716,7 +850,8 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
 `net._http_response` 200 без `errors`. Переменные репозитория: `SUPABASE_PROJECT_REF`, `APP_URL`; секреты —
 `SUPABASE_ACCESS_TOKEN` (scoped), `SUPABASE_DB_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `ADMIN_TG_ID`. Actions закреплены SHA,
 обновления — Dependabot (`.github/dependabot.yml`). Резервные копии и keepalive — отдельный приватный репозиторий `poker-club-ops`: там же ежемесячная
-проверка восстановления копии (`restore-check.yml`) и напоминание о сроке токена Supabase (`reminders.yml`,
+проверка восстановления копии (`restore-check.yml`), озвучка фраз голоса табло (`voice.yml`, раз в сутки и вручную;
+секрет тот же `SUPABASE_DB_URL`, DEPLOY.md → «Голос табло») и напоминание о сроке токена Supabase (`reminders.yml`,
 переменная `TOKEN_EXPIRES` — дата окончания `SUPABASE_ACCESS_TOKEN`; при замене токена обновлять).
 
 Auth в облаке: `supabase config push` не используется (`[auth]` в `config.toml` — локальные адреса);

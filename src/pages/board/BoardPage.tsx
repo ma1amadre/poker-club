@@ -2,8 +2,10 @@
 // routes.tsx). Публичное и вне AuthProvider: данные только через useBoardState (RPC board_state
 // для anon, опрос раз в 3 с), время — useNow + replay на клиенте, как у всех экранов вечера.
 // Денег из платежей здесь нет (board_state их не отдаёт) — только фонд и выплаты по местам.
+// Голос (useBoardVoice) объявляет события вечера клипами Silero — включается кнопкой.
 import { payouts } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
+import { VOICE_CREDIT } from '@domain/voice.ts';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { errorMessage, useBoardState, type BoardState } from '../../shared/api';
@@ -31,6 +33,7 @@ import {
 } from '../evening/lib';
 import './board.css';
 import { useFullscreen, useWakeLock } from './useScreenControls';
+import { useBoardVoice, type BoardVoice } from './useBoardVoice';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -68,6 +71,7 @@ export default function BoardPage() {
   }
   return (
     <Board
+      token={token ?? ''}
       data={query.data}
       failing={query.isError || query.fetchStatus === 'paused'}
       updatedAt={query.dataUpdatedAt}
@@ -98,10 +102,12 @@ function BoardMessage({
 const STALE_AFTER_MS = 10_000;
 
 function Board({
+  token,
   data,
   failing,
   updatedAt,
 }: {
+  token: string;
   data: BoardState;
   failing: boolean;
   updatedAt: number;
@@ -119,6 +125,7 @@ function Board({
   );
   const nameOf: NameOf = (id) => names.get(id) ?? 'Игрок';
   const { state, applied } = replayLog(format, data.events, nowMs);
+  const voice = useBoardVoice({ token, data, state, applied, nowMs });
 
   const when = `${formatDateNumeric(evening.scheduled_at).slice(0, 5)} · ${formatTime(evening.scheduled_at)}`;
   const place = evening.location ? ` · ${evening.location}` : '';
@@ -137,6 +144,7 @@ function Board({
               <Icon name="alert-triangle" size={14} /> Нет связи · данные на {formatTime(updatedAt)}
             </Badge>
           )}
+          <VoiceButton voice={voice} />
           {fullscreen.supported && (
             <Button size="sm" variant="ghost" icon="tv" onClick={fullscreen.toggle}>
               {fullscreen.active ? 'Выйти из полноэкранного' : 'Во весь экран'}
@@ -153,13 +161,44 @@ function Board({
         <LiveBoard data={data} state={state} applied={applied} nameOf={nameOf} />
       )}
 
-      {wake === 'unsupported' && (
-        <p className="m-small bd-muted bd-foot">
-          Этот браузер не умеет держать экран включённым — отключи сон экрана в настройках
-          устройства.
-        </p>
-      )}
+      <footer className="bd-foot">
+        {wake === 'unsupported' && (
+          <p className="m-small bd-muted">
+            Этот браузер не умеет держать экран включённым — отключи сон экрана в настройках
+            устройства.
+          </p>
+        )}
+        {voice.status === 'on' && voice.missing > 0 && (
+          <p className="m-small bd-muted">
+            Часть фраз этого вечера ещё не озвучена — табло скажет их короче, без имён. Новые имена
+            озвучиваются раз в сутки.
+          </p>
+        )}
+        {voice.status !== 'unsupported' && <p className="m-small bd-muted">{VOICE_CREDIT}</p>}
+      </footer>
     </main>
+  );
+}
+
+/**
+ * Включить или выключить голос. Звук браузер даёт только после нажатия — на ТВ хватает одного
+ * нажатия пульта; «Включить голос» видно и когда голос был включён раньше, но звук ещё спит.
+ * data-voice-toggle — общий обработчик «разбудить звук любым нажатием» эту кнопку пропускает
+ * (VOICE_TOGGLE_SELECTOR в voicePlayer.ts), решает press.
+ */
+function VoiceButton({ voice }: { voice: BoardVoice }) {
+  if (voice.status === 'unsupported') return null;
+  const on = voice.status === 'on';
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={on ? 'volume-x' : 'volume-2'}
+      onClick={voice.press}
+      data-voice-toggle=""
+    >
+      {on ? 'Выключить голос' : 'Включить голос'}
+    </Button>
   );
 }
 

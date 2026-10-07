@@ -16,6 +16,7 @@ import {
   formatPointsWithUnit,
   formatRubSigned,
   formatSeason,
+  isVoiced,
   kosCount,
   paths,
   placeLabel,
@@ -47,6 +48,7 @@ import './player.css';
 import { progressView } from './progress';
 import { RenameSheet } from './RenameSheet';
 import { Rivals } from './Rivals';
+import { SpokenNameSheet } from './SpokenNameSheet';
 import {
   achievementsForPlayer,
   cumulativeNet,
@@ -97,10 +99,18 @@ export default function PlayerPage() {
 }
 
 function PlayerCard({ history, player }: { history: ClubHistory; player: Player }) {
-  const { player: me } = useAuth();
+  const { player: me, isAdmin } = useAuth();
   const isMe = me?.id === player.id;
   const name = isMe && me ? me.display_name : player.display_name;
   const [renaming, setRenaming] = useState(false);
+  // Имя для озвучки правят сам игрок (RPC) и админ (форма админа) — миграция 016.
+  const spoken = {
+    id: player.id,
+    display_name: name,
+    spoken_name: isMe && me ? me.spoken_name : player.spoken_name,
+  };
+  const canVoice = isMe || isAdmin;
+  const [voicing, setVoicing] = useState(false);
 
   const playersById = useMemo(
     () => new Map(history.players.map((p) => [p.id, p])),
@@ -208,19 +218,34 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
         <div className="pl-head__text">
           <h1 className="m-h1 pl-head__name">{name}</h1>
           {badges.length > 0 && <div className="pl-head__badges">{badges.slice(0, 2)}</div>}
-          {isMe && (
-            <Button
-              size="sm"
-              variant="ghost"
-              icon="pencil"
-              className="pl-head__rename"
-              onClick={() => setRenaming(true)}
-            >
-              Сменить имя
-            </Button>
+          {canVoice && (
+            <div className="pl-head__actions">
+              {isMe && (
+                <Button size="sm" variant="ghost" icon="pencil" onClick={() => setRenaming(true)}>
+                  Сменить имя
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" icon="volume-2" onClick={() => setVoicing(true)}>
+                Имя на табло
+              </Button>
+            </div>
           )}
         </div>
       </header>
+
+      {isMe && !isVoiced(spoken) && (
+        <Notice
+          title="Табло не назовёт тебя по имени"
+          action={
+            <Button size="sm" onClick={() => setVoicing(true)}>
+              Задать имя
+            </Button>
+          }
+        >
+          Голос читает только кириллицу. Напиши, как произносить твоё имя, — и табло назовёт тебя
+          при нокауте и победе.
+        </Notice>
+      )}
 
       {isGuest && (
         <Notice title="Гость не входит в рейтинг">
@@ -341,6 +366,13 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
 
       {isMe && renaming && (
         <RenameSheet open currentName={name} onClose={() => setRenaming(false)} />
+      )}
+      {canVoice && voicing && (
+        <SpokenNameSheet
+          player={spoken}
+          mode={isMe ? 'self' : 'admin'}
+          onClose={() => setVoicing(false)}
+        />
       )}
     </Page>
   );

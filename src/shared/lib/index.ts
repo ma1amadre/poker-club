@@ -10,3 +10,4 @@ export { compressImage, MAX_UPLOAD_BYTES, type CompressOptions } from './image';
 export { boardUrl, miniAppLink, paths, startParamRoute } from './paths';
 export { addClockSample, clockOffsetMs, serverNow } from './serverClock';
 export * from './clubLife';
+export * from './spokenName';

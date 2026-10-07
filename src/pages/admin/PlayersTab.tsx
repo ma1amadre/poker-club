@@ -1,3 +1,4 @@
+import { SPOKEN_NAME_MAX } from '@domain/voice.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import {
@@ -9,7 +10,18 @@ import {
   type PlayerInput,
 } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
-import { NAME_MAX, normalizeName, pluralWithNumber } from '../../shared/lib';
+import {
+  emptySpokenNameNote,
+  isVoiced,
+  NAME_MAX,
+  normalizeName,
+  pluralWithNumber,
+  SPOKEN_NAME_DELAY_NOTE,
+  SPOKEN_NAME_HINT,
+  spokenNameChanged,
+  spokenNameFieldError,
+  spokenNameValue,
+} from '../../shared/lib';
 import {
   Avatar,
   Badge,
@@ -54,6 +66,8 @@ export function PlayersTab() {
     const parts = [
       p.id === me?.id ? 'это ты' : null,
       p.username ? `@${p.username}` : p.tg_id === null ? 'без Telegram' : null,
+      // Табло (голос, миграция 016) не прочитает латиницу — админ видит, кому задать имя.
+      isVoiced(p) ? null : 'имя не звучит на табло',
     ].filter(Boolean);
     return (
       <ListItem
@@ -124,6 +138,7 @@ export function PlayersTab() {
 }
 
 type Flag = 'is_admin' | 'is_active' | 'is_guest';
+type Column = Flag | 'display_name' | 'spoken_name';
 
 function PlayerSheet({
   player,
@@ -146,10 +161,14 @@ function PlayerSheet({
 
   const nameProblem = nameError(name);
   const nameChanged = normalizeName(name) !== player.display_name;
+  const [spoken, setSpoken] = useState(player.spoken_name ?? '');
+  const [spokenTouched, setSpokenTouched] = useState(false);
+  const spokenProblem = spokenNameFieldError(spoken);
+  const spokenChanged = spokenNameChanged(spoken, player.spoken_name);
 
   // upsert, а не update: shared/api даёт только его. display_name передаём всегда — без него
   // строка вставки нарушила бы not null ещё до разрешения конфликта по id.
-  const write = (patch: Partial<Pick<PlayerInput, Flag | 'display_name'>>) =>
+  const write = (patch: Partial<Pick<PlayerInput, Column>>) =>
     ({ id: player.id, display_name: player.display_name, ...patch }) satisfies PlayerInput;
 
   const applySaved = (saved: Player) => {
@@ -222,6 +241,24 @@ function PlayerSheet({
     });
   };
 
+  const saveSpoken = (event: FormEvent) => {
+    event.preventDefault();
+    setSpokenTouched(true);
+    if (spokenProblem || !spokenChanged) return;
+    update.mutate(write({ spoken_name: spokenNameValue(spoken) }), {
+      onSuccess: (saved) => {
+        applySaved(saved);
+        setSpoken(saved.spoken_name ?? '');
+        setSpokenTouched(false);
+        toast.success(
+          saved.spoken_name ? 'Имя для озвучки сохранено' : 'Имя для озвучки сброшено',
+          { detail: SPOKEN_NAME_DELAY_NOTE },
+        );
+      },
+      onError: (error) => toast.error(adminErrorText(error)),
+    });
+  };
+
   const telegram = player.username
     ? `Telegram: @${player.username}`
     : player.tg_id !== null
@@ -258,6 +295,33 @@ function PlayerSheet({
           loading={update.isPending && update.variables?.display_name !== player.display_name}
         >
           Сохранить имя
+        </Button>
+      </form>
+
+      <form className="adm-rename" onSubmit={saveSpoken} noValidate>
+        <Field
+          label="Имя для озвучки"
+          autoComplete="off"
+          maxLength={SPOKEN_NAME_MAX + 10}
+          value={spoken}
+          onChange={(event) => setSpoken(event.target.value)}
+          onBlur={() => setSpokenTouched(true)}
+          error={spokenTouched ? (spokenProblem ?? undefined) : undefined}
+          hint={
+            spoken.trim() === ''
+              ? `${SPOKEN_NAME_HINT}. ${emptySpokenNameNote(player.display_name, isMe)}`
+              : SPOKEN_NAME_HINT
+          }
+        />
+        <Button
+          type="submit"
+          block
+          disabled={!spokenChanged}
+          loading={
+            update.isPending && update.variables !== undefined && 'spoken_name' in update.variables
+          }
+        >
+          Сохранить имя для озвучки
         </Button>
       </form>
 

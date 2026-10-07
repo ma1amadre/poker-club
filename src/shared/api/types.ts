@@ -43,7 +43,8 @@ export interface BoardState {
   >;
   format: TournamentFormat;
   events: EveningEvent[];
-  players: { id: string; display_name: string }[];
+  /** Только упомянутые в событиях; spoken_name — имя для озвучки (миграция 016; до неё поля нет). */
+  players: { id: string; display_name: string; spoken_name?: string | null }[];
   /** Время сервера на момент ответа (миграция 007) — для сверки часов табло. */
   server_now?: string;
 }
