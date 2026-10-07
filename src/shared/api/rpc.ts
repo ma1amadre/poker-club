@@ -170,10 +170,18 @@ export type NotifyKind = 'evening_finished' | 'evening_corrected';
 /** О чём бот написал группе после правки вечера (notify/changes.ts). */
 export type AnnounceChange = 'moved' | 'cancelled' | 'restored';
 
+/**
+ * Какой пост ушёл при `moved` (moveKind в _shared/announce.ts): новое время — «Вечер перенесён»,
+ * место вписали впервые — «Место вечера», место сменилось — «Вечер переезжает».
+ */
+export type AnnounceMove = 'rescheduled' | 'place_set' | 'relocated';
+
 interface NotifyResponse {
   ok: true;
   outcome: NotifyOutcome;
   change?: AnnounceChange;
+  /** Только при posted + moved; сервер до разделения постов его не присылал. */
+  move?: AnnounceMove;
 }
 
 /** Вызов Edge Function с JWT игрока; текст ошибки — из тела функции {error, code}. */
@@ -223,9 +231,9 @@ export async function notifyEveningFinished(
  */
 export async function notifyEveningChanged(
   eveningId: string,
-): Promise<{ outcome: NotifyOutcome; change: AnnounceChange | null }> {
+): Promise<{ outcome: NotifyOutcome; change: AnnounceChange | null; move: AnnounceMove | null }> {
   const data = await invokeNotify({ kind: 'evening_changed', eveningId });
-  return { outcome: data.outcome, change: data.change ?? null };
+  return { outcome: data.outcome, change: data.change ?? null, move: data.move ?? null };
 }
 
 /** Отчёт merge_players / merge_players_preview (миграция 008). */

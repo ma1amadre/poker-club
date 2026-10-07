@@ -7,8 +7,12 @@ export const paths = {
   vote: (id: string) => `/evening/${id}/vote`,
   board: (token: string) => `/board/${token}`,
   rating: '/rating',
+  /** Вкладки рейтинга (useRatingParams): рекорды клуба и зал славы. */
+  ratingRecords: '/rating?tab=records',
+  ratingFame: '/rating?tab=fame',
   player: (id: string) => `/player/${id}`,
   history: '/history',
+  historyMoments: '/history?tab=moments',
   admin: '/admin',
   adminEveningNew: '/admin/evening/new',
   adminEvening: (id: string) => `/admin/evening/${id}`,

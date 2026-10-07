@@ -7,7 +7,9 @@ import {
   headToHead,
   nemesisOf,
   niceTicks,
+  paidPlaces,
   playerEvenings,
+  playerNumbers,
   recentForm,
   standingPosition,
 } from './stats';
@@ -221,5 +223,76 @@ describe('место игрока в таблице', () => {
       of: 3,
     });
     expect(standingPosition(rows, [1, 1, 3], 'z')).toBeNull();
+  });
+});
+
+describe('цифры игрока', () => {
+  // A: e1 — 1-е, e2 — 3-е, e3 — 1-е, e4 — 1-е (серия 2: e3, e4); x — без A.
+  const list = [...summaries, simpleEvening('e4', day(10, 22), ['A', 'B', 'C'], 'winner')];
+  const evenings = playerEvenings(list, 'A');
+
+  it('личные рекорды: лучший нетто, нокауты и серия — с вечером, где поставлены впервые', () => {
+    const n = playerNumbers(evenings, () => 2);
+    const netOf = (id: string) => list.find((s) => s.eveningId === id)?.netRub.A ?? 0;
+    // Все победы с одинаковым составом дают одинаковый нетто — берётся самый ранний вечер.
+    expect(n.bestNet).toEqual({ value: netOf('e1'), eveningId: 'e1', date: day(10, 1) });
+    expect(n.mostKos).toEqual({ value: 2, eveningId: 'e1', date: day(10, 1) });
+    expect(n.bestStreak).toEqual({ value: 2, eveningId: 'e4', date: day(10, 22) });
+  });
+
+  it('порядок входа не важен: серия считается по хронологии', () => {
+    const n = playerNumbers([...evenings].reverse(), () => 2);
+    expect(n.bestStreak?.value).toBe(2);
+    expect(n.bestStreak?.eveningId).toBe('e4');
+  });
+
+  it('в призах — место не ниже числа призовых; неизвестный вечер в долю не входит', () => {
+    const n = playerNumbers(evenings, (id) => (id === 'e2' ? undefined : 2));
+    expect(n.inTheMoney).toEqual({ count: 3, of: 3 });
+    const all = playerNumbers(evenings, () => 2);
+    expect(all.inTheMoney).toEqual({ count: 3, of: 4 });
+    const three = playerNumbers(evenings, () => 3);
+    expect(three.inTheMoney).toEqual({ count: 4, of: 4 });
+  });
+
+  it('среднее место — по вечерам с местом', () => {
+    const n = playerNumbers(evenings, () => 2);
+    expect(n.averagePlace).toBe((1 + 3 + 1 + 1) / 4);
+    expect(n.placed).toBe(4);
+  });
+
+  it('без побед и нокаутов — пустые рекорды, без вечеров — всё пусто', () => {
+    const c = playerEvenings(list, 'C');
+    const n = playerNumbers(c, () => 2);
+    expect(n.mostKos).toBeNull();
+    expect(n.bestStreak).toBeNull();
+    expect(n.bestNet).not.toBeNull();
+    const none = playerNumbers([], () => 2);
+    expect(none).toEqual({
+      bestNet: null,
+      mostKos: null,
+      bestStreak: null,
+      inTheMoney: { count: 0, of: 0 },
+      averagePlace: null,
+      placed: 0,
+    });
+  });
+
+  it('лучший нетто бывает и отрицательным — если в плюс ещё не выходил', () => {
+    const c = playerEvenings(list, 'C');
+    const n = playerNumbers(c, () => 2);
+    expect(n.bestNet?.value).toBe(Math.max(...c.map((e) => e.netRub)));
+  });
+});
+
+describe('призовые места вечера', () => {
+  it('доли формата на первые min(участники, доли) мест', () => {
+    expect(paidPlaces([70, 30], 5, 2000)).toBe(2);
+    expect(paidPlaces([50, 30, 20], 2, 1000)).toBe(2);
+    expect(paidPlaces([100], 6, 3000)).toBe(1);
+  });
+
+  it('нулевая доля приза не даёт', () => {
+    expect(paidPlaces([100, 0], 4, 2000)).toBe(1);
   });
 });

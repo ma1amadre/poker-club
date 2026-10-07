@@ -79,7 +79,7 @@ export interface AchievementInput {
 }
 
 /** Хронология: по дате вечера, при равенстве — по id, чтобы порядок был детерминирован. */
-function chronological(summaries: readonly EveningSummary[]): EveningSummary[] {
+export function chronological(summaries: readonly EveningSummary[]): EveningSummary[] {
   return [...summaries].sort(
     (a, b) =>
       Date.parse(a.date) - Date.parse(b.date) ||

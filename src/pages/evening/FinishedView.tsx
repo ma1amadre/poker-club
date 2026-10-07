@@ -1,9 +1,15 @@
 // Итог вечера: победитель, места, очки, призы, баунти, нетто, лучший охотник; ссылки на расчёт и
-// голосование. Админу — правка закрытого вечера (отмена записей, возврат вечера в игру).
+// голосование; «Твой вечер» игравшему или сделавшему прогноз (EveningRecap). Админу — правка
+// закрытого вечера (отмена записей, возврат вечера в игру).
 import { computeMoney } from '@domain/money.ts';
 import { eveningPoints, eveningScoring } from '@domain/scoring.ts';
 import { useState } from 'react';
-import { notifyEveningFinished, scoringFromSettings, useSettings } from '../../shared/api';
+import {
+  notifyEveningFinished,
+  scoringFromSettings,
+  useClubHistory,
+  useSettings,
+} from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import {
   formatDate,
@@ -30,6 +36,8 @@ import {
   Stats,
   useToast,
 } from '../../shared/ui';
+import { EveningRecapList } from './EveningRecap';
+import { useEveningRecap } from './useEveningRecap';
 import { bestHunters, orderedPlayers, ordinalPlace, reopenedNotice, totalRebuys } from './lib';
 import { EventFeed, PlayersList } from './parts';
 import type { EveningActions } from './useEveningActions';
@@ -46,6 +54,15 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
   const format = evening.format;
   const { player } = useAuth();
   const settings = useSettings().data;
+  const history = useClubHistory();
+  // Итог из истории клуба (тот же журнал, сведённый summarize) — пока журнал сходится с итогом
+  // и история сведена из того же журнала, что на экране (иначе она перезапрашивается).
+  const recap = useEveningRecap(
+    state.finished ? history.data : undefined,
+    evening.id,
+    player?.id,
+    events,
+  );
   const money = computeMoney(format, state);
   // Очки — по правилам, зафиксированным при завершении вечера (evenings.scoring), а не текущим.
   const points = eveningPoints(
@@ -187,6 +204,20 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
           </p>
         )}
       </div>
+
+      {recap && player && (
+        <Section title="Твой вечер">
+          <Card>
+            <EveningRecapList
+              recap={recap.recap}
+              pick={recap.pick}
+              meId={player.id}
+              nameOf={nameOf}
+              withResult
+            />
+          </Card>
+        </Section>
+      )}
 
       {state.finished ? (
         <Section

@@ -163,7 +163,10 @@ export interface EveningState {
   компактный итог завершённого вечера для статистики; очки — по `eveningScoring(snapshot, cfg)`:
   `{eveningId, date, seasonKey, entrants, places, points, scoring?, netRub, kos, koPairs: [killer, victim][], rebuys, bustLevel,
   firstBustPlayerId, busts: {victim, by}[]}` (`scoring` — правила, по которым посчитаны `points`, summarize ставит
-  всегда; `firstBustPlayerId`, `busts` — для прогнозов и `first_blood` при дележе).
+  всегда; `firstBustPlayerId`, `busts` — для прогнозов и `first_blood` при дележе). Поля «Жизни клуба» (необязательные
+  в типе ради итогов, собранных в тестах; summarize ставит всегда): `prizePoolRub` (фонд без баунти), `durationMs` —
+  чистое игровое время **до решающего вылета** (часы replay на момент последнего принятого bust: часы идут до finish,
+  а «Завершить» жмут и через полчаса, и на следующее утро; без вылетов — до finish), `finishedAt` (`at` принятого finish).
 - `season.ts`: `seasonKey(dateIso, tz='Europe/Moscow') → '2026-Q4'`; `seasonStandings(summaries, {bestN, excluded: Set<PlayerId>,
   seasonKey?, bestNBySeason?})` → строки `{playerId, total, counted: number[], played, wins, kos, netRub}` отсортированы;
   `allTimeStandings(...)`; `oracleStandings(predictionScores)`; `hallOfFame(summaries, {bestN, excluded, currentSeasonKey,
@@ -183,7 +186,32 @@ export interface EveningState {
   (немезида — кто чаще всех выбивал игрока, минимум 2 раза; форма — лучшая сумма очков за последние 5 вечеров клуба).
   Гости ачивки не получают. `diffAchievements(before, after)` — новые для поста бота. `AchievementInput.bestNBySeason?`
   — замороженные «лучшие N» для `champion` (`rebuy_king` и `iron_chair` от N не зависят).
-  Названия/описания по-русски в `ACHIEVEMENT_META`.
+  Названия/описания по-русски в `ACHIEVEMENT_META`. `chronological(summaries)` — итоги по дате, общий порядок для
+  ачивок, званий, рекордов и ленты.
+- `records.ts` («Жизнь клуба»): `RECORD_KINDS` — `biggest_win` (нетто игрока за вечер), `most_kos` (нокауты за вечер),
+  `win_streak` (победы подряд в вечерах, где играл; рекорд — с 2), `biggest_pool` (фонд вечера), `longest_game`
+  (`durationMs`); рекорда по ребаям нет. `RECORD_META` — `{title, scope: 'player'|'evening', unit: 'rub'|'count'|'ms', min}`.
+  `recordsTable(summaries, {excluded}) → ClubRecord[]` (всегда 5 строк, `value: null` — рекорда нет; держатели —
+  все при ничьей, первым — кто раньше, свой повтор — один раз с первым вечером); `recordsBroken(...) →
+  Record<eveningId, RecordBreak[]>` (`status: 'new'|'equalled'`, `previous`). Первый вечер клуба рекордов не ставит.
+  Рекорды игрока — только постоянные (`excluded` — гости), рекорды вечера (фонд, длина) — все вечера.
+- `progress.ts`: `achievementProgress(input, playerId) → AchievementProgress[]` — прогресс до неполученных ачивок
+  (`measure: 'count'|'place'|'condition'`, `current`/`target`, `possible`, `victimId` у `sworn_enemy`, `leaders`/
+  `leaderValue` у `rebuy_king`/`champion`); сезонные (`champion`, `rebuy_king`, `iron_chair`) — всегда, по текущему
+  сезону; `first_blood` — пока в клубе не было нокаутов. `hint` домена — на «ты», карточка игрока свои подписи
+  собирает сама (`pages/player/progress.ts`: на чужой карточке нужны нейтральные).
+- `feed.ts`: лента «В клубе». `clubEvents(input: ClubFeedInput)` — события, не зависящие от «сейчас» (итог вечера,
+  ачивки без `star`, смена званий `titleChanges`, рекорды), уже в порядке ленты; `clubMoments(input, {nowMs})` —
+  победители номинаций по голосованиям с `voting_closes_at <= nowMs` (ничья — момент каждому; «лучший голос»: фото
+  и подпись → фото → подпись → ранний); `momentItems`, `mergeFeed(events, moments, limit?)`; `clubFeed(input,
+  {nowMs, limit?})` = всё вместе. Время: события вечера — `evenings.finished_at` (без него finish журнала, иначе
+  дата вечера), момент — закрытие голосования, сезонная ачивка — `seasonEndIso`. Новые сверху, при равном времени —
+  итог, рекорды, ачивки, звания, моменты. id детерминированы (`result:<ev>`, `record:<kind>:<ev>`, …). Смена звания —
+  только когда его получает другой игрок.
+- `recap.ts`: `eveningRecap(input, eveningId, playerId) → EveningRecap | null` — «Твой вечер»: место, очки, нетто,
+  `kosBy` (с дележом), `bustedBy` (каждый вылет, `final`), прогноз и очки Оракула, новые ачивки вечера, место в сезоне
+  до/после (`standingPlace`, как на главной), смена званий, рекорды (свои и вечера). `played: false` — не играл, но
+  делал прогноз; null — не играл и прогноза не было.
 - `format.ts`: `DEFAULT_FORMAT` (клубный: 500 ₽/500 фишек, баунти 100, ребаи до конца 5-го уровня без лимита,
   70/30, уровни по 40 мин: 5/10, 10/20, 15/30, 20/40, 25/50, 50/100, 75/150, 100/200), `validateFormat`.
 - `index.ts` — реэкспорт всего.
@@ -429,15 +457,25 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   `kind: 'evening_changed'` — только админ, сразу после сохранения вечера в админке (миграция 008,
   `notify/changes.ts`): если анонс уже в группе (`announce_posted_at` не null) и вечер в `announced`/`cancelled`,
   сервер сравнивает `announce_snapshot` с текущим вечером (`decideAnnounceChange` в `_shared/announce.ts`):
-  новое время или место будущего вечера → «Вечер перенесён» (новые и прежние данные, кнопка `e_<id>`);
+  новое время или место будущего вечера → `change: 'moved'`, а какой пост — решает `moveKind` (там же) по
+  тому, что знала группа: новое время или дата → `rescheduled`, «Вечер перенесён» (новое время с прежним;
+  место — «Новое место: … (было …)», если сменилось вместе со временем, иначе «Место: …» или «Место уточним
+  позже»); время то же, а в анонсе места не было → `place_set`, «Место вечера: …» (уточнение, без слова
+  «перенесён» и без строки про планы); время то же, место было и сменилось → `relocated`, «Вечер переезжает: …»
+  с прежним местом (убрали место — «Вечер переезжает» и «Новое место уточним позже»). В `place_set` и
+  `relocated` время повторяется строкой «Время то же: …»; у всех трёх кнопка `e_<id>` «Иду / не иду»;
+  тексты — `_shared/messages.ts`;
   отмена будущего → «Вечер <дата> отменён» с причиной из `cancel_reason`, если есть (миграция 010); возврат отменённого → «Вечер <дата>
   всё-таки состоится» (дополнение: иначе группа осталась бы с постом об отмене). Сохранение без изменения
   времени и места — без поста; правка прошедшего или отменённого вечера и вечер без снимка — снимок
   обновляется молча. Защита от дублей — снимок переставляется по старому значению (`eq` jsonb), при ошибке
   Telegram возвращается; каждый пост несёт актуальные данные. Анонс ещё не уходил → `not_announced`.
   Ответ `{ok: true, outcome: 'posted'|'already_posted'|'no_group'|'no_changes'|'not_announced', change?:
-  'moved'|'cancelled'|'restored'}`; клиент — `notifyEveningFinished(eveningId, kind)` и
-  `notifyEveningChanged(eveningId)` в `src/shared/api/rpc.ts`.
+  'moved'|'cancelled'|'restored', move?: 'rescheduled'|'place_set'|'relocated'}` (`move` — только при
+  `posted` и `moved`; `change` прежний, старый клиент его понимает); клиент —
+  `notifyEveningFinished(eveningId, kind)` и `notifyEveningChanged(eveningId) → {outcome, change, move}` в
+  `src/shared/api/rpc.ts`; тост админа после сохранения — по `move` (`announceChangeText` в `pages/admin/lib.ts`:
+  «о переносе» / «где пройдёт вечер» / «о смене места»; без `move` — «о переносе»).
 - `cron-tick` (`verify_jwt = false`, проверка `x-cron-secret` через RPC `verify_cron_secret`: пустой или
   неверный → 401 `bad_secret`, RPC недоступна → 500 `not_configured`): (1) если до ближайшей игры по
   расписанию осталось ≤ `announce_hours_before` и слот свободен — нет вечера (в любом статусе) ни в этот
@@ -448,7 +486,8 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   `announce_snapshot` того, что ушло в пост; (2) постит итоги голосования для вечеров
   с прошедшим `voting_closes_at` и пустым `voting_posted_at`; (3) добивает неотправленные итоги вечеров;
   (4) подстраховка `evening_changed`: для объявленных вечеров (`announced`/`cancelled`, не старше недели) тот же
-  `postAnnounceChange` — если вызов из админки не дошёл, пост уйдёт с ближайшим тиком.
+  `postAnnounceChange` — если вызов из админки не дошёл, пост уйдёт с ближайшим тиком (в отчёте тика —
+  `changes[id]` вида `posted:moved:place_set`).
 - `bot-setup` (`verify_jwt = true`, только админ — `resolveCaller` + `is_admin`, иначе 403): POST
   `{action: 'me'}` → `getMe` → `{bot: {username, name, canJoinGroups, canReadAllGroupMessages}}`;
   `{action: 'chats'}` → `getUpdates` с `allowed_updates: ['my_chat_member', 'message']`, `limit 100`, **без
@@ -517,15 +556,19 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   `normalizeName`/`NAME_MAX` как у `set_my_name`/`add_guest`), `season` (подписи квартала), `clubTime`
   (Москва UTC+3 ↔ UTC для форм, `nextGameSlot`/`nextGameAt` — то же правило, что `cron-tick/schedule.ts`,
   сверяется тестом), `voting` (`votingPhase`, `participantIds` как `is_participant`), `paths`, `useNow`,
-  `useElementWidth`. Между папками `src/pages/*` разрешены только две связи: табло берёт подписи вечера
-  из `pages/evening/lib`, карточка игрока — места и чемпиона из `pages/rating/stats`; остальное общее — здесь.
+  `useElementWidth`, `clubLife` (подписи «Жизни клуба»: `ACHIEVEMENT_SHORT` — описания ачивок без рода,
+  `recordValueParts`/`recordValueText` — одно значение рекорда на все экраны, выигрыш со знаком). Между папками
+  `src/pages/*` разрешены только три связи: табло берёт подписи вечера из `pages/evening/lib`, карточка игрока — места
+  и чемпиона из `pages/rating/stats`, главная — «Твой вечер» из `pages/evening` (`EveningRecap`, `useEveningRecap`,
+  `recap`: та же карточка, что на экране вечера); остальное общее — здесь.
   Статус вечера везде — `EveningStatusBadge` кита; `errorMessage` показывает русские тексты RPC как есть,
   а английские служебные сообщения Postgres/PostgREST заменяет переводом по коду (исходник — в `cause`).
 - Никакого `dangerouslySetInnerHTML` и сырого HTML из пользовательских данных.
 - Маршруты (HashRouter): `/` главная; `/evening/:id` вечер (живой экран; у банкира — пульт);
   `/evening/:id/settle` расчёт; `/evening/:id/vote` голосование; `/board/:token` табло (публичное,
-  вне AuthProvider); `/rating` (сезон / деньги / всё время / оракул / зал славы); `/player/:id`;
-  `/history`; `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
+  вне AuthProvider); `/rating` (сезон / деньги / всё время / оракул / рекорды / зал славы, `?tab=season|money|
+  alltime|oracle|records|fame`, `useRatingParams`); `/player/:id`; `/history` (вкладки «Вечера» и «Моменты»,
+  `?tab=moments`); `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
   `/admin` без `?tab` (и с неизвестной вкладкой) открывает «Вечера» (`adminTab` в `pages/admin/lib.ts`).
 - Админка «Клуб» → «Группа и бот» (`pages/admin/BotSetup.tsx`): «Подтянуть из бота» (`bot-setup` me) и выбор
   в шторке «Найти группу» (`bot-setup` chats) сохраняют одно поле сразу (`upsertSettings`) и подставляют его
@@ -547,6 +590,23 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   интерфейс показывает как есть: RPC (миграция 009 — `add_event`, `set_my_name`, `cast_vote`) и ответы
   Edge Functions `tg-auth`/`notify`. Посты бота обращаются к группе во множественном числе — как и заметка
   вечера, которая уходит в анонс (отсюда пример «Возьмите наличку на ребаи» в форме вечера).
+- «Жизнь клуба» (без новых таблиц: всё из `useClubHistory` и домена). Вход домена — `clubFeedInput(history)`
+  (`shared/api/historyFeed.ts`). Голоса до закрытия голосования RLS отдаёт только свои, поэтому `ClubHistory.fetchedAtMs`
+  (время загрузки по часам сервера, до запросов) ограничивает моменты: `clubMoments(..., {nowMs: momentsNowMs(history,
+  now)})` — голосование, закрывшееся после загрузки, моментов не даёт, а `useClubHistory` сам перезапрашивает историю к
+  ближайшему `voting_closes_at` после загрузки (`refetchInterval`, +2 с). Звёзды (`stars`) — по тому же моменту.
+  Главная: незакрытые расчёты → ближайший вечер → открытое голосование (`OpenVoting`) → «В клубе» (`FeedSection`:
+  `clubEvents` — один раз на историю, моменты — отдельно; 8 строк; Немезиды одного вечера и сезонные ачивки одного
+  сезона — одной строкой; события вечера, включая моменты, подписаны днём вечера; ссылки — вечер, игрок, голосование,
+  `?tab=records`, `?tab=fame`) → «Последний вечер» с «Твоим вечером» → «Сезон». «Твой вечер» (`pages/evening/
+  EveningRecap`, `useEveningRecap`) — на главной и на экране завершённого вечера; не игравшему, но сделавшему прогноз —
+  только прогноз и новые ачивки. На экране вечера карточка сверяет журнал истории с живым (`journalVersion`):
+  расхождение (админ поправил закрытый вечер с другого устройства) — карточки нет, история перезапрашивается.
+  «История → Моменты» (`MomentsTab`): моменты по вечерам, плашка идущего голосования. «Рейтинг → Рекорды»
+  (`RecordsTab`): `recordsTable`, держатель — ссылка на вечер. Карточка игрока: «Цифры» (`Numbers`, `stats.ts`:
+  личные рекорды с пометкой «Рекорд клуба», доля вечеров в призах, среднее место) и ачивки с прогрессом
+  (`progress.ts`: полученные / «На подходе» / сезон / остальные). Гости в ленте и моментах — как есть, ачивок, званий,
+  рекордов игрока и прогресса у них нет.
 - Время вечера: `useNow(1000)` + `replay(format, events, now)`; `now` — по часам сервера
   (`src/shared/lib/serverClock.ts`: смещение по замерам `server_now` при старте и возврате на экран,
   `board_state.server_now` на каждом опросе табло и `at` из ответов `add_event`; берётся замер с

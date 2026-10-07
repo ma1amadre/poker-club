@@ -2,6 +2,7 @@
 // и нокауты за вечер посчитаны доменом в summarize — здесь они только собираются по игроку:
 // хронология, накопленный нетто для графика, форма, личные встречи, ачивки для показа.
 import { ACHIEVEMENT_META, type Achievement, type AchievementCode } from '@domain/achievements.ts';
+import { payouts } from '@domain/money.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import type { PlayerId } from '@domain/types.ts';
 
@@ -232,4 +233,89 @@ export function standingPosition<R extends { playerId: PlayerId }>(
   const row = rows[index];
   if (index < 0 || !row) return null;
   return { row, place: places[index] ?? index + 1, of: rows.length };
+}
+
+// --- Цифры игрока: личные рекорды, призы, среднее место ------------------------------------
+
+export interface PersonalBest {
+  value: number;
+  /** Вечер, где результат впервые достигнут (при равенстве — более ранний). */
+  eveningId: string;
+  date: string;
+}
+
+export interface PlayerNumbers {
+  /** Лучший вечер по нетто (может быть и отрицательным, если в плюс ещё не выходил). */
+  bestNet: PersonalBest | null;
+  /** Больше всего нокаутов за вечер; null — нокаутов не было. */
+  mostKos: PersonalBest | null;
+  /** Самая длинная серия побед подряд в вечерах, где играл; null — побед не было. */
+  bestStreak: PersonalBest | null;
+  /** Вечера в призах: место среди оплачиваемых. of — вечера, где число призовых мест известно. */
+  inTheMoney: { count: number; of: number };
+  /** Среднее место по вечерам с определённым местом; null — таких нет. */
+  averagePlace: number | null;
+  /** По скольким вечерам посчитано среднее место. */
+  placed: number;
+}
+
+/**
+ * Сколько мест вечера получило приз: доли формата на первые min(участники, доли) мест —
+ * та же раскладка, что у выплат домена (payouts); нулевая доля приза не даёт.
+ */
+export function paidPlaces(
+  payoutPct: readonly number[],
+  entrants: number,
+  prizePoolRub: number,
+): number {
+  return payouts(prizePoolRub, payoutPct, entrants).filter((rub) => rub > 0).length;
+}
+
+/**
+ * Личные цифры игрока поверх его вечеров (хронология playerEvenings). Серия побед — как у
+ * рекорда клуба: подряд в вечерах, где игрок играл. paidOf — число призовых мест вечера
+ * (paidPlaces), undefined — неизвестно, такой вечер в долю призов не входит.
+ */
+export function playerNumbers(
+  evenings: readonly PlayerEvening[],
+  paidOf: (eveningId: string) => number | undefined,
+): PlayerNumbers {
+  let bestNet: PersonalBest | null = null;
+  let mostKos: PersonalBest | null = null;
+  let bestStreak: PersonalBest | null = null;
+  let streak = 0;
+  let itm = 0;
+  let known = 0;
+  let placeSum = 0;
+  let placed = 0;
+  const at = (value: number, e: PlayerEvening): PersonalBest => ({
+    value,
+    eveningId: e.eveningId,
+    date: e.date,
+  });
+
+  for (const e of [...evenings].sort(byDate)) {
+    if (!bestNet || e.netRub > bestNet.value) bestNet = at(e.netRub, e);
+    if (e.kos > 0 && (!mostKos || e.kos > mostKos.value)) mostKos = at(e.kos, e);
+    streak = e.place === 1 ? streak + 1 : 0;
+    if (streak > 0 && (!bestStreak || streak > bestStreak.value)) bestStreak = at(streak, e);
+    if (e.place !== null) {
+      placeSum += e.place;
+      placed += 1;
+    }
+    const paid = paidOf(e.eveningId);
+    if (paid !== undefined) {
+      known += 1;
+      if (e.place !== null && e.place <= paid) itm += 1;
+    }
+  }
+
+  return {
+    bestNet,
+    mostKos,
+    bestStreak,
+    inTheMoney: { count: itm, of: known },
+    averagePlace: placed > 0 ? placeSum / placed : null,
+    placed,
+  };
 }

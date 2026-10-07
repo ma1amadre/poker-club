@@ -101,6 +101,9 @@ describe('summarize', () => {
         { victim: 'C', by: ['B'] },
         { victim: 'B', by: [] },
       ],
+      prizePoolRub: 2000,
+      durationMs: 260 * 60_000, // таймер шёл от старта до finish без пауз
+      finishedAt: '2026-10-08T20:20:00.000Z',
     });
   });
 

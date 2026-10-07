@@ -9,3 +9,7 @@ export * from './season.ts';
 export * from './predictions.ts';
 export * from './votes.ts';
 export * from './achievements.ts';
+export * from './records.ts';
+export * from './feed.ts';
+export * from './recap.ts';
+export * from './progress.ts';

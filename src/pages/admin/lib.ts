@@ -203,11 +203,20 @@ export function takenDates(evenings: readonly EveningLike[], exceptId?: string):
 // --- Посты о правке вечера (notify evening_changed, миграция 008) ---------------------------
 
 export type AnnounceChangeKind = 'moved' | 'cancelled' | 'restored';
+export type AnnounceMoveKind = 'rescheduled' | 'place_set' | 'relocated';
 
-/** Вторая строка тоста после сохранения: что бот написал в группу. */
-export function announceChangeText(change: AnnounceChangeKind): string {
+/**
+ * Вторая строка тоста после сохранения: что бот написал в группу. При `moved` — по `move` из ответа
+ * notify: место без смены времени — не «перенос». Без `move` (старый сервер) — «о переносе».
+ */
+export function announceChangeText(
+  change: AnnounceChangeKind,
+  move: AnnounceMoveKind | null = null,
+): string {
   if (change === 'cancelled') return 'Бот написал в группу, что вечер отменён.';
   if (change === 'restored') return 'Бот написал в группу, что вечер всё-таки состоится.';
+  if (move === 'place_set') return 'Бот написал в группу, где пройдёт вечер.';
+  if (move === 'relocated') return 'Бот написал в группу о смене места.';
   return 'Бот написал в группу о переносе.';
 }
 

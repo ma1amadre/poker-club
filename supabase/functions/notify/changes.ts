@@ -1,4 +1,5 @@
-// Посты о переносе, отмене и возврате вечера, чей анонс уже ушёл в группу (миграция 008).
+// Посты о переносе, смене места, отмене и возврате вечера, чей анонс уже ушёл в группу
+// (миграция 008).
 // Вызывают notify (kind evening_changed — админ сразу после сохранения вечера) и cron-tick
 // (подстраховка, если вызов с фронта не дошёл). Решение «писать ли» — _shared/announce.ts.
 //
@@ -10,9 +11,11 @@ import { describeError } from '../_shared/admin.ts';
 import {
   announceSnapshot,
   decideAnnounceChange,
+  moveKind,
   parseSnapshot,
   type AnnounceChange,
   type AnnounceSnapshot,
+  type MoveKind,
 } from '../_shared/announce.ts';
 import { announceChangePost } from '../_shared/messages.ts';
 import { sendMessage } from '../_shared/telegram.ts';
@@ -27,6 +30,11 @@ export interface ChangeResult {
   outcome: PostOutcome;
   /** Что сообщили группе (только при outcome = 'posted'). */
   change?: AnnounceChange;
+  /**
+   * Для change = 'moved' — какой пост ушёл: «Вечер перенесён» (rescheduled), «Место вечера: …»
+   * (place_set), «Вечер переезжает: …» (relocated).
+   */
+  move?: MoveKind;
 }
 
 /**
@@ -83,9 +91,10 @@ export async function postAnnounceChange(
   const s = settings ?? (await loadSettings(db));
   if (s.group_chat_id === null || s.group_chat_id === '') return { outcome: 'no_group' };
   // known не null: без снимка решение было бы silent.
+  const before = known as AnnounceSnapshot;
   const post = announceChangePost(decision.change, {
     eveningId: evening.id,
-    before: known as AnnounceSnapshot,
+    before,
     after: current,
     reason: evening.cancel_reason,
     botUsername: s.bot_username,
@@ -96,7 +105,9 @@ export async function postAnnounceChange(
   }
   try {
     await sendMessage(s.group_chat_id, post.text, { buttons: post.buttons });
-    return { outcome: 'posted', change: decision.change };
+    return decision.change === 'moved'
+      ? { outcome: 'posted', change: 'moved', move: moveKind(before, current) }
+      : { outcome: 'posted', change: decision.change };
   } catch (error) {
     // Снимаем свою отметку, только если её никто не сменил после нас: cron-tick повторит пост.
     const { error: undoError } = await db

@@ -242,9 +242,9 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
       return;
     }
     try {
-      const { outcome, change } = await notifyEveningChanged(saved.id);
+      const { outcome, change, move } = await notifyEveningChanged(saved.id);
       if (outcome === 'posted' && change)
-        toast.success(text, { detail: announceChangeText(change) });
+        toast.success(text, { detail: announceChangeText(change, move) });
       else if (outcome === 'no_group')
         toast.show(text, {
           tone: 'caution',

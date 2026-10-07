@@ -4,7 +4,7 @@
 import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-export const RATING_TABS = ['season', 'money', 'alltime', 'oracle', 'fame'] as const;
+export const RATING_TABS = ['season', 'money', 'alltime', 'oracle', 'records', 'fame'] as const;
 export type RatingTab = (typeof RATING_TABS)[number];
 
 export type MoneyPeriod = 'season' | 'all';

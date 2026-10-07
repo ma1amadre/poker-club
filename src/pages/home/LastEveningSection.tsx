@@ -1,5 +1,7 @@
 // Последний сыгранный вечер: победитель, мои место, очки и нетто (из итога домена summarize),
-// голосование по номинациям.
+// «Твой вечер» игравшему или сделавшему прогноз (eveningRecap домена) и ссылка на итоги
+// голосования. Открытое голосование — отдельным сообщением OpenVoting выше ленты: у него срок,
+// это действие, а не новость.
 import { VOTE_CATEGORIES } from '@domain/votes.ts';
 import type { UseQueryResult } from '@tanstack/react-query';
 import {
@@ -7,7 +9,6 @@ import {
   errorMessage,
   useVotes,
   type ClubHistory,
-  type Evening,
   type Player,
 } from '../../shared/api';
 import {
@@ -31,7 +32,9 @@ import {
   Stat,
   Stats,
 } from '../../shared/ui';
-import { myResult, nameWithMe } from './lib';
+import { EveningRecapList } from '../evening/EveningRecap';
+import { useEveningRecap } from '../evening/useEveningRecap';
+import { myResult, nameWithMe, playerName, UNKNOWN_PLAYER } from './lib';
 
 export interface LastEveningSectionProps {
   history: UseQueryResult<ClubHistory>;
@@ -41,6 +44,7 @@ export interface LastEveningSectionProps {
 }
 
 export function LastEveningSection({ history, me, playersById, nowMs }: LastEveningSectionProps) {
+  const recap = useEveningRecap(history.data, history.data?.evenings[0]?.id ?? '', me.id);
   if (history.isError) {
     return (
       <Section title="Последний вечер">
@@ -77,6 +81,18 @@ export function LastEveningSection({ history, me, playersById, nowMs }: LastEven
           </p>
           <Winner winnerId={summary.places[0] ?? null} me={me} playersById={playersById} />
           <Mine result={myResult(summary, me.id)} />
+          {recap && (
+            <>
+              <hr className="home-rule" />
+              <p className="m-eyebrow">Твой вечер</p>
+              <EveningRecapList
+                recap={recap.recap}
+                pick={recap.pick}
+                meId={me.id}
+                nameOf={(id) => playerName(playersById, id) ?? UNKNOWN_PLAYER}
+              />
+            </>
+          )}
           <div className="home-actions">
             <ButtonLink size="sm" iconAfter="arrow-right" to={paths.evening(evening.id)}>
               Итоги вечера
@@ -98,7 +114,13 @@ export function LastEveningSection({ history, me, playersById, nowMs }: LastEven
             : 'Журнал вечера должен поправить админ.'}
         </Notice>
       )}
-      <Voting evening={evening} played={summary?.entrants.includes(me.id) ?? false} nowMs={nowMs} />
+      {votingPhase(evening, nowMs) === 'closed' && evening.voting_closes_at && (
+        <div className="home-actions">
+          <ButtonLink size="sm" variant="ghost" icon="star" to={paths.vote(evening.id)}>
+            Итоги голосования
+          </ButtonLink>
+        </div>
+      )}
     </Section>
   );
 }
@@ -151,21 +173,22 @@ function Mine({ result }: { result: ReturnType<typeof myResult> }) {
   );
 }
 
-function Voting({ evening, played, nowMs }: { evening: Evening; played: boolean; nowMs: number }) {
-  const phase = votingPhase(evening, nowMs);
-  // До закрытия RLS отдаёт только мои голоса — ровно то, что нужно для «N из 3».
-  const votes = useVotes(phase === 'open' && played ? evening.id : undefined);
-  if (phase === 'pending' || !evening.voting_closes_at) return null;
+export interface OpenVotingProps {
+  history: ClubHistory;
+  me: Player;
+  nowMs: number;
+}
 
-  if (phase === 'closed') {
-    return (
-      <div className="home-actions">
-        <ButtonLink size="sm" variant="ghost" icon="star" to={paths.vote(evening.id)}>
-          Итоги голосования
-        </ButtonLink>
-      </div>
-    );
-  }
+/** Голосование по последнему вечеру, пока оно открыто: срок и мои голоса «N из 3». */
+export function OpenVoting({ history, me, nowMs }: OpenVotingProps) {
+  const evening = history.evenings[0];
+  const played = evening
+    ? (history.summaryById.get(evening.id)?.entrants.includes(me.id) ?? false)
+    : false;
+  const phase = evening ? votingPhase(evening, nowMs) : 'pending';
+  // До закрытия RLS отдаёт только мои голоса — ровно то, что нужно для «N из 3».
+  const votes = useVotes(evening && phase === 'open' && played ? evening.id : undefined);
+  if (!evening || phase !== 'open' || !evening.voting_closes_at) return null;
 
   const until = formatDateTime(evening.voting_closes_at, nowMs);
   if (!played) {

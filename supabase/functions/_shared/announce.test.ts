@@ -1,8 +1,10 @@
-// Решение «писать ли в группу после правки вечера» и тексты постов о переносе, отмене и возврате.
+// Решение «писать ли в группу после правки вечера» и тексты постов о переносе, месте, отмене
+// и возврате.
 import { describe, expect, it } from 'vitest';
 import {
   announceSnapshot,
   decideAnnounceChange,
+  moveKind,
   parseSnapshot,
   sameSnapshot,
   type AnnounceSnapshot,
@@ -58,12 +60,17 @@ describe('decideAnnounceChange', () => {
     expect(decideAnnounceChange(snap(), snap(), NOW)).toEqual({ action: 'none' });
   });
 
-  it('новое время или место будущего вечера — «перенесён»', () => {
+  it('новое время или место будущего вечера — пост о правке (moved)', () => {
     expect(decideAnnounceChange(snap(), snap({ scheduledAt: FRI }), NOW)).toEqual({
       action: 'post',
       change: 'moved',
     });
     expect(decideAnnounceChange(snap(), snap({ location: 'У Саши' }), NOW)).toEqual({
+      action: 'post',
+      change: 'moved',
+    });
+    // Место вписали после анонса, где его не было, — тоже пост (какой — решает moveKind).
+    expect(decideAnnounceChange(snap({ location: null }), snap(), NOW)).toEqual({
       action: 'post',
       change: 'moved',
     });
@@ -109,7 +116,29 @@ describe('decideAnnounceChange', () => {
   });
 });
 
-describe('посты о переносе, отмене и возврате', () => {
+describe('moveKind: какой пост о правке времени или места', () => {
+  it('новое время — «перенесён», что бы ни было с местом', () => {
+    expect(moveKind(snap(), snap({ scheduledAt: FRI }))).toBe('rescheduled');
+    expect(moveKind(snap(), snap({ scheduledAt: FRI, location: 'У Саши' }))).toBe('rescheduled');
+    expect(moveKind(snap({ location: null }), snap({ scheduledAt: FRI }))).toBe('rescheduled');
+    expect(moveKind(snap(), snap({ scheduledAt: FRI, location: null }))).toBe('rescheduled');
+  });
+
+  it('время то же, места не было — уточнение места', () => {
+    expect(moveKind(snap({ location: null }), snap())).toBe('place_set');
+    // То же время в другой записи — не перенос.
+    expect(
+      moveKind(snap({ location: null }), snap({ scheduledAt: '2026-10-08T19:00:00+03:00' })),
+    ).toBe('place_set');
+  });
+
+  it('время то же, место было — переезд, в том числе когда место убрали', () => {
+    expect(moveKind(snap(), snap({ location: 'У Саши' }))).toBe('relocated');
+    expect(moveKind(snap(), snap({ location: null }))).toBe('relocated');
+  });
+});
+
+describe('посты о переносе, месте, отмене и возврате', () => {
   const input = (over: Partial<AnnounceChangePostInput> = {}): AnnounceChangePostInput => ({
     eveningId: 'e1',
     before: snap(),
@@ -139,12 +168,80 @@ describe('посты о переносе, отмене и возврате', () 
     ]);
   });
 
-  it('перенос только места — время повторяется', () => {
-    const text = plain(
-      announceChangePost('moved', input({ after: snap({ location: 'У Саши' }) })).text,
+  it('перенос времени: место то же, впервые известно или убрано', () => {
+    const moved = (before: AnnounceSnapshot, after: AnnounceSnapshot) =>
+      plain(announceChangePost('moved', input({ before, after })).text).split('\n');
+    expect(moved(snap(), snap({ scheduledAt: FRI }))).toEqual([
+      '♠️ <b>Вечер перенесён</b>',
+      'Новое время: в пятницу, 9 октября, в 20:00 (было 8 октября, 19:00).',
+      'Место: У Жени.',
+      '',
+      'Если планы поменялись, обновите ответ «иду / не иду».',
+    ]);
+    // Места в анонсе не было: не «новое», а просто место.
+    expect(moved(snap({ location: null }), snap({ scheduledAt: FRI }))[2]).toBe('Место: У Жени.');
+    expect(moved(snap(), snap({ scheduledAt: FRI, location: null }))[2]).toBe(
+      'Место уточним позже.',
     );
-    expect(text).toContain('Время то же: в четверг, 8 октября, в 19:00.');
-    expect(text).toContain('Новое место: У Саши (было У Жени).');
+    // Места не было ни в анонсе, ни сейчас — о месте ни слова.
+    expect(
+      moved(snap({ location: null }), snap({ scheduledAt: FRI, location: null })).join('\n'),
+    ).not.toContain('Место');
+  });
+
+  it('место вписали впервые — уточнение, а не перенос', () => {
+    const post = announceChangePost(
+      'moved',
+      input({ before: snap({ location: null }), after: snap({ location: 'У Саши <дача>' }) }),
+    );
+    expect(plain(post.text)).toBe(
+      [
+        '♠️ <b>Место вечера: У Саши &lt;дача&gt;</b>',
+        'Время то же: в четверг, 8 октября, в 19:00.',
+      ].join('\n'),
+    );
+    expect(post.buttons).toEqual([
+      { text: '♣️ Иду / не иду', url: expect.stringContaining('startapp=e_e1') },
+    ]);
+  });
+
+  it('место сменилось при том же времени — «переезжает»', () => {
+    const post = announceChangePost('moved', input({ after: snap({ location: 'У Саши' }) }));
+    expect(plain(post.text)).toBe(
+      [
+        '♠️ <b>Вечер переезжает: У Саши</b>',
+        'Прежнее место: У Жени.',
+        'Время то же: в четверг, 8 октября, в 19:00.',
+        '',
+        'Если планы поменялись, обновите ответ «иду / не иду».',
+      ].join('\n'),
+    );
+    expect(post.buttons).toHaveLength(1);
+
+    // Место убрали: старое больше не в силе, новое — позже.
+    expect(
+      plain(announceChangePost('moved', input({ after: snap({ location: null }) })).text),
+    ).toBe(
+      [
+        '♠️ <b>Вечер переезжает</b>',
+        'Новое место уточним позже.',
+        'Прежнее место: У Жени.',
+        'Время то же: в четверг, 8 октября, в 19:00.',
+        '',
+        'Если планы поменялись, обновите ответ «иду / не иду».',
+      ].join('\n'),
+    );
+  });
+
+  it('о месте без смены времени не пишем «перенесён»', () => {
+    for (const [before, after] of [
+      [snap({ location: null }), snap()],
+      [snap(), snap({ location: 'У Саши' })],
+      [snap(), snap({ location: null })],
+    ] as const) {
+      const text = announceChangePost('moved', input({ before, after })).text;
+      expect(text).not.toMatch(/перенес/i);
+    }
   });
 
   it('отмена: дата из анонса и причина отмены', () => {
@@ -167,11 +264,19 @@ describe('посты о переносе, отмене и возврате', () 
   });
 
   it('без эмодзи, кроме мастей, и без восклицаний', () => {
+    const variants: Partial<AnnounceChangePostInput>[] = [
+      {},
+      { before: snap({ location: null }), after: snap() },
+      { after: snap({ location: 'У Саши' }) },
+      { after: snap({ location: null }) },
+    ];
     for (const change of ['moved', 'cancelled', 'restored'] as const) {
-      const text = announceChangePost(change, input({ reason: 'Заболел банкир' })).text;
-      const found = [...text.matchAll(emoji)].map((m) => m[0]).filter((c) => !suits.has(c));
-      expect(found).toEqual([]);
-      expect(text).not.toContain('!');
+      for (const over of variants) {
+        const text = announceChangePost(change, input({ reason: 'Заболел банкир', ...over })).text;
+        const found = [...text.matchAll(emoji)].map((m) => m[0]).filter((c) => !suits.has(c));
+        expect(found).toEqual([]);
+        expect(text).not.toContain('!');
+      }
     }
   });
 });

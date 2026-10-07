@@ -8,8 +8,9 @@
 //      создаёт вечер (формат по умолчанию, банкир не назначен); постит неотправленные анонсы;
 //   2) добивает неотправленные итоги вечеров (если notify банкира не дошёл);
 //   3) постит итоги голосования, когда оно закрылось;
-//   4) подстраховка notify evening_changed: о переносе, отмене или возврате вечера, чей анонс уже
-//      в группе, если админский вызов после сохранения не дошёл (миграция 008, notify/changes.ts).
+//   4) подстраховка notify evening_changed: о переносе, месте, отмене или возврате вечера, чей
+//      анонс уже в группе, если админский вызов после сохранения не дошёл (миграция 008,
+//      notify/changes.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
 // Без settings.group_chat_id ничего не постит, но вечер создаёт.
 // Сбой шага или всего вызова — сообщение админу в личку (_shared/alerts.ts, не чаще раза в 6 ч на
@@ -310,8 +311,9 @@ async function postAnnounceChanges(
     try {
       const result = await postAnnounceChange(db, e, nowMs, s);
       if (result.outcome !== 'no_changes') {
+        // «posted:moved:place_set» — какой из постов о правке времени или места ушёл.
         report.changes[e.id] = result.change
-          ? `${result.outcome}:${result.change}`
+          ? [result.outcome, result.change, result.move].filter(Boolean).join(':')
           : result.outcome;
       }
     } catch (err) {

@@ -26,6 +26,18 @@ export interface EveningSummary {
   // Расширения контракта: нужны прогнозам (первый вылет) и ачивке first_blood (дележ первого нокаута).
   firstBustPlayerId: PlayerId | null;
   busts: { victim: PlayerId; by: PlayerId[] }[]; // все принятые bust в порядке журнала
+  // Расширения «Жизни клуба» (рекорды, лента). Необязательные — ради итогов, собранных вручную
+  // в тестах и старых кешах; summarize ставит всегда.
+  /** Фонд вечера (state.prizePoolRub): входы и ребаи без баунти. */
+  prizePoolRub?: number;
+  /**
+   * Чистое игровое время без пауз, мс: часы таймера на момент решающего вылета (последний принятый
+   * bust — после него за столом один игрок). Время до нажатия «Завершить» не считается: часы идут до
+   * finish, а его жмут и через полчаса после игры, и на следующее утро. Без вылетов — до finish.
+   */
+  durationMs?: number;
+  /** Время принятого события finish (ISO) — запасной момент вечера, если нет evenings.finished_at. */
+  finishedAt?: string;
 }
 
 // Payload принятых bust уже проверен replay, поэтому приведение типа здесь безопасно.
@@ -59,6 +71,18 @@ export function summarize(
   const money = computeMoney(format, state);
   const scoring = eveningScoring(snapshot, cfg);
   const busts = applied.filter((e) => e.type === 'bust').map(bustOf);
+  // finish принимается только один (второй — ошибка replay), но берём последний на всякий случай.
+  const finishEvent = applied.filter((e) => e.type === 'finish').at(-1);
+  // Решающий вылет — последний принятый bust: ребай после него вернул бы игрока в игру, и тогда
+  // решающим стал бы следующий вылет. Часы на этот момент — тот же replay по журналу до него.
+  const lastBust = applied.filter((e) => e.type === 'bust').at(-1);
+  const durationMs = lastBust
+    ? replayLog(
+        format,
+        events.filter((e) => e.id <= lastBust.id),
+        Date.parse(lastBust.at),
+      ).state.timer.totalElapsedMs
+    : state.timer.totalElapsedMs;
 
   const kos: Record<PlayerId, number> = {};
   const netRub: Record<PlayerId, number> = {};
@@ -88,5 +112,8 @@ export function summarize(
     bustLevel,
     firstBustPlayerId: state.firstBustPlayerId,
     busts,
+    prizePoolRub: state.prizePoolRub,
+    durationMs,
+    ...(finishEvent ? { finishedAt: finishEvent.at } : {}),
   };
 }

@@ -1,0 +1,25 @@
+/*
+ * «Твой вечер» (EveningRecap.tsx) — на экране вечера и на главной. Только токены «Материи».
+ * Значок строки — 20 px в слоте 24 px, цветом ink-muted: смысл несёт текст, не цвет.
+ */
+.ev-recap {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.ev-recap__result {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ev-recap__icon {
+  flex: none;
+  color: var(--ink-muted);
+}
+.ev-recap .ui-list-item {
+  align-items: flex-start;
+}
+.ev-recap .ui-list-item__before {
+  width: 24px;
+  justify-content: center;
+  padding-top: 1px;
+}

@@ -11,3 +11,97 @@
 .hs-title__date {
   overflow-wrap: anywhere;
 }
+
+/* Панель вкладки: группы столбцом с шагом между секциями экрана. */
+.hs-panel {
+  display: grid;
+  gap: var(--space-6);
+  min-width: 0;
+}
+
+/* ---------- Моменты ---------- */
+
+/* Строка момента: аватар, текст и шеврон; фото — под ними во всю ширину строки. */
+.hs-moment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+  row-gap: var(--space-3);
+}
+
+.hs-moment__avatar {
+  display: flex;
+}
+
+.hs-moment__body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hs-moment__category {
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+.hs-moment__name {
+  font-size: var(--m-body-size);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* Подпись голоса — не длиннее трёх строк; целиком — на экране голосования. */
+.hs-moment__caption {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  max-width: var(--measure);
+  font-size: var(--m-body-size);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.hs-moment__meta {
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.hs-moment__chevron {
+  align-self: center;
+}
+
+.hs-moment__photo {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+/* Кадр 4:3 до и после загрузки (заглушка .hs-moment__frame — та же геометрия) — страница не
+   прыгает; не выше 320 px, без растягивания. */
+.hs-moment__img,
+.hs-moment__frame {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  max-height: 320px;
+  border-radius: var(--m-r-control);
+}
+
+.hs-moment__img {
+  object-fit: cover;
+  background: var(--surface-sunken);
+}
+
+.hs-moment__missing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-muted);
+}

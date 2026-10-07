@@ -23,11 +23,12 @@ import { FameTab } from './FameTab';
 import { MoneyTab } from './MoneyTab';
 import { OracleTab } from './OracleTab';
 import './rating.css';
+import { RecordsTab } from './RecordsTab';
 import { SeasonTab } from './SeasonTab';
 import { reigningChampions, seasonOptions } from './stats';
 import { useRatingParams, type RatingTab } from './useRatingParams';
 
-/** /rating — сезон, деньги, всё время, оракул, зал славы. Всё считает домен по истории клуба. */
+/** /rating — сезон, деньги, всё время, оракул, рекорды, зал славы. Всё считает домен по истории клуба. */
 export default function RatingPage() {
   const query = useClubHistory();
 
@@ -121,6 +122,7 @@ function Rating({ history }: { history: ClubHistory }) {
       label: 'Оракул',
       content: <OracleTab ctx={ctx} seasons={seasons} season={params.season} onSeason={onSeason} />,
     },
+    { id: 'records', label: 'Рекорды', content: <RecordsTab ctx={ctx} /> },
     { id: 'fame', label: 'Зал славы', content: <FameTab ctx={ctx} /> },
   ];
 

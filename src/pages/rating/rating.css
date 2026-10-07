@@ -248,6 +248,120 @@
   overflow-wrap: anywhere;
 }
 
+/* ---------- Рекорды ---------- */
+
+.rt-rec {
+  align-items: flex-start;
+}
+
+.rt-rec > .ui-list-item__before {
+  padding-top: 2px;
+}
+
+.rt-rec__icon {
+  color: var(--ink);
+}
+
+.rt-rec__icon--empty,
+.rt-rec__title--empty {
+  color: var(--ink-muted);
+}
+
+.rt-rec__body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* Что и значение в одной строке; на узком экране значение уходит под название. */
+.rt-rec__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+}
+
+.rt-rec__title {
+  min-width: 0;
+  font-size: var(--m-body-size);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rt-rec__value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.rt-rec__num {
+  font-size: var(--m-h3-size);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--ink);
+}
+
+.rt-rec__unit,
+.rt-rec__empty {
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+.rt-rec__holders {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Держатель — ссылка на вечер: тач-цель 44 px, подчёркивание имени при наведении. */
+.rt-rec__holder {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  color: var(--ink);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rt-rec__holder:hover .rt-rec__name {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+
+.rt-rec__holder:focus-visible {
+  outline: none;
+  border-radius: var(--m-r-control);
+  box-shadow: var(--focus-ring);
+}
+
+.rt-rec__who {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rt-rec__name {
+  font-weight: 500;
+}
+
+.rt-rec__date {
+  color: var(--ink-muted);
+}
+
+.rt-rec__chevron {
+  flex: none;
+  color: var(--ink-muted);
+}
+
 /* ---------- Зал славы ---------- */
 
 .rt-trophy {

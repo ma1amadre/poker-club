@@ -152,3 +152,38 @@
 .home-season-empty .m-h3 {
   margin: 0;
 }
+
+/*
+ * Лента «В клубе»: строки списка кита. Значок типа — 20 px в слоте 24 px цветом ink-muted (тип
+ * читается и по фразе); строка выравнивается по верху — подробности бывают в две-три строки.
+ */
+.home-feed__item.ui-list-item {
+  align-items: flex-start;
+}
+.home-feed__item .ui-list-item__before {
+  width: 24px;
+  justify-content: center;
+  padding-top: 1px;
+}
+.home-feed__icon {
+  flex: none;
+  color: var(--ink-muted);
+}
+.home-feed__line,
+.home-feed__caption {
+  display: block;
+}
+.home-feed__caption {
+  color: var(--ink);
+}
+/* Превью фото момента: 4:3, как фото на экране голосования, без растягивания на всю строку. */
+.home-feed__photo {
+  display: block;
+  width: 96px;
+  height: 72px;
+  margin-top: var(--space-1);
+  object-fit: cover;
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+  overflow: hidden;
+}

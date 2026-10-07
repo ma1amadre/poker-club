@@ -1,5 +1,6 @@
 // Что группа знает о вечере из постов бота (evenings.announce_snapshot, миграция 008) и о чём ей
-// нужно написать после правки вечера: перенос (время или место), отмена, возврат отменённого.
+// нужно написать после правки вечера: перенос времени, уточнение или смена места, отмена,
+// возврат отменённого.
 // Чистые функции без БД — их проверяет vitest (announce.test.ts), а применяет notify/changes.ts.
 
 export interface AnnounceSnapshot {
@@ -52,6 +53,20 @@ export function sameSnapshot(a: AnnounceSnapshot, b: AnnounceSnapshot): boolean 
 }
 
 export type AnnounceChange = 'moved' | 'cancelled' | 'restored';
+
+/**
+ * Какая правка стоит за change = 'moved' — от неё зависит пост:
+ * - rescheduled — новое время или дата (место могло смениться вместе с ним) → «Вечер перенесён»;
+ * - place_set   — время прежнее, в анонсе места не было, теперь есть → «Место вечера: …»
+ *                 (уточнение, не перенос);
+ * - relocated   — время прежнее, место было и сменилось (или его убрали) → «Вечер переезжает».
+ */
+export type MoveKind = 'rescheduled' | 'place_set' | 'relocated';
+
+export function moveKind(before: AnnounceSnapshot, after: AnnounceSnapshot): MoveKind {
+  if (!sameTime(before, after)) return 'rescheduled';
+  return before.location === null && after.location !== null ? 'place_set' : 'relocated';
+}
 
 /**
  * Что делать после правки вечера, чей анонс уже в группе:

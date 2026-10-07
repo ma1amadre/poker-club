@@ -1,5 +1,9 @@
+import { clubMoments } from '@domain/feed.ts';
 import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
+  clubFeedInput,
+  momentsNowMs,
   type ClubHistory,
   type Evening,
   type EveningStatus,
@@ -16,6 +20,7 @@ import {
   NBSP,
   paths,
   playersCount,
+  useNow,
 } from '../../shared/lib';
 import {
   ButtonLink,
@@ -27,9 +32,34 @@ import {
   Page,
   PageSkeleton,
   Section,
+  Tabs,
+  type TabItem,
 } from '../../shared/ui';
 import './history.css';
+import { openVotings } from './moments';
+import { MomentsTab } from './MomentsTab';
 import { eveningTotals, groupHistory, type EveningTotals } from './stats';
+
+type HistoryTab = 'evenings' | 'moments';
+
+/**
+ * Вкладка в адресе (#/history?tab=moments): «Назад» с голосования возвращает на «Моменты».
+ * Переключение — replace, чтобы вкладки не копили историю.
+ */
+function useHistoryTab(): [HistoryTab, (tab: HistoryTab) => void] {
+  const [params, setParams] = useSearchParams();
+  const tab: HistoryTab = params.get('tab') === 'moments' ? 'moments' : 'evenings';
+  const set = (next: HistoryTab) =>
+    setParams(
+      (prev) => {
+        const out = new URLSearchParams(prev);
+        out.set('tab', next);
+        return out;
+      },
+      { replace: true },
+    );
+  return [tab, set];
+}
 
 /** В истории — идущий вечер и прошедшие; анонсы показывает главная. */
 const HISTORY_STATUSES = [
@@ -39,7 +69,10 @@ const HISTORY_STATUSES = [
   'cancelled',
 ] as const satisfies readonly EveningStatus[];
 
-/** /history — вечера клуба по сезонам, новые сверху; идущий — отдельно сверху. */
+/**
+ * /history — «Вечера»: вечера клуба по сезонам, новые сверху, идущий — отдельно сверху;
+ * «Моменты»: победители номинаций всех вечеров (clubMoments домена).
+ */
 export default function HistoryPage() {
   const evenings = useEvenings({ status: HISTORY_STATUSES });
   const history = useClubHistory();
@@ -79,11 +112,27 @@ function History({ evenings, history }: { evenings: Evening[]; history: ClubHist
     return map;
   }, [evenings, history.eventsByEvening]);
 
+  // Моменты — по голосованиям, закрытым к загрузке истории (позже в кеше только свои голоса);
+  // закрывшееся голосование подтянет перезапрос истории (useClubHistory). Минутный тик — для
+  // плашки идущего голосования.
+  const nowMs = useNow(60_000);
+  const momentsNow = momentsNowMs(history, nowMs);
+  const playersById = useMemo(
+    () => new Map(history.players.map((p) => [p.id, p])),
+    [history.players],
+  );
+  const moments = useMemo(
+    () => clubMoments(clubFeedInput(history), { nowMs: momentsNow }),
+    [history, momentsNow],
+  );
+  const open = useMemo(() => openVotings(history.evenings, nowMs), [history.evenings, nowMs]);
+  const [tab, setTab] = useHistoryTab();
+
   const empty = layout.live.length === 0 && layout.seasons.length === 0;
 
-  return (
-    <Page title="История" subtitle="Вечера клуба по сезонам, новые сверху">
-      {empty ? (
+  if (empty) {
+    return (
+      <Page title="История" subtitle="Вечера клуба и лучшие моменты, новые сверху">
         <Empty
           icon="calendar"
           title="Вечеров ещё не было"
@@ -96,41 +145,61 @@ function History({ evenings, history }: { evenings: Evening[]; history: ClubHist
             ) : undefined
           }
         />
-      ) : (
-        <>
-          {layout.live.length > 0 && (
-            <Section title="Сейчас">
-              <List aria-label="Идущие вечера">
-                {layout.live.map((e) => (
-                  <LiveRow key={e.id} evening={e} />
-                ))}
-              </List>
-            </Section>
-          )}
+      </Page>
+    );
+  }
 
-          {layout.seasons.map((group) => {
-            const played = group.evenings.filter((e) => e.status !== 'cancelled').length;
-            return (
-              <Section
-                key={group.seasonKey}
-                title={formatSeason(group.seasonKey)}
-                aside={played > 0 ? eveningsCount(played) : undefined}
-              >
-                <List aria-label={`Вечера сезона «${formatSeason(group.seasonKey)}»`}>
-                  {group.evenings.map((e) => (
-                    <ListItem
-                      key={e.id}
-                      to={paths.evening(e.id)}
-                      title={<EveningTitle evening={e} />}
-                      subtitle={pastDetails(e, history, names, totals.get(e.id))}
-                    />
-                  ))}
-                </List>
-              </Section>
-            );
-          })}
-        </>
+  const eveningsContent = (
+    <div className="hs-panel">
+      {layout.live.length > 0 && (
+        <Section title="Сейчас">
+          <List aria-label="Идущие вечера">
+            {layout.live.map((e) => (
+              <LiveRow key={e.id} evening={e} />
+            ))}
+          </List>
+        </Section>
       )}
+
+      {layout.seasons.map((group) => {
+        const played = group.evenings.filter((e) => e.status !== 'cancelled').length;
+        return (
+          <Section
+            key={group.seasonKey}
+            title={formatSeason(group.seasonKey)}
+            aside={played > 0 ? eveningsCount(played) : undefined}
+          >
+            <List aria-label={`Вечера сезона «${formatSeason(group.seasonKey)}»`}>
+              {group.evenings.map((e) => (
+                <ListItem
+                  key={e.id}
+                  to={paths.evening(e.id)}
+                  title={<EveningTitle evening={e} />}
+                  subtitle={pastDetails(e, history, names, totals.get(e.id))}
+                />
+              ))}
+            </List>
+          </Section>
+        );
+      })}
+    </div>
+  );
+
+  const tabs: TabItem<HistoryTab>[] = [
+    { id: 'evenings', label: 'Вечера', content: eveningsContent },
+    {
+      id: 'moments',
+      label: 'Моменты',
+      count: moments.length > 0 ? moments.length : undefined,
+      content: (
+        <MomentsTab history={history} moments={moments} open={open} playersById={playersById} />
+      ),
+    },
+  ];
+
+  return (
+    <Page title="История" subtitle="Вечера клуба и лучшие моменты, новые сверху">
+      <Tabs label="Разделы истории" tabs={tabs} value={tab} onChange={setTab} />
     </Page>
   );
 }

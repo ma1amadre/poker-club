@@ -1,4 +1,6 @@
 import { computeAchievements, titles } from '@domain/achievements.ts';
+import { achievementProgress } from '@domain/progress.ts';
+import { recordsTable, type RecordKind } from '@domain/records.ts';
 import { allTimeStandings, hallOfFame, seasonStandings } from '@domain/season.ts';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
@@ -40,7 +42,9 @@ import { reigningChampions, standingPlaces } from '../rating/stats';
 import { Achievements } from './Achievements';
 import { FormStrip } from './FormStrip';
 import { NetChart } from './NetChart';
+import { Numbers } from './Numbers';
 import './player.css';
+import { progressView } from './progress';
 import { RenameSheet } from './RenameSheet';
 import { Rivals } from './Rivals';
 import {
@@ -48,7 +52,9 @@ import {
   cumulativeNet,
   headToHead,
   nemesisOf,
+  paidPlaces,
   playerEvenings,
+  playerNumbers,
   recentForm,
   standingPosition,
 } from './stats';
@@ -155,6 +161,31 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
   );
   const victims = useMemo(() => nemesisOf(clubTitles.nemesis, player.id), [clubTitles, player.id]);
 
+  // Прогресс до неполученных ачивок и гонка сезона — achievementProgress домена; у гостя пусто.
+  const progress = useMemo(() => {
+    const nameOf = (id: string) => playersById.get(id)?.display_name ?? 'игрок не найден';
+    return achievementProgress(history.achievementInput, player.id).map((p) =>
+      progressView(p, { isMe, self: player.id, nameOf }),
+    );
+  }, [history.achievementInput, player.id, playersById, isMe]);
+
+  // Цифры: личные рекорды, призы, среднее место. Призовые места — по формату вечера и выплатам домена.
+  const numbers = useMemo(() => {
+    const formats = new Map(history.evenings.map((e) => [e.id, e.format]));
+    return playerNumbers(evenings, (eveningId) => {
+      const format = formats.get(eveningId);
+      const summary = history.summaryById.get(eveningId);
+      if (!format || !summary) return undefined;
+      return paidPlaces(format.payoutPct, summary.entrants.length, summary.prizePoolRub ?? 0);
+    });
+  }, [evenings, history.evenings, history.summaryById]);
+  const clubRecords = useMemo(() => {
+    const held = new Set<RecordKind>();
+    for (const r of recordsTable(history.summaries, { excluded: history.excluded }))
+      if (r.holders.some((h) => h.playerId === player.id)) held.add(r.kind);
+    return held;
+  }, [history.summaries, history.excluded, player.id]);
+
   const isGuest = player.is_guest;
   const isChampion = Boolean(reigning?.champions.includes(player.id));
   const badges: ReactNode[] = [];
@@ -193,7 +224,8 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
 
       {isGuest && (
         <Notice title="Гость не входит в рейтинг">
-          Его вечера видны в истории, но очки сезона, ачивки и звания гостям не начисляются.
+          Его вечера видны в истории, но очки сезона, ачивки, звания и рекорды игроков гостям не
+          начисляются.
         </Notice>
       )}
 
@@ -266,7 +298,11 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
 
           <FormStrip evenings={recentForm(evenings, 5)} />
 
-          {!isGuest && <Achievements views={views} />}
+          <Numbers numbers={numbers} clubRecords={clubRecords} />
+
+          {!isGuest && (
+            <Achievements views={views} progress={progress} seasonKey={history.currentSeasonKey} />
+          )}
 
           {rivals.length > 0 && (
             <Rivals

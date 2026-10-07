@@ -14,7 +14,7 @@ import {
   type VoteCategory,
   type VoteResult,
 } from './domain/index.ts';
-import { samePlace, sameTime, type AnnounceChange, type AnnounceSnapshot } from './announce.ts';
+import { moveKind, samePlace, type AnnounceChange, type AnnounceSnapshot } from './announce.ts';
 import { escapeHtml, miniAppLink, type UrlButton } from './telegram.ts';
 
 export const CLUB_TZ = 'Europe/Moscow';
@@ -206,9 +206,12 @@ export function announcePost(input: AnnouncePostInput): Post {
 }
 
 // ---------------------------------------------------------------------------
-// Перенос, отмена и возврат вечера после анонса (миграция 008, notify kind evening_changed)
+// Перенос, смена места, отмена и возврат вечера после анонса (миграция 008, notify kind
+// evening_changed)
 // ---------------------------------------------------------------------------
 // Обращение к группе — на «вы» во множественном числе; из эмодзи — только масти.
+// Правка времени или места (change = 'moved') — три поста по moveKind: «Вечер перенесён» (новое
+// время), «Место вечера: …» (место вписали впервые), «Вечер переезжает: …» (место сменилось).
 
 export interface AnnounceChangePostInput {
   eveningId: string;
@@ -230,32 +233,68 @@ function placeLine(location: string | null): string {
   return location ? `Место: ${escapeHtml(location)}.` : 'Место уточним позже.';
 }
 
-/** «Вечер перенесён»: новое время и/или место, прежние — для сверки. */
-export function eveningMovedPost(input: AnnounceChangePostInput): Post {
+/** «Время то же: в четверг, 8 октября, в 19:00.» — когда меняется только место. */
+function sameTimeLine(iso: string): string {
+  return `Время то же: ${formatWhen(iso)}.`;
+}
+
+const PLANS_LINE = 'Если планы поменялись, обновите ответ «иду / не иду».';
+
+const rsvpButton = (input: AnnounceChangePostInput): UrlButton[] =>
+  appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`);
+
+/**
+ * «Вечер перенесён»: новое время, прежнее — для сверки. Место — если сменилось вместе со временем
+ * («Новое место: … (было …)»), иначе как есть; места в анонсе не было — просто «Место: …».
+ */
+export function eveningRescheduledPost(input: AnnounceChangePostInput): Post {
   const { before, after } = input;
-  const lines = ['♠️ <b>Вечер перенесён</b>'];
-  if (!sameTime(before, after)) {
-    lines.push(
-      `Новое время: ${formatWhen(after.scheduledAt)} (было ${shortWhen(before.scheduledAt)}).`,
-    );
+  const lines = [
+    '♠️ <b>Вечер перенесён</b>',
+    `Новое время: ${formatWhen(after.scheduledAt)} (было ${shortWhen(before.scheduledAt)}).`,
+  ];
+  if (samePlace(before, after) || before.location === null) {
+    if (after.location) lines.push(placeLine(after.location));
   } else {
-    lines.push(`Время то же: ${formatWhen(after.scheduledAt)}.`);
-  }
-  if (!samePlace(before, after)) {
     lines.push(
       after.location
-        ? `Новое место: ${escapeHtml(after.location)}` +
-            (before.location ? ` (было ${escapeHtml(before.location)}).` : '.')
+        ? `Новое место: ${escapeHtml(after.location)} (было ${escapeHtml(before.location)}).`
         : 'Место уточним позже.',
     );
-  } else if (after.location) {
-    lines.push(placeLine(after.location));
   }
-  lines.push('', 'Если планы поменялись, обновите ответ «иду / не иду».');
+  lines.push('', PLANS_LINE);
+  return { text: lines.join('\n'), buttons: rsvpButton(input) };
+}
+
+/** «Место вечера: …»: в анонсе места не было, теперь оно известно. Это уточнение, не перенос. */
+export function eveningPlaceSetPost(input: AnnounceChangePostInput): Post {
+  const { after } = input;
   return {
-    text: lines.join('\n'),
-    buttons: appButton(input.botUsername, '♣️ Иду / не иду', `e_${input.eveningId}`),
+    text: [
+      `♠️ <b>Место вечера: ${escapeHtml(after.location ?? '')}</b>`,
+      sameTimeLine(after.scheduledAt),
+    ].join('\n'),
+    buttons: rsvpButton(input),
   };
+}
+
+/** «Вечер переезжает: …»: время прежнее, место сменилось; убрали место — «уточним позже». */
+export function eveningRelocatedPost(input: AnnounceChangePostInput): Post {
+  const { before, after } = input;
+  const lines = after.location
+    ? [`♠️ <b>Вечер переезжает: ${escapeHtml(after.location)}</b>`]
+    : ['♠️ <b>Вечер переезжает</b>', 'Новое место уточним позже.'];
+  if (before.location) lines.push(`Прежнее место: ${escapeHtml(before.location)}.`);
+  lines.push(sameTimeLine(after.scheduledAt), '', PLANS_LINE);
+  return { text: lines.join('\n'), buttons: rsvpButton(input) };
+}
+
+/** Пост о правке времени или места: какой из трёх — решает moveKind (_shared/announce.ts). */
+export function eveningMovedPost(input: AnnounceChangePostInput): Post {
+  const kind = moveKind(input.before, input.after);
+  if (kind === 'place_set') return eveningPlaceSetPost(input);
+  if (kind === 'relocated') return eveningRelocatedPost(input);
+  return eveningRescheduledPost(input);
 }
 
 /** «Вечер 8 октября отменён» и причина отмены, если админ её указал. */

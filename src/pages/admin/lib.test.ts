@@ -237,6 +237,11 @@ describe('привязка к Telegram', () => {
 describe('announceChangeText', () => {
   it('что бот написал в группу после правки вечера', () => {
     expect(announceChangeText('moved')).toBe('Бот написал в группу о переносе.');
+    expect(announceChangeText('moved', 'rescheduled')).toBe('Бот написал в группу о переносе.');
+    expect(announceChangeText('moved', 'place_set')).toBe(
+      'Бот написал в группу, где пройдёт вечер.',
+    );
+    expect(announceChangeText('moved', 'relocated')).toBe('Бот написал в группу о смене места.');
     expect(announceChangeText('cancelled')).toBe('Бот написал в группу, что вечер отменён.');
     expect(announceChangeText('restored')).toBe(
       'Бот написал в группу, что вечер всё-таки состоится.',

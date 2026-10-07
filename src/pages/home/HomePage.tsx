@@ -1,5 +1,6 @@
-// Главная: ближайший вечер (анонс с ответом и прогнозом или идущая игра), незакрытые расчёты,
-// последний сыгранный вечер и моё место в сезоне. Регистр — Кобальт (useTheme).
+// Главная читается сверху вниз: что дальше (незакрытые расчёты, ближайший вечер — анонс с ответом
+// и прогнозом или идущая игра, открытое голосование) → что нового (лента «В клубе») → где я
+// (последний вечер с «Твоим вечером», место в сезоне). Регистр — Кобальт (useTheme).
 import { useMemo } from 'react';
 import {
   useClubHistory,
@@ -11,7 +12,8 @@ import {
 import { useAuth, useCurrentPlayer } from '../../shared/auth';
 import { paths, useNow } from '../../shared/lib';
 import { ButtonLink, ErrorView, Page, PageSkeleton } from '../../shared/ui';
-import { LastEveningSection } from './LastEveningSection';
+import { FeedSection } from './FeedSection';
+import { LastEveningSection, OpenVoting } from './LastEveningSection';
 import { pickUpcoming } from './lib';
 import { SeasonSection } from './SeasonSection';
 import { SettlementNotices } from './SettlementNotices';
@@ -88,6 +90,12 @@ export default function HomePage() {
       )}
       {!upcoming && (
         <NextGame settings={settings.data ?? null} isAdmin={isAdmin} nowMs={nowMinute} />
+      )}
+
+      {history.data && <OpenVoting history={history.data} me={me} nowMs={nowMinute} />}
+
+      {history.data && (
+        <FeedSection history={history.data} me={me} playersById={playersById} nowMs={nowMinute} />
       )}
 
       <LastEveningSection history={history} me={me} playersById={playersById} nowMs={nowMinute} />
