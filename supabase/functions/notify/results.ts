@@ -509,7 +509,8 @@ export async function postCorrectedResults(
     .from('evening_events')
     .select('id')
     .eq('evening_id', evening.id)
-    .neq('type', 'payment')
+    // Платежи и показ олл-ина на итог не влияют.
+    .not('type', 'in', '(payment,showdown,showdown_close)')
     .or(`at.gt."${since}",voided_at.gt."${since}"`)
     .limit(1);
   if (error) throw new Error(`evening_events: ${describeError(error)}`);

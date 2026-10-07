@@ -4,6 +4,7 @@
 // Денег из платежей здесь нет (board_state их не отдаёт) — только фонд и выплаты по местам.
 import { payouts } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
+import { visibleShowdown } from '@domain/showdown.ts';
 import { useEffect, useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { errorMessage, useBoardState, type BoardState } from '../../shared/api';
@@ -30,6 +31,7 @@ import {
   type NameOf,
 } from '../evening/lib';
 import './board.css';
+import { ShowdownBoard } from './ShowdownBoard';
 import { useFullscreen, useWakeLock } from './useScreenControls';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -123,6 +125,8 @@ function Board({
   const when = `${formatDateNumeric(evening.scheduled_at).slice(0, 5)} · ${formatTime(evening.scheduled_at)}`;
   const place = evening.location ? ` · ${evening.location}` : '';
   const finished = state.finished || evening.status === 'finished' || evening.status === 'settled';
+  // Олл-ин закрывает таймер и стол, пока банкир его не закроет (или табло не спрячет его само).
+  const showdown = visibleShowdown(state.showdown, nowMs);
 
   return (
     <main className="bd">
@@ -147,6 +151,8 @@ function Board({
 
       {finished ? (
         <FinishedBoard state={state} nameOf={nameOf} />
+      ) : showdown ? (
+        <ShowdownBoard showdown={showdown} state={state} format={format} nameOf={nameOf} />
       ) : state.timer.status === 'not_started' ? (
         <WaitingBoard state={state} nameOf={nameOf} />
       ) : (

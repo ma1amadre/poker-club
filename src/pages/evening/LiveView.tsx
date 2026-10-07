@@ -1,6 +1,8 @@
 // Живой вечер: уровень и обратный отсчёт, блайнды, ребаи, фонд, игроки и лента. У банкира и
 // админа поверх того же экрана — пульт: таймер, уровни, раздачи, вылеты, ребаи, отмена, финиш.
+// Пока на табло олл-ин, его панель (руки, стол, шансы, ауты) — первой на экране у всех.
 import { computeMoney } from '@domain/money.ts';
+import { visibleShowdown } from '@domain/showdown.ts';
 import type { PlayerState } from '@domain/types.ts';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -24,6 +26,7 @@ import {
   Notice,
   Progress,
   Section,
+  ShowdownView,
   Stat,
   Stats,
   useToast,
@@ -44,6 +47,7 @@ import {
 import { EventFeed, PlayersList } from './parts';
 import { PlayerSheet } from './PlayerSheet';
 import { SeatSheet } from './SeatSheet';
+import { ShowdownSheet } from './ShowdownSheet';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
@@ -67,7 +71,9 @@ export function LiveView({ model, actions }: LiveViewProps) {
   const rsvps = useRsvps(canControl ? evening.id : undefined).data ?? [];
   const [selected, setSelected] = useState<PlayerState | null>(null);
   const [seatOpen, setSeatOpen] = useState(false);
+  const [showdownOpen, setShowdownOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const showdown = visibleShowdown(state.showdown, model.nowMs);
 
   const timer = state.timer;
   const paused = timer.status === 'paused';
@@ -155,6 +161,20 @@ export function LiveView({ model, actions }: LiveViewProps) {
         >
           Они помечены в ленте «Не принято» и на игру не влияют. Если запись лишняя — отмени её.
         </Notice>
+      )}
+
+      {showdown && (
+        <ShowdownView
+          showdown={showdown}
+          nameOf={nameOf}
+          footer={
+            canControl ? (
+              <Button icon="pencil" onClick={() => setShowdownOpen(true)}>
+                Отметить карты
+              </Button>
+            ) : undefined
+          }
+        />
       )}
 
       <Card>
@@ -292,6 +312,13 @@ export function LiveView({ model, actions }: LiveViewProps) {
             </div>
             <div className="ev-pult__row">
               <Button
+                icon="eye"
+                disabled={!showdown && state.aliveCount < 2}
+                onClick={() => setShowdownOpen(true)}
+              >
+                {showdown ? 'Продолжить олл-ин' : 'Отметить олл-ин'}
+              </Button>
+              <Button
                 icon="user-plus"
                 disabled={win.kind === 'closed'}
                 onClick={() => setSeatOpen(true)}
@@ -398,6 +425,12 @@ export function LiveView({ model, actions }: LiveViewProps) {
             actions={actions}
             rsvps={rsvps}
             mode="late"
+          />
+          <ShowdownSheet
+            open={showdownOpen}
+            onClose={() => setShowdownOpen(false)}
+            model={model}
+            actions={actions}
           />
         </>
       )}

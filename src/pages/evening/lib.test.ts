@@ -101,6 +101,41 @@ describe('describeEvent', () => {
     });
   });
 
+  it('олл-ин: руки, улицы с картами, закрытие', () => {
+    const hands = [
+      { playerId: 'a', cards: ['As', 'Kd'] },
+      { playerId: 'b', cards: ['Th', 'Tc'] },
+    ];
+    const sd = (board: string[]) => ({
+      showdownId: '5d000000-0000-4000-8000-000000000001',
+      hands,
+      board,
+    });
+    expect(ev('showdown', sd([]))).toEqual({
+      kind: 'showdown',
+      title: 'Олл-ин: Женя и Саша',
+      detail: 'Женя — A♠ K♦, Саша — 10♥ 10♣',
+    });
+    expect(ev('showdown', sd(['2c', '7d', '9h']))).toEqual({
+      kind: 'showdown',
+      title: 'Флоп: 2♣ 7♦ 9♥',
+      detail: 'олл-ин: Женя и Саша',
+    });
+    expect(ev('showdown', sd(['2c', '7d', '9h', 'Jd'])).title).toBe('Тёрн: J♦');
+    expect(ev('showdown', sd(['2c', '7d', '9h', 'Jd', 'Ah'])).title).toBe('Ривер: A♥');
+    expect(ev('showdown_close', { showdownId: '5d000000-0000-4000-8000-000000000001' })).toEqual({
+      kind: 'showdown',
+      title: 'Олл-ин закрыт',
+      detail: null,
+    });
+    // Кривая раздача (журнал её не примет) — подпись без подробностей.
+    expect(ev('showdown', { showdownId: 'x' })).toEqual({
+      kind: 'showdown',
+      title: 'Олл-ин',
+      detail: null,
+    });
+  });
+
   it('вход и ребай кратно стандартному — с суммой; ×1 явно — как стандартный', () => {
     expect(ev('join', { playerId: 'c', stacks: 2 }).detail).toBe('вход на 1000 ₽');
     expect(ev('rebuy', { playerId: 'c', stacks: 3 }).detail).toBe('ребай на 1500 ₽');

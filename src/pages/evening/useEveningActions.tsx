@@ -3,6 +3,7 @@
 // (тост), поэтому здесь их только глотаем, чтобы не задвоить сообщение (и хаптику: тост с тоном
 // сам даёт отклик, см. Toast.tsx).
 import { canApply, replayLog } from '@domain/replay.ts';
+import { isShowdownEvent } from '@domain/showdown.ts';
 import type { EventPayload, EventType } from '@domain/types.ts';
 import { useCallback, useLayoutEffect, useRef, type ReactElement } from 'react';
 import { newClientId, useAddEvent, useVoidEvent, type EveningEventRecord } from '../../shared/api';
@@ -73,6 +74,8 @@ const REJECTED_TITLE: Partial<Record<EventType, string>> = {
   level_prev: 'Переход уровня не принят',
   hand: 'Раздача не принята',
   finish: 'Завершение не принято',
+  showdown: 'Олл-ин не принят',
+  showdown_close: 'Закрытие олл-ина не принято',
 };
 
 export function useEveningActions(model: EveningModel): EveningActions {
@@ -123,7 +126,11 @@ export function useEveningActions(model: EveningModel): EveningActions {
             ? ' Остаток игрока в расчёте пересчитается.'
             : event.type === 'join' || event.type === 'rebuy' || event.type === 'bust'
               ? ' Места, нокауты и деньги пересчитаются.'
-              : ' Таймер и уровень пересчитаются.';
+              : isShowdownEvent(event.type)
+                ? event.type === 'showdown_close'
+                  ? ' Раздача снова появится на табло.'
+                  : ' Табло покажет раздачу такой, какой она была до этой записи. На игру и деньги олл-ин не влияет.'
+                : ' Таймер и уровень пересчитаются.';
       const revivedText =
         revived.length > 0
           ? ` Вместо неё вступит в силу ${revived.length > 1 ? 'записи' : 'запись'}, которую журнал сейчас не принимает: ${revived

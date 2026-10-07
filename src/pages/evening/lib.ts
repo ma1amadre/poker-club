@@ -2,6 +2,7 @@
 // времени. Деньги, места и очки здесь НЕ считаются — только раскладка того, что посчитал домен.
 import { entryAmounts, type SettlementRow } from '@domain/money.ts';
 import { readStacks } from '@domain/replay.ts';
+import { readShowdown, streetOf } from '@domain/showdown.ts';
 import type {
   BlindLevel,
   EveningEvent,
@@ -20,6 +21,7 @@ import {
   plural,
   pluralWithNumber,
 } from '../../shared/lib/format';
+import { cardLabel } from '../../shared/lib/poker/cards';
 import { joinNames, NAME_MAX, normalizeName } from '../../shared/lib/text';
 import { RSVP_ORDER } from '../../shared/api/types';
 
@@ -45,7 +47,7 @@ function amountOf(ev: EveningEvent): number {
   return typeof a === 'number' ? a : 0;
 }
 
-export type EventKind = 'entry' | 'bust' | 'clock' | 'money' | 'finish';
+export type EventKind = 'entry' | 'bust' | 'clock' | 'money' | 'finish' | 'showdown';
 
 export interface EventLine {
   kind: EventKind;
@@ -106,6 +108,29 @@ export function describeEvent(
     }
     case 'finish':
       return { kind: 'finish', title: 'Игра окончена', detail: null };
+    case 'showdown': {
+      // Каждая правка олл-ина — полное состояние; в ленте — что добавилось: руки или улица.
+      const read = readShowdown(ev.payload);
+      if (!read.ok) return { kind: 'showdown', title: 'Олл-ин', detail: null };
+      const { hands, board } = read.value;
+      const names = joinNames(hands.map((h) => nameOf(h.playerId)));
+      const cards = (codes: readonly string[]) => codes.map(cardLabel).join(' ');
+      const street = streetOf(board.length);
+      if (street === 'preflop') {
+        return {
+          kind: 'showdown',
+          title: `Олл-ин: ${names}`,
+          detail: hands.map((h) => `${nameOf(h.playerId)} — ${cards(h.cards)}`).join(', '),
+        };
+      }
+      const title =
+        street === 'flop'
+          ? `Флоп: ${cards(board)}`
+          : `${street === 'turn' ? 'Тёрн' : 'Ривер'}: ${cards(board.slice(-1))}`;
+      return { kind: 'showdown', title, detail: `олл-ин: ${names}` };
+    }
+    case 'showdown_close':
+      return { kind: 'showdown', title: 'Олл-ин закрыт', detail: null };
     default:
       return { kind: 'clock', title: 'Событие', detail: null };
   }

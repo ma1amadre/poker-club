@@ -37,7 +37,9 @@ export type EventType =
   | 'level_prev'
   | 'hand'
   | 'payment'
-  | 'finish';
+  | 'finish'
+  | 'showdown'
+  | 'showdown_close';
 
 export const EVENT_TYPES: readonly EventType[] = [
   'join',
@@ -51,7 +53,39 @@ export const EVENT_TYPES: readonly EventType[] = [
   'hand',
   'payment',
   'finish',
+  'showdown',
+  'showdown_close',
 ];
+
+/**
+ * Показ олл-ина на табло (миграция 017): карты участников и стола. На игру, деньги, места, очки и
+ * итоги не влияют — replay только держит текущую раздачу в state.showdown.
+ */
+export const SHOWDOWN_EVENT_TYPES: readonly EventType[] = ['showdown', 'showdown_close'];
+
+/** Карта в нотации 'As', 'Td', '9h': ранг 2–9TJQKA, масть s ♠, h ♥, d ♦, c ♣. */
+export type CardCode = string;
+
+// Псевдонимы типов, а не interface: payload уходит в RPC как Json (у interface нет индексной подписи).
+export type ShowdownHand = {
+  playerId: PlayerId;
+  cards: [CardCode, CardCode];
+};
+
+/** payload 'showdown': полное состояние раздачи (каждая правка пишет всё заново). */
+export type ShowdownPayload = {
+  showdownId: string; // uuid раздачи — один на олл-ин, общий у всех его правок
+  hands: ShowdownHand[]; // 2..9 рук, порядок — порядок показа
+  board: CardCode[]; // 0, 3, 4 или 5 карт
+};
+
+/** Открытая раздача олл-ина: последняя принятая версия и когда её открыли и правили. */
+export type ShowdownState = ShowdownPayload & {
+  openedEventId: number; // первое принятое событие этой раздачи
+  eventId: number; // последнее принятое — текущая версия
+  openedAt: string;
+  updatedAt: string; // `at` последней правки: от него табло считает, когда спрятать раздачу
+};
 
 /** Наибольшая кратность входа или ребая (stacks в payload join/rebuy). */
 export const MAX_ENTRY_STACKS = 10;
@@ -62,6 +96,8 @@ export type EventPayload =
   | { playerId: PlayerId; stacks?: number }
   | { playerId: PlayerId; by: PlayerId[] } // bust; by = кто выбил (0..n)
   | { playerId: PlayerId; amountRub: number; note?: string } // payment: + игрок→банкир, − банкир→игрок
+  | ShowdownPayload // showdown
+  | { showdownId: string } // showdown_close
   | Record<string, never>; // timer_*, level_*, hand, finish
 
 export interface EveningEvent {
@@ -115,5 +151,7 @@ export interface EveningState {
   finished: boolean;
   places: PlayerId[]; // index 0 = 1-е место; заполняется только при finished (до этого — [])
   firstBustPlayerId: PlayerId | null; // для прогноза «кто вылетит первым» = первый bust вечера
+  // Открытый олл-ин (показ карт на табло) или null: закрыт showdown_close, новым олл-ином или finish.
+  showdown: ShowdownState | null;
   errors: { eventId: number; message: string }[];
 }

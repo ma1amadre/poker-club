@@ -3,7 +3,14 @@
 import { DEFAULT_FORMAT } from './format.ts';
 import { DEFAULT_SCORING } from './scoring.ts';
 import { summarize, type EveningSummary } from './summary.ts';
-import type { EveningEvent, EventPayload, EventType, PlayerId, TournamentFormat } from './types.ts';
+import type {
+  CardCode,
+  EveningEvent,
+  EventPayload,
+  EventType,
+  PlayerId,
+  TournamentFormat,
+} from './types.ts';
 
 export const MIN = 60_000;
 
@@ -28,6 +35,9 @@ export interface Journal {
   hand(): number;
   finish(): number;
   payment(id: PlayerId, amountRub: number): number;
+  /** Олл-ин: полное состояние раздачи — руки [игрок, карта, карта] и стол. */
+  showdown(showdownId: string, hands: [PlayerId, CardCode, CardCode][], board?: CardCode[]): number;
+  closeShowdown(showdownId: string): number;
   voidEvent(eventId: number): void;
 }
 
@@ -63,6 +73,13 @@ export function journal(startIso = '2026-10-08T16:00:00.000Z'): Journal {
     hand: () => j.add('hand'),
     finish: () => j.add('finish'),
     payment: (p, amountRub) => j.add('payment', { playerId: p, amountRub }),
+    showdown: (showdownId, hands, board = []) =>
+      j.add('showdown', {
+        showdownId,
+        hands: hands.map(([playerId, a, b]) => ({ playerId, cards: [a, b] })),
+        board,
+      }),
+    closeShowdown: (showdownId) => j.add('showdown_close', { showdownId }),
     voidEvent(eventId) {
       const ev = events.find((e) => e.id === eventId);
       if (!ev) throw new Error(`нет события ${eventId}`);

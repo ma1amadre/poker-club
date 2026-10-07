@@ -1,0 +1,415 @@
+/*
+ * Олл-ин: игральная карта (PlayingCard), значок масти (SuitPip) и панель раздачи (ShowdownView).
+ * Только переменные «Материи». Масти — четыре цвета плюс форма значка: ♠ ink, ♥ critical,
+ * ♦ синий из категориальной палитры регистра (слот, где он синий и контрастный: Кобальт — chart-1,
+ * тёмный Кобальт — chart-4, Янтарь — chart-5), ♣ positive. Контраст на surface — не ниже 4,5:1.
+ */
+
+[data-theme] {
+  --suit-s: var(--ink);
+  --suit-h: var(--critical);
+  --suit-d: var(--chart-1);
+  --suit-c: var(--positive);
+}
+
+[data-theme='kobalt-dark'] {
+  --suit-d: var(--chart-4);
+}
+
+[data-theme='yantar'] {
+  --suit-d: var(--chart-5);
+}
+
+.ui-card-suit--s {
+  color: var(--suit-s);
+}
+.ui-card-suit--h {
+  color: var(--suit-h);
+}
+.ui-card-suit--d {
+  color: var(--suit-d);
+}
+.ui-card-suit--c {
+  color: var(--suit-c);
+}
+
+.ui-suit {
+  display: inline-block;
+  flex: none;
+  inline-size: 1em;
+  block-size: 1em;
+  vertical-align: -0.12em;
+}
+
+/* ---------- Карта ---------- */
+
+.ui-card {
+  --card-w: 44px;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--card-w) * 0.05);
+  inline-size: var(--card-w);
+  block-size: calc(var(--card-w) * 1.4);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: calc(var(--card-w) * 0.12);
+  font-family: var(--m-font-display);
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.ui-card--sm {
+  --card-w: 30px;
+}
+
+.ui-card--md {
+  --card-w: 44px;
+}
+
+.ui-card--lg {
+  --card-w: 72px;
+}
+
+.ui-card__rank {
+  font-size: calc(var(--card-w) * 0.5);
+  letter-spacing: -0.03em;
+  font-variant-numeric: lining-nums;
+}
+
+.ui-card__suit {
+  inline-size: calc(var(--card-w) * 0.4);
+  block-size: calc(var(--card-w) * 0.4);
+}
+
+.ui-card--empty {
+  background: transparent;
+  border-style: dashed;
+}
+
+/* ---------- Панель раздачи ---------- */
+
+.ui-sd {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.ui-sd__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.ui-sd__head .m-eyebrow,
+.ui-sd__title {
+  margin: 0;
+}
+
+.ui-sd__board {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* Между флопом и тёрном — зазор шире: улицы видны сразу. */
+.ui-sd__turn {
+  margin-inline-start: var(--space-2);
+}
+
+.ui-sd__hands {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ui-sd__hand {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'cards who pct'
+    'bar bar bar'
+    'notes notes notes';
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.ui-sd__who {
+  grid-area: who;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ui-sd__name {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.ui-sd__made {
+  margin: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.3;
+  color: var(--ink-muted);
+}
+
+.ui-sd__cards {
+  grid-area: cards;
+  display: flex;
+  gap: var(--space-1);
+}
+
+.ui-sd__pct {
+  grid-area: pct;
+  justify-self: end;
+  margin: 0;
+  font-family: var(--m-figure-family);
+  font-weight: var(--m-figure-weight);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: var(--m-figure-track);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ui-sd__pct-unit {
+  margin-inline-start: 0.1em;
+  font-size: 0.55em;
+  letter-spacing: 0;
+  color: var(--ink-muted);
+}
+
+.ui-sd__bar {
+  grid-area: bar;
+  block-size: 6px;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-full);
+}
+
+.ui-sd__bar > span {
+  display: block;
+  block-size: 100%;
+  background: var(--ink-muted);
+  border-radius: inherit;
+  transition: inline-size var(--dur-calm) var(--m-ease);
+}
+
+.ui-sd__hand--lead .ui-sd__pct,
+.ui-sd__hand--win .ui-sd__pct {
+  color: var(--accent);
+}
+
+.ui-sd__hand--lead .ui-sd__bar > span,
+.ui-sd__hand--win .ui-sd__bar > span {
+  background: var(--accent);
+}
+
+.ui-sd__hand--lost .ui-sd__name,
+.ui-sd__hand--lost .ui-sd__pct {
+  color: var(--ink-muted);
+}
+
+.ui-sd__notes {
+  grid-area: notes;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+}
+
+.ui-sd__notes:empty {
+  display: none;
+}
+
+.ui-sd__tag {
+  margin: 0;
+  font-size: var(--m-small-size);
+  font-weight: 600;
+  color: var(--positive);
+}
+
+.ui-sd__note,
+.ui-sd__foot {
+  margin: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+  color: var(--ink-muted);
+}
+
+.ui-sd__outs {
+  display: grid;
+  flex-basis: 100%;
+  gap: 2px;
+}
+
+.ui-sd__outs-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px var(--space-3);
+  margin: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+}
+
+.ui-sd__outs-prefix {
+  color: var(--ink-muted);
+}
+
+.ui-sd__outs-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  white-space: nowrap;
+}
+
+.ui-sd__outs-rank {
+  margin-inline-end: 2px;
+  font-weight: 600;
+}
+
+/* Экран вечера в Mini App: панель — карточка, руки строками. */
+.ui-sd--compact {
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--m-r-card);
+  box-shadow: var(--m-card-shadow);
+}
+
+.ui-sd--compact .ui-sd__hand + .ui-sd__hand {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+/* Табло: крупные карты; на телефоне пять карт стола помещаются в ширину экрана. */
+.ui-sd--board {
+  gap: var(--space-6);
+}
+
+.ui-sd--board .ui-card--lg {
+  --card-w: min(96px, calc((100vw - 72px) / 5.4));
+}
+
+.ui-sd--board .ui-sd__hands {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: var(--space-4);
+}
+
+.ui-sd--board .ui-sd__hand {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'who who'
+    'cards pct'
+    'bar bar'
+    'notes notes';
+  align-content: start;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--m-r-card);
+}
+
+.ui-sd--board .ui-sd__hand--lead,
+.ui-sd--board .ui-sd__hand--win {
+  border-color: var(--accent);
+}
+
+.ui-sd--board .ui-sd__name {
+  font-family: var(--m-font-display);
+  font-size: var(--m-h3-size);
+  text-transform: var(--m-display-case);
+}
+
+.ui-sd--board .ui-sd__pct {
+  font-size: var(--m-figure-size);
+}
+
+.ui-sd--board .ui-sd__bar {
+  block-size: 8px;
+}
+
+/* ТВ и ноутбук в горизонтали: всё на ступень крупнее — табло смотрят с дивана. */
+@media (min-width: 1024px) and (orientation: landscape) {
+  .ui-sd--board {
+    gap: var(--space-7);
+  }
+
+  .ui-sd--board .ui-sd__board .ui-card--lg {
+    --card-w: clamp(88px, 7.5vw, 160px);
+  }
+
+  .ui-sd--board .ui-sd__hand .ui-card--lg {
+    --card-w: clamp(72px, 5.4vw, 120px);
+  }
+
+  /* Двое — карты рук крупнее; пятеро и больше — мельче, чтобы все руки поместились в экран. */
+  .ui-sd--board.ui-sd--few .ui-sd__hand .ui-card--lg {
+    --card-w: clamp(88px, 7vw, 150px);
+  }
+
+  .ui-sd--board.ui-sd--many .ui-sd__hand .ui-card--lg {
+    --card-w: clamp(56px, 3.8vw, 84px);
+  }
+
+  .ui-sd--board .ui-sd__hands {
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: var(--space-5);
+  }
+
+  .ui-sd--board .ui-sd__hand {
+    padding: var(--space-5);
+  }
+
+  .ui-sd--board .ui-sd__name {
+    font-size: var(--m-h2-size);
+    line-height: 1.05;
+  }
+
+  .ui-sd--board .ui-sd__made,
+  .ui-sd--board .ui-sd__note,
+  .ui-sd--board .ui-sd__tag,
+  .ui-sd--board .ui-sd__outs-list {
+    font-size: var(--m-h3-size);
+    line-height: 1.3;
+  }
+
+  .ui-sd--board .ui-sd__foot {
+    font-size: var(--m-lede-size);
+  }
+
+  .ui-sd--board .ui-sd__pct {
+    font-size: calc(var(--m-figure-size) * 1.5);
+  }
+
+  .ui-sd--board.ui-sd--few .ui-sd__pct {
+    font-size: calc(var(--m-figure-size) * 2);
+  }
+
+  .ui-sd--board.ui-sd--many .ui-sd__pct {
+    font-size: var(--m-figure-size);
+  }
+
+  .ui-sd--board .ui-sd__bar {
+    block-size: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-sd__bar > span {
+    transition: none;
+  }
+}
