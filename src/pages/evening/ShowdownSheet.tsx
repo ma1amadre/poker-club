@@ -22,6 +22,7 @@ import {
   samePayload,
   sendLabel,
   setPlayers,
+  showdownCandidates,
   successText,
   usedCards,
   type ShowdownDraft,
@@ -71,13 +72,17 @@ function ShowdownSheetInner({ onClose, model, actions }: ShowdownSheetProps) {
   const current = active ? cardIn(draft, active) : null;
   const busy = sending || actions.busy;
 
-  // Кого можно отметить: кто в игре, и те, кто уже в раздаче (вылетевшего можно поправить).
-  const candidates = state.joinOrder.filter(
-    (id) => state.players[id]?.alive || draft.players.includes(id),
+  // Кого можно отметить: кто в игре, и те, кто уже в раздаче на табло или в черновике
+  // (вылетевшего участника можно поправить и вернуть, если галочку с него сняли по ошибке).
+  const candidates = showdownCandidates(
+    state.joinOrder,
+    (id) => Boolean(state.players[id]?.alive),
+    draft,
+    published,
   );
 
   const choosePlayers = (ids: string[]) => {
-    const next = setPlayers(draft, ids);
+    const next = setPlayers(draft, ids, published);
     setDraft(next);
     // Состав сменился — к первому пустому месту: карты нового игрока раньше стола, а места
     // убранного больше нет.

@@ -129,7 +129,7 @@ function Board({
   const showdown = visibleShowdown(state.showdown, nowMs);
 
   return (
-    <main className="bd">
+    <main className={showdown && !finished ? 'bd bd--showdown' : 'bd'}>
       <header className="bd-head">
         <p className="m-eyebrow">
           {when}

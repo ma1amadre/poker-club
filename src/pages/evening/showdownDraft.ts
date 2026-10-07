@@ -36,14 +36,57 @@ export function draftFromShowdown(s: ShowdownState): ShowdownDraft {
   };
 }
 
-/** Состав раздачи: прежние — в прежнем порядке, новые — в конец; у убранных карты освобождаются. */
-export function setPlayers(d: ShowdownDraft, ids: readonly PlayerId[]): ShowdownDraft {
+/**
+ * Состав раздачи: прежние — в прежнем порядке, новые — в конец; у убранных карты освобождаются.
+ * `published` — раздача этого черновика на табло: вернули её участника (галочку сняли по ошибке) —
+ * он встаёт на своё место в раздаче, и его карты с табло возвращаются, если их никто не занял.
+ */
+export function setPlayers(
+  d: ShowdownDraft,
+  ids: readonly PlayerId[],
+  published: ShowdownState | null = null,
+): ShowdownDraft {
   const keep = d.players.filter((id) => ids.includes(id));
   const added = ids.filter((id) => !d.players.includes(id));
-  const players = [...keep, ...added];
+  // Участники раздачи на табло — в её порядке, остальные — после, в порядке добавления.
+  const placeOf = (id: PlayerId) => {
+    const i = published?.hands.findIndex((h) => h.playerId === id) ?? -1;
+    return i < 0 ? Number.POSITIVE_INFINITY : i;
+  };
+  const players = [...keep, ...added]
+    .map((id, order) => ({ id, order }))
+    .sort((a, b) => placeOf(a.id) - placeOf(b.id) || a.order - b.order)
+    .map((x) => x.id);
   const hands: Record<PlayerId, readonly [CardCode | null, CardCode | null]> = {};
   for (const id of players) hands[id] = d.hands[id] ?? [null, null];
-  return { ...d, players, hands };
+  let next: ShowdownDraft = { ...d, players, hands };
+  for (const id of added) {
+    const was = published?.hands.find((h) => h.playerId === id);
+    if (!was) continue;
+    const used = usedCards(next);
+    if (was.cards.some((c) => used.has(c))) continue;
+    next = { ...next, hands: { ...next.hands, [id]: [was.cards[0], was.cards[1]] } };
+  }
+  return next;
+}
+
+/**
+ * Кого шторка предлагает в «Кто вскрывается» (в порядке входа в турнир): кто в игре, участники
+ * раздачи на табло (`published`, тот же id) и те, кто уже отмечен в черновике. Вылетевший участник
+ * открытой раздачи остаётся в списке, даже если с него сняли галочку, — вернуть его можно, домен
+ * такую правку принимает (replay: прежние руки той же раздачи).
+ */
+export function showdownCandidates(
+  joinOrder: readonly PlayerId[],
+  isAlive: (id: PlayerId) => boolean,
+  draft: ShowdownDraft,
+  published: ShowdownState | null,
+): PlayerId[] {
+  const inShowdown = new Set<PlayerId>([
+    ...draft.players,
+    ...(published?.hands.map((h) => h.playerId) ?? []),
+  ]);
+  return joinOrder.filter((id) => isAlive(id) || inShowdown.has(id));
 }
 
 export function sameSlot(a: Slot | null, b: Slot | null): boolean {

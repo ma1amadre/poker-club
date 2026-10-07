@@ -14,6 +14,7 @@ import {
   samePayload,
   sendLabel,
   setPlayers,
+  showdownCandidates,
   slotOrder,
   successText,
   usedCards,
@@ -35,6 +36,13 @@ function tapAll(d: ShowdownDraft, codes: string[]): ShowdownDraft {
     slot = nextEmptySlot(draft, slot);
   }
   return draft;
+}
+
+/** Что уйдёт в журнал из черновика (черновик обязан быть готов к отправке). */
+function payloadOf(d: ShowdownDraft) {
+  const c = checkDraft(d, nameOf);
+  if (!c.ok) throw new Error(c.reason);
+  return c.payload;
 }
 
 function published(board: string[], hands: [string, string, string][]): ShowdownState {
@@ -122,16 +130,78 @@ describe('черновик олл-ина', () => {
   });
 });
 
+describe('кто в списке «Кто вскрывается»', () => {
+  const order = ['A', 'B', 'C', 'D'];
+  const flopAB = published(
+    ['2c', '7d', '9h'],
+    [
+      ['A', 'As', 'Kd'],
+      ['B', 'Qh', 'Qc'],
+    ],
+  );
+
+  it('новая раздача — только те, кто в игре', () => {
+    const alive = (id: string) => id !== 'C';
+    expect(showdownCandidates(order, alive, emptyDraft(SD), null)).toEqual(['A', 'B', 'D']);
+  });
+
+  it('вылетевший участник раздачи на табло остаётся в списке и после снятой галочки', () => {
+    // Олл-ин A против B, B вылетел; банкир правит состав и по ошибке снимает B.
+    const alive = (id: string) => id !== 'B';
+    const draft = setPlayers(draftFromShowdown(flopAB), ['A']);
+    expect(draft.players).toEqual(['A']);
+    const list = showdownCandidates(order, alive, draft, flopAB);
+    expect(list).toEqual(['A', 'B', 'C', 'D']);
+    // Вернуть B — его карты с табло на месте, домен такую раздачу примет: B был в ней до вылета.
+    const back = setPlayers(draft, ['A', 'B'], flopAB);
+    expect(back.hands.B).toEqual(['Qh', 'Qc']);
+    expect(samePayload(payloadOf(back), flopAB)).toBe(true);
+    const j = journal().join('A', 'B', 'C', 'D');
+    j.start();
+    j.showdown(SD, [
+      ['A', 'As', 'Kd'],
+      ['B', 'Qh', 'Qc'],
+    ]);
+    j.bust('B', ['A']);
+    const s = replay(DEFAULT_FORMAT, j.events, j.now());
+    expect(canApply(DEFAULT_FORMAT, s, 'showdown', payloadOf(back), j.now())).toBeNull();
+  });
+
+  it('возвращённый участник — на своё место; занятые его карты не возвращаются', () => {
+    const three = published(
+      ['2c', '7d', '9h'],
+      [
+        ['A', 'As', 'Kd'],
+        ['B', 'Qh', 'Qc'],
+        ['C', '7s', '7h'],
+      ],
+    );
+    let d = setPlayers(draftFromShowdown(three), ['A', 'C']);
+    // Пока B снят, его даму червей отдали C.
+    d = placeCard(d, { kind: 'hand', playerId: 'C', index: 1 }, 'Qh');
+    d = setPlayers(d, ['A', 'C', 'B', 'D'], three);
+    expect(d.players).toEqual(['A', 'B', 'C', 'D']);
+    expect(d.hands.B).toEqual([null, null]);
+    expect(d.hands.D).toEqual([null, null]);
+    // Без раздачи на табло — как раньше: новые в конец, карты пустые.
+    expect(setPlayers(emptyDraft(SD), ['B', 'A'], null).players).toEqual(['B', 'A']);
+  });
+
+  it('вылетевший не из этой раздачи в список не попадает', () => {
+    const alive = (id: string) => id !== 'C';
+    expect(showdownCandidates(order, alive, draftFromShowdown(flopAB), flopAB)).toEqual([
+      'A',
+      'B',
+      'D',
+    ]);
+  });
+});
+
 describe('кнопка шторки и тост', () => {
   const hands: [string, string, string][] = [
     ['A', 'As', 'Kd'],
     ['B', 'Qh', 'Qc'],
   ];
-  const payloadOf = (d: ShowdownDraft) => {
-    const c = checkDraft(d, nameOf);
-    if (!c.ok) throw new Error(c.reason);
-    return c.payload;
-  };
 
   it('по улицам: флоп, тёрн, ривер', () => {
     const pre = published([], hands);

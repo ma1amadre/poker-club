@@ -1,6 +1,7 @@
 // Эквити: эталоны курса (tests/engines.test.js, раздел 4; tests/equity-reference.js — агрегат по
 // мастям, сверенный с cardfight.com до 0,01 п. п.) и детерминизм Монте-Карло.
 import { describe, expect, it } from 'vitest';
+import { roundShares } from './analysis';
 import { parseCards, RANKS, SUITS, type Card } from './cards';
 import {
   computeEquity,
@@ -15,6 +16,7 @@ import {
   runMcJob,
   seedFor,
   showdownKey,
+  suitSymmetryGroups,
 } from './equity';
 import { nCk, outsEquity } from './pokermath';
 
@@ -223,6 +225,57 @@ describe('план расчёта и детерминизм', () => {
   it('все масти и ранги разбираются', () => {
     const all = [...RANKS].flatMap((r) => [...SUITS].map((s) => r + s));
     expect(new Set(parseCards(all)).size).toBe(52);
+  });
+});
+
+describe('симметрия мастей: равные по правилам руки — равные цифры', () => {
+  const split = (s: string) => s.match(/../g) ?? [];
+
+  it('группы рук: перестановка мастей держит стол и переставляет руки', () => {
+    // Обмен червей и бубён: AhKd ↔ AdKh, 7c7s на месте.
+    expect(suitSymmetryGroups([H('AhKd'), H('AdKh'), H('7c7s')], [])).toEqual([[0, 1], [2]]);
+    expect(suitSymmetryGroups([H('7c7s'), H('AhKd'), H('AdKh')], [])).toEqual([[0], [1, 2]]);
+    // Одномастные AK разных мастей против пары двоек: обмен пик и червей.
+    expect(suitSymmetryGroups([H('AsKs'), H('AhKh'), H('2c2d')], [])).toEqual([[0, 1], [2]]);
+    // Три пиковые карты на столе ломают симметрию: пиковый флеш есть только у AsKs.
+    expect(suitSymmetryGroups([H('AsKs'), H('AhKh')], H('2s3s4s'))).toEqual([[0], [1]]);
+    // Стол из червей и бубён, переходящий сам в себя, — симметрия остаётся.
+    expect(suitSymmetryGroups([H('AsKc'), H('AcKs')], H('2h2d9h9d'))).toEqual([[0, 1]]);
+    expect(suitSymmetryGroups([H('AsKd'), H('QhQc')], [])).toEqual([[0], [1]]);
+  });
+
+  it('до флопа (Монте-Карло): одинаковые AK получают одинаковые проценты', () => {
+    for (const hands of [
+      ['AhKd', 'AdKh', '7c7s'],
+      ['7c7s', 'AhKd', 'AdKh'],
+      ['AsKs', 'AhKh', '2c2d'],
+    ].map((row) => row.map(split))) {
+      const r = computeEquity(hands, []);
+      expect(r.exact).toBe(false);
+      const [a, b] = hands[0]?.[0] === '7c' ? [1, 2] : [0, 1];
+      expect(r.equity[a]).toBe(r.equity[b]);
+      expect(r.win[a]).toBe(r.win[b]);
+      expect(r.tie[a]).toBe(r.tie[b]);
+      expect(sum(r.equity)).toBeCloseTo(100, 9);
+      const shares = roundShares(r.equity);
+      expect(shares[a]).toBe(shares[b]);
+    }
+  });
+
+  it('усреднение не меняет детерминизм и нарезку Монте-Карло', () => {
+    const hands = [H('AhKd'), H('AdKh'), H('7c7s')];
+    const whole = monteCarloEquity(hands, [], 20_000, 99);
+    const job = createMcJob(hands, [], 20_000, 99);
+    while (!runMcJob(job, 3001));
+    expect(mcJobResult(job)).toEqual(whole);
+    expect(whole.equity[0]).toBe(whole.equity[1]);
+  });
+
+  it('точный перебор: симметричные руки — те же числа до последнего знака', () => {
+    const r = exactEquity([H('AhKd'), H('AdKh'), H('7c7s')], H('2c9s5c'));
+    expect(r.equity[0]).toBe(r.equity[1]);
+    expect(r.tie[0]).toBe(r.tie[1]);
+    expect(sum(r.equity)).toBeCloseTo(100, 9);
   });
 });
 

@@ -52,12 +52,9 @@ export function ShowdownView({
 
   return (
     <section
-      className={cn(
-        'ui-sd',
-        `ui-sd--${variant}`,
-        showdown.hands.length <= 2 && 'ui-sd--few',
-        showdown.hands.length > 4 && 'ui-sd--many',
-      )}
+      className={cn('ui-sd', `ui-sd--${variant}`, showdown.hands.length > 4 && 'ui-sd--rows2')}
+      // Раскладка табло на ТВ — по числу рук (showdown.css): колонки, размер карт и цифр.
+      data-hands={showdown.hands.length}
       aria-label="Олл-ин"
     >
       <header className="ui-sd__head">

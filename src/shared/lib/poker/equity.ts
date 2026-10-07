@@ -10,6 +10,9 @@
 //                    те же проценты на табло, у банкира и у игроков. Ни Date.now, ни Math.random.
 // Монте-Карло можно считать кусками (createMcJob / runMcJob): результат от нарезки не зависит —
 // так считает и Web Worker, и запасной путь на главном потоке.
+// Руки, равные по шансам из-за равноправия мастей (AhKd и AdKh против 7c7s), получают одинаковые
+// цифры в обоих режимах: доли таких рук усредняются (suitSymmetryGroups) — иначе шум Монте-Карло
+// показал бы двум одинаковым AK 18 % и 17 %.
 import { deckWithout, parseCards, type Card } from './cards';
 import { evaluate } from './evaluator';
 import { nCk } from './pokermath';
@@ -85,6 +88,79 @@ export function planEquity(players: number, boardSize: number, key: string): Equ
     samples: Math.max(MC_MIN_SAMPLES, Math.floor(MC_EVAL_BUDGET / players)),
     seed: seedFor(key),
   };
+}
+
+// --- симметрия мастей ---------------------------------------------------------------------------
+
+/** Все 24 перестановки мастей: p[масть] — во что она переходит. */
+const SUIT_PERMUTATIONS: readonly (readonly number[])[] = (() => {
+  const out: number[][] = [];
+  const walk = (prefix: number[]) => {
+    if (prefix.length === 4) {
+      out.push(prefix);
+      return;
+    }
+    for (let suit = 0; suit < 4; suit += 1) {
+      if (!prefix.includes(suit)) walk([...prefix, suit]);
+    }
+  };
+  walk([]);
+  return out;
+})();
+
+/**
+ * Группы рук, у которых шансы равны точно: масти в покере равноправны, поэтому если перестановка
+ * мастей оставляет стол на месте, а руки переставляет между собой, то у рук, переходящих друг в
+ * друга, шансы одинаковые (AhKd и AdKh против 7c7s — обмен червей и бубён). Ответ — разбиение
+ * индексов рук на группы (по возрастанию индексов); у несимметричной раздачи все группы — по одной руке.
+ */
+export function suitSymmetryGroups(
+  hands: readonly (readonly Card[])[],
+  board: readonly Card[],
+): number[][] {
+  const n = hands.length;
+  const parent = Array.from({ length: n }, (_, i) => i);
+  const find = (i: number): number => {
+    let root = i;
+    while (parent[root] !== root) root = parent[root] ?? root;
+    return root;
+  };
+  const pairKey = (a: Card, b: Card) => (a < b ? a * 52 + b : b * 52 + a);
+  const handIndex = new Map(hands.map((h, i) => [pairKey(h[0] ?? 0, h[1] ?? 0), i]));
+  const onBoard = new Set(board);
+
+  for (const p of SUIT_PERMUTATIONS) {
+    const move = (card: Card): Card => (card & ~3) | (p[card & 3] ?? 0);
+    if (!board.every((c) => onBoard.has(move(c)))) continue;
+    const images = hands.map((h) => handIndex.get(pairKey(move(h[0] ?? 0), move(h[1] ?? 0))));
+    if (images.some((j) => j === undefined)) continue;
+    images.forEach((j, i) => {
+      const a = find(i);
+      const b = find(j ?? i);
+      if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+    });
+  }
+
+  const groups = new Map<number, number[]>();
+  for (let i = 0; i < n; i += 1) {
+    const root = find(i);
+    groups.set(root, [...(groups.get(root) ?? []), i]);
+  }
+  return [...groups.values()];
+}
+
+/** Доли и частоты рук одной группы (suitSymmetryGroups) — их среднее: равные руки, равные цифры. */
+function symmetrize(r: EquityResult, groups: readonly (readonly number[])[]): EquityResult {
+  if (groups.every((g) => g.length === 1)) return r;
+  const mean = (values: readonly number[]) => {
+    const out = [...values];
+    for (const g of groups) {
+      const avg = g.reduce((acc, i) => acc + (values[i] ?? 0), 0) / g.length;
+      for (const i of g) out[i] = avg;
+    }
+    return out;
+  };
+  return { ...r, equity: mean(r.equity), win: mean(r.win), tie: mean(r.tie) };
 }
 
 // --- подсчёт -----------------------------------------------------------------------------------
@@ -187,7 +263,7 @@ export function exactEquity(
     }
   };
   pick(0, 0);
-  return result(t, count, n, true);
+  return symmetrize(result(t, count, n, true), suitSymmetryGroups(hands, board));
 }
 
 /** Монте-Карло, которое можно считать кусками: состояние генератора живёт в задаче. */
@@ -203,6 +279,8 @@ export interface McJob {
   readonly scores: Float64Array;
   readonly rng: () => number;
   readonly tally: Tally;
+  /** Руки, равные по шансам (suitSymmetryGroups): в ответе их доли усредняются. */
+  readonly groups: readonly (readonly number[])[];
 }
 
 export function createMcJob(
@@ -226,6 +304,7 @@ export function createMcJob(
     scores: new Float64Array(hands.length),
     rng: mulberry32(seed),
     tally: newTally(hands.length),
+    groups: suitSymmetryGroups(hands, board),
   };
 }
 
@@ -252,7 +331,7 @@ export function runMcJob(job: McJob, maxSamples = Number.POSITIVE_INFINITY): boo
 }
 
 export function mcJobResult(job: McJob): EquityResult {
-  return result(job.tally, job.samples, job.n, false);
+  return symmetrize(result(job.tally, job.samples, job.n, false), job.groups);
 }
 
 /** Монте-Карло целиком. */

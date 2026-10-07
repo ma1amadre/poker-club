@@ -1,5 +1,11 @@
 /* Табло во время олл-ина: строка часов в шапке раздачи (Янтарь, табличные цифры). */
 
+/* Обёртка панели: --sd-fit (useFitToScreen) ставится на неё; панель растянута на высоту ряда. */
+.bd-sd {
+  display: grid;
+  min-width: 0;
+}
+
 .bd-sd-clock {
   display: flex;
   flex-wrap: wrap;
@@ -28,8 +34,14 @@
 }
 
 @media (min-width: 1024px) and (orientation: landscape) {
+  /* Олл-ин на ТВ — во всю ширину экрана: так руки помещаются в один-два ряда (showdown.css). */
+  .bd--showdown {
+    max-width: none;
+  }
+
+  /* --sd-u — доля экрана панели олл-ина (showdown.css). */
   .bd-sd-clock__time,
   .bd-sd-clock__blinds {
-    font-size: var(--m-h1-size);
+    font-size: calc(var(--sd-u) * 5.5);
   }
 }

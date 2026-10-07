@@ -342,40 +342,127 @@
   block-size: 8px;
 }
 
-/* ТВ и ноутбук в горизонтали: всё на ступень крупнее — табло смотрят с дивана. */
+/*
+ * ТВ и ноутбук в горизонтали: панель целиком в экране — прокрутить табло на ТВ нечем. Размеры — в
+ * долях --sd-u, сотой высоты кадра 16:9, вписанного в экран (1920×1080 — 10,8 px, 1280×720 — 7,2 px),
+ * поэтому на любом ТВ раскладка одна и та же. Стол — справа от заголовка: высота достаётся рукам.
+ * Руки: до четырёх — в один ряд, больше — в два (5–6 по три, 7–8 по четыре, 9 по пять), карты и
+ * цифры мельче с каждым шагом. Имя и рука словами — в одну строку (длинное — с многоточием), ауты —
+ * сплошной строкой за подписью. Если что-то всё же не поместилось, ShowdownBoard (useFitToScreen)
+ * уменьшает всё через --sd-fit.
+ */
 @media (min-width: 1024px) and (orientation: landscape) {
   .ui-sd--board {
-    gap: var(--space-7);
+    /* Ширина панели — экран без полей табло (.bd: 48 px с каждой стороны; на время олл-ина
+       табло во всю ширину, ShowdownBoard), из неё — 164 доли: столько занимает ряд из четырёх рук. */
+    --sd-u: calc(min(1vh, (100vw - 96px) / 164) * var(--sd-fit, 1));
+    --sd-cols: 2;
+    --sd-board-w: calc(var(--sd-u) * 11);
+    --sd-hand-w: calc(var(--sd-u) * 16);
+    --sd-pct: calc(var(--sd-u) * 13);
+    --sd-name: calc(var(--sd-u) * 3.7);
+    --sd-text: calc(var(--sd-u) * 2);
+    --sd-pad: calc(var(--sd-u) * 2.2);
+    --sd-inner: calc(var(--sd-u) * 1.5);
+    --sd-hands-gap: calc(var(--sd-u) * 2.2);
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'head board'
+      'hands hands'
+      'foot foot';
+    align-content: center;
+    align-items: center;
+    gap: calc(var(--sd-u) * 2.5) calc(var(--sd-u) * 4);
+  }
+
+  .ui-sd--board[data-hands='3'] {
+    --sd-cols: 3;
+    --sd-hand-w: calc(var(--sd-u) * 12);
+    --sd-pct: calc(var(--sd-u) * 9.5);
+  }
+
+  .ui-sd--board[data-hands='4'] {
+    --sd-cols: 4;
+    --sd-hand-w: calc(var(--sd-u) * 9);
+    --sd-pct: calc(var(--sd-u) * 6.5);
+  }
+
+  /* Пятеро и больше — два ряда: всё плотнее. */
+  .ui-sd--board.ui-sd--rows2 {
+    --sd-cols: 3;
+    --sd-board-w: calc(var(--sd-u) * 9);
+    --sd-hand-w: calc(var(--sd-u) * 7);
+    --sd-pct: calc(var(--sd-u) * 6);
+    --sd-name: calc(var(--sd-u) * 3);
+    --sd-text: calc(var(--sd-u) * 1.8);
+    --sd-pad: calc(var(--sd-u) * 1.6);
+    --sd-inner: var(--sd-u);
+  }
+
+  .ui-sd--board[data-hands='7'],
+  .ui-sd--board[data-hands='8'] {
+    --sd-cols: 4;
+  }
+
+  .ui-sd--board[data-hands='9'] {
+    --sd-cols: 5;
+    --sd-pct: calc(var(--sd-u) * 5);
+  }
+
+  .ui-sd--board .ui-sd__head {
+    grid-area: head;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: calc(var(--sd-u) * 0.8);
+  }
+
+  .ui-sd--board .ui-sd__title {
+    font-size: calc(var(--sd-u) * 3.7);
+    line-height: 1.05;
+  }
+
+  .ui-sd--board .ui-sd__board {
+    grid-area: board;
+    gap: calc(var(--sd-u) * 0.8);
+  }
+
+  .ui-sd--board .ui-sd__turn {
+    margin-inline-start: calc(var(--sd-u) * 0.8);
   }
 
   .ui-sd--board .ui-sd__board .ui-card--lg {
-    --card-w: clamp(88px, 7.5vw, 160px);
-  }
-
-  .ui-sd--board .ui-sd__hand .ui-card--lg {
-    --card-w: clamp(72px, 5.4vw, 120px);
-  }
-
-  /* Двое — карты рук крупнее; пятеро и больше — мельче, чтобы все руки поместились в экран. */
-  .ui-sd--board.ui-sd--few .ui-sd__hand .ui-card--lg {
-    --card-w: clamp(88px, 7vw, 150px);
-  }
-
-  .ui-sd--board.ui-sd--many .ui-sd__hand .ui-card--lg {
-    --card-w: clamp(56px, 3.8vw, 84px);
+    --card-w: var(--sd-board-w);
   }
 
   .ui-sd--board .ui-sd__hands {
-    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-    gap: var(--space-5);
+    grid-area: hands;
+    grid-template-columns: repeat(var(--sd-cols), minmax(0, 1fr));
+    gap: var(--sd-hands-gap);
   }
 
   .ui-sd--board .ui-sd__hand {
-    padding: var(--space-5);
+    gap: var(--sd-inner) calc(var(--sd-inner) * 1.5);
+    padding: var(--sd-pad);
+  }
+
+  .ui-sd--board .ui-sd__hand .ui-card--lg {
+    --card-w: var(--sd-hand-w);
+  }
+
+  .ui-sd--board .ui-sd__cards {
+    gap: calc(var(--sd-u) * 0.4);
+  }
+
+  .ui-sd--board .ui-sd__name,
+  .ui-sd--board .ui-sd__made {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .ui-sd--board .ui-sd__name {
-    font-size: var(--m-h2-size);
+    font-size: var(--sd-name);
     line-height: 1.05;
   }
 
@@ -383,28 +470,39 @@
   .ui-sd--board .ui-sd__note,
   .ui-sd--board .ui-sd__tag,
   .ui-sd--board .ui-sd__outs-list {
-    font-size: var(--m-h3-size);
+    font-size: var(--sd-text);
     line-height: 1.3;
   }
 
+  .ui-sd--board .ui-sd__notes {
+    gap: 0 calc(var(--sd-u) * 1.5);
+  }
+
+  /* Ауты — сплошной строкой: «Ауты к тёрну: 9 · 20 %  A ♠♥♦  K ♠♥♦  на делёж: …». */
+  .ui-sd--board .ui-sd__outs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    flex-basis: auto;
+    gap: 0 calc(var(--sd-u) * 1.5);
+    min-width: 0;
+  }
+
+  .ui-sd--board .ui-sd__outs-list {
+    gap: 0 calc(var(--sd-u) * 1.2);
+  }
+
   .ui-sd--board .ui-sd__foot {
-    font-size: var(--m-lede-size);
+    grid-area: foot;
+    font-size: var(--sd-text);
   }
 
   .ui-sd--board .ui-sd__pct {
-    font-size: calc(var(--m-figure-size) * 1.5);
-  }
-
-  .ui-sd--board.ui-sd--few .ui-sd__pct {
-    font-size: calc(var(--m-figure-size) * 2);
-  }
-
-  .ui-sd--board.ui-sd--many .ui-sd__pct {
-    font-size: var(--m-figure-size);
+    font-size: var(--sd-pct);
   }
 
   .ui-sd--board .ui-sd__bar {
-    block-size: 12px;
+    block-size: max(4px, calc(var(--sd-u) * 1.1));
   }
 }
 
