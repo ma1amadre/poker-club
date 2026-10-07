@@ -64,6 +64,9 @@ export interface TelegramWebApp {
   /** Цвет нижней панели Telegram, с 7.10. */
   setBottomBarColor?(color: string): void;
   disableVerticalSwipes?(): void;
+  /** Полноэкранный режим, с 8.0: запуск с tgWebAppFullscreen=1 или по requestFullscreen. */
+  isFullscreen?: boolean;
+  exitFullscreen?(): void;
   /** Спрашивать подтверждение при закрытии Mini App, с 6.2. */
   enableClosingConfirmation?(): void;
   disableClosingConfirmation?(): void;
@@ -121,6 +124,9 @@ export function getColorScheme(): ColorScheme {
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+/** Клиенты Telegram для компьютера, где Mini App живёт в отдельном окне. */
+const DESKTOP_PLATFORMS: ReadonlySet<string> = new Set(['tdesktop', 'macos']);
+
 export function ready(): void {
   if (!isInTelegram()) return;
   const app = getWebApp();
@@ -130,6 +136,12 @@ export function ready(): void {
   // «Материи», а не из темы Telegram.
   // Свайп вниз в списках иначе сворачивает Mini App посреди ввода события.
   if (supports('7.7')) app?.disableVerticalSwipes?.();
+  // Полноэкранный запуск (так настроен Main Mini App бота) нужен телефону, но не компьютеру:
+  // Telegram Desktop растягивает окно на весь монитор и ставит его не в угол экрана, а рядом с
+  // главным окном — содержимое уезжает за край, видно только пустое поле.
+  if (DESKTOP_PLATFORMS.has(app?.platform ?? '') && app?.isFullscreen && supports('8.0')) {
+    app.exitFullscreen?.();
+  }
 }
 
 export function expand(): void {
