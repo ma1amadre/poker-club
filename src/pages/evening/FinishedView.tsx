@@ -1,4 +1,4 @@
-// Итог вечера: победитель, места, очки, призы, баунти, нетто, лучший охотник; ссылки на расчёт и
+// Итог вечера: победитель, места, очки, призы, нетто, лучший охотник; ссылки на расчёт и
 // голосование; «Твой вечер» игравшему или сделавшему прогноз (EveningRecap). Админу — правка
 // закрытого вечера (отмена записей, возврат вечера в игру).
 import { computeMoney } from '@domain/money.ts';
@@ -149,10 +149,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
             <div className="ev-winner__text">
               <p className="m-eyebrow">Победитель вечера</p>
               <p className="m-h2 ev-winner__name">{nameOf(winnerId)}</p>
-              <p className="m-small">
-                Приз {formatRub(money[winnerId]?.prizeRub ?? 0)}, за головы{' '}
-                {formatRub(money[winnerId]?.bountyRub ?? 0)}
-              </p>
+              <p className="m-small">Приз {formatRub(money[winnerId]?.prizeRub ?? 0)}</p>
             </div>
           </div>
         </Card>
@@ -225,7 +222,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         <Section
           title="Места"
           aside={pluralWithNumber(rows.length, ['игрок', 'игрока', 'игроков'])}
-          footer="Нетто — призы и головы минус взносы."
+          footer="Нетто — приз минус взносы."
         >
           <List aria-label="Места и деньги">
             {rows.map((p) => {
@@ -234,7 +231,6 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
               const parts = [
                 pts !== undefined ? formatPointsWithUnit(pts) : null,
                 m && m.prizeRub > 0 ? `приз ${formatRub(m.prizeRub)}` : null,
-                m && m.bountyRub > 0 ? `головы ${formatRub(m.bountyRub)}` : null,
                 p.kos > 0 ? pluralWithNumber(p.kos, ['нокаут', 'нокаута', 'нокаутов']) : null,
                 p.rebuys > 0 ? pluralWithNumber(p.rebuys, ['ребай', 'ребая', 'ребаев']) : null,
               ].filter(Boolean);

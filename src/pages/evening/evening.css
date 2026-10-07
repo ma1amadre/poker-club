@@ -179,6 +179,13 @@
   gap: var(--space-5);
 }
 
+/* «Никто / не знаю, кто выбил» в шторке вылета — выбор, как плитка PlayerPicker: нажатая — accent. */
+.ev-nobody[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 /* Призовые доли (PayoutSheet): поле и «убрать место» в строку. */
 .ev-payouts {
   display: grid;
@@ -220,8 +227,10 @@
   border-top: 1px solid var(--line);
 }
 
-.ev-guest > .m-field {
+.ev-guest > .m-field,
+.ev-guest > .m-notice {
   width: 100%;
+  box-sizing: border-box;
 }
 
 .ev-sheet-actions {

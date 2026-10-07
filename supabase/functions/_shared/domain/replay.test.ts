@@ -22,13 +22,14 @@ describe('формат', () => {
       '100/200',
     ]);
     expect(F.levels.every((l) => l.trigger.type === 'time' && l.trigger.minutes === 40)).toBe(true);
-    expect([F.buyInRub, F.startingChips, F.bountyRub, F.rebuyUntilLevel, F.rebuyLimit]).toEqual([
+    expect([F.buyInRub, F.startingChips, F.rebuyUntilLevel, F.rebuyLimit]).toEqual([
       500,
       500,
-      100,
       5,
       null,
     ]);
+    // Баунти «за голову» убрано 07.10.2026: весь взнос — в фонд.
+    expect('bountyRub' in F).toBe(false);
     expect(F.payoutPct).toEqual([70, 30]);
   });
 
@@ -36,18 +37,20 @@ describe('формат', () => {
     expect(validateFormat(null)).toHaveLength(1);
     const bad = {
       ...F,
-      bountyRub: 600,
       payoutPct: [70, 20],
       levels: [{ sb: 20, bb: 10, trigger: { type: 'time', minutes: 0 } }],
     };
     const errs = validateFormat(bad);
-    expect(errs).toContain('Баунти не может быть больше входа');
     expect(errs.some((e) => e.includes('Сумма долей'))).toBe(true);
     expect(errs.some((e) => e.includes('малый блайнд больше большого'))).toBe(true);
     expect(errs.some((e) => e.includes('длительность'))).toBe(true);
     expect(validateFormat({ ...F, buyInRub: 499.5 })).toHaveLength(1);
     expect(validateFormat({ ...F, levels: [] })).toEqual(['Нужен хотя бы один уровень блайндов']);
     expect(validateFormat({ ...F, payoutPct: [33.3, 33.3, 33.4] })).toEqual([]);
+    // bountyRub из форматов до 07.10.2026 молча игнорируется — любое значение.
+    expect(validateFormat({ ...F, bountyRub: 100 })).toEqual([]);
+    expect(validateFormat({ ...F, bountyRub: 600 })).toEqual([]);
+    expect(validateFormat({ ...F, bountyRub: 'x' })).toEqual([]);
   });
 });
 
@@ -341,11 +344,11 @@ describe('места, финал и ошибки', () => {
     expect(s.finished).toBe(true);
     expect(s.places).toEqual(['A', 'B', 'D', 'C']);
     expect(['A', 'B', 'C', 'D'].map((id) => s.players[id]?.place)).toEqual([1, 2, 4, 3]);
-    expect(s.players.A).toMatchObject({ kos: 3, koVictims: ['B', 'D', 'B'], bountyWonRub: 300 });
+    expect(s.players.A).toMatchObject({ kos: 3, koVictims: ['B', 'D', 'B'] });
     expect(s.players.B).toMatchObject({ busts: 3, entries: 3 });
     expect(s.totalEntries).toBe(6);
     expect(s.totalChips).toBe(3000);
-    expect(s.prizePoolRub).toBe(2400);
+    expect(s.prizePoolRub).toBe(3000); // весь взнос — в фонд
     expect(s.aliveCount).toBe(1);
     expect(s.errors).toEqual([]);
   });
@@ -587,7 +590,7 @@ describe('кратность входа и ребая (stacks)', () => {
     );
   });
 
-  it('фишки, фонд и головы — по сумме кратностей; число входов — штуками', () => {
+  it('фишки и фонд — по сумме кратностей; число входов — штуками', () => {
     const j = journal();
     j.joinStacks('A', 3);
     j.join('B');
@@ -597,13 +600,14 @@ describe('кратность входа и ребая (stacks)', () => {
     expect(s.totalEntries).toBe(3);
     expect(s.totalStacks).toBe(6);
     expect(s.totalChips).toBe(3000);
-    expect(s.prizePoolRub).toBe(2400);
-    expect(s.bountyPoolRub).toBe(600);
-    expect(s.players.B).toMatchObject({ entries: 2, rebuys: 1, stacks: 3, currentStacks: 2 });
-    expect(s.players.A).toMatchObject({ stacks: 3, currentStacks: 3, bountyWonRub: 100 });
+    expect(s.prizePoolRub).toBe(3000);
+    expect(s.players.B).toMatchObject({ entries: 2, rebuys: 1, stacks: 3 });
+    expect(s.players.A).toMatchObject({ stacks: 3, kos: 1 });
+    // Денег за нокаут нет — в состоянии игрока их и не бывает.
+    expect(Object.keys(s.players.A ?? {}).some((k) => /bounty/i.test(k))).toBe(false);
   });
 
-  it('отмена кратного ребая возвращает голову прежнего входа', () => {
+  it('отмена кратного ребая возвращает прежний взнос и фонд', () => {
     const j = journal().join('A', 'B', 'C');
     j.bust('C', ['A']);
     const rb = j.rebuy('C', 3);
@@ -611,7 +615,8 @@ describe('кратность входа и ребая (stacks)', () => {
     j.rebuy('C');
     j.bust('C', ['B']);
     const s = replay(F, j.events, j.now());
-    expect(s.players.C).toMatchObject({ stacks: 2, currentStacks: 1 });
-    expect(s.players.B?.bountyWonRub).toBe(100);
+    expect(s.players.C).toMatchObject({ stacks: 2, entries: 2 });
+    expect(s.prizePoolRub).toBe(2000);
+    expect(s.players.B?.kos).toBe(1);
   });
 });

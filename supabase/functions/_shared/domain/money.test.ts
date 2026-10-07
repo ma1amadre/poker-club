@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMAT } from './format.ts';
+import { DEFAULT_FORMAT, validateFormat } from './format.ts';
 import {
   computeMoney,
   entryAmounts,
@@ -41,10 +41,10 @@ describe('деньги: ручной расчёт вечера на 5 игрок
   j.start();
   j.wait(10).bust('B', ['A']);
   j.rebuy('B');
-  j.wait(10).bust('C', ['A', 'D']); // сплит: голова 50/50, KO обоим
+  j.wait(10).bust('C', ['A', 'D']); // сплит: нокаут обоим, денег за него нет
   j.rebuy('C');
   j.wait(10).bust('C', ['E']); // окончательный
-  j.wait(10).bust('B', []); // сиротская голова — победителю
+  j.wait(10).bust('B', []); // кто выбил — не указано
   j.wait(10).bust('E', ['A', 'D']);
   j.wait(10).bust('D', ['A']);
   j.finish();
@@ -54,60 +54,61 @@ describe('деньги: ручной расчёт вечера на 5 игрок
   it('состояние', () => {
     expect(s.errors).toEqual([]);
     expect(s.totalEntries).toBe(7);
-    expect(s.prizePoolRub).toBe(2800);
+    // Весь взнос — в фонд: 7 × 500.
+    expect(s.prizePoolRub).toBe(3500);
     expect(s.places).toEqual(['A', 'D', 'E', 'B', 'C']);
     expect(s.players.A?.kos).toBe(4);
     expect(s.players.D?.kos).toBe(2);
     expect(s.players.E?.kos).toBe(1);
   });
 
-  it('таблица', () => {
+  it('таблица: выигрыш — только призовые', () => {
     expect(m).toEqual({
-      // приз 1960; головы: B 100 + C 50 + E 50 + D 100 = 300, своя 100, сиротская B 100 → 500
-      A: { owesRub: 500, prizeRub: 1960, bountyRub: 500, netRub: 1960 },
-      B: { owesRub: 1000, prizeRub: 0, bountyRub: 0, netRub: -1000 },
-      C: { owesRub: 1000, prizeRub: 0, bountyRub: 0, netRub: -1000 },
-      D: { owesRub: 500, prizeRub: 840, bountyRub: 100, netRub: 440 },
-      E: { owesRub: 500, prizeRub: 0, bountyRub: 100, netRub: -400 },
+      // фонд 3500 → 2450 / 1050
+      A: { owesRub: 500, prizeRub: 2450, netRub: 1950 },
+      B: { owesRub: 1000, prizeRub: 0, netRub: -1000 },
+      C: { owesRub: 1000, prizeRub: 0, netRub: -1000 },
+      D: { owesRub: 500, prizeRub: 1050, netRub: 550 },
+      E: { owesRub: 500, prizeRub: 0, netRub: -500 },
     });
   });
 
-  it('до finish призов и «своей головы» нет', () => {
+  it('до finish призовых нет — у каждого только взнос', () => {
     const before = j.events.filter((e) => e.type !== 'finish');
     const mb = computeMoney(F, replay(F, before, j.now()));
-    expect(mb.A).toEqual({ owesRub: 500, prizeRub: 0, bountyRub: 300, netRub: -200 });
-    expect(mb.D?.prizeRub).toBe(0);
+    expect(mb.A).toEqual({ owesRub: 500, prizeRub: 0, netRub: -500 });
+    expect(mb.D).toEqual({ owesRub: 500, prizeRub: 0, netRub: -500 });
   });
 
   it('settlement: owes / awaits / settled, частичные платежи', () => {
     j.payment('B', 1000);
     j.payment('C', 400); // частично
-    j.payment('E', 400);
+    j.payment('E', 500);
     j.payment('A', -1000); // банкир выплатил часть выигрыша
-    const voided = j.payment('D', -440);
+    const voided = j.payment('D', -550);
     j.voidEvent(voided);
     const pays = paymentsFromEvents(j.events);
     expect(pays).toEqual([
       { playerId: 'B', amountRub: 1000 },
       { playerId: 'C', amountRub: 400 },
-      { playerId: 'E', amountRub: 400 },
+      { playerId: 'E', amountRub: 500 },
       { playerId: 'A', amountRub: -1000 },
     ]);
     const t = settlement(m, pays);
     expect(t).toEqual({
-      A: { dueRub: -1960, paidRub: -1000, remainingRub: -960, status: 'awaits' },
+      A: { dueRub: -1950, paidRub: -1000, remainingRub: -950, status: 'awaits' },
       B: { dueRub: 1000, paidRub: 1000, remainingRub: 0, status: 'settled' },
       C: { dueRub: 1000, paidRub: 400, remainingRub: 600, status: 'owes' },
-      D: { dueRub: -440, paidRub: 0, remainingRub: -440, status: 'awaits' },
-      E: { dueRub: 400, paidRub: 400, remainingRub: 0, status: 'settled' },
+      D: { dueRub: -550, paidRub: 0, remainingRub: -550, status: 'awaits' },
+      E: { dueRub: 500, paidRub: 500, remainingRub: 0, status: 'settled' },
     });
     expect(isSettled(t)).toBe(false);
 
     const rest = settlement(m, [
       ...pays,
       { playerId: 'C', amountRub: 600 },
-      { playerId: 'A', amountRub: -960 },
-      { playerId: 'D', amountRub: -440 },
+      { playerId: 'A', amountRub: -950 },
+      { playerId: 'D', amountRub: -550 },
     ]);
     expect(isSettled(rest)).toBe(true);
     // Переплата: игрок отдал больше, чем должен, — банкир должен вернуть.
@@ -121,57 +122,93 @@ describe('деньги: ручной расчёт вечера на 5 игрок
   });
 });
 
-describe('баунти', () => {
-  it('победитель забирает свою голову и сиротские', () => {
+describe('нокауты — только статистика, денег за голову нет', () => {
+  /** Один и тот же вечер на троих; меняется только то, кто выбил. */
+  function evening(byB: PlayerId[], byC: PlayerId[]): EveningState {
     const j = journal().join('A', 'B', 'C');
-    j.bust('B', []);
-    j.bust('C', ['A']);
+    j.start();
+    j.wait(5).bust('B', byB);
+    j.wait(5).bust('C', byC);
     j.finish();
-    const m = computeMoney(F, replay(F, j.events, j.now()));
-    expect(m.A?.bountyRub).toBe(300); // C + своя + сиротская B
-    expect(m.B?.bountyRub).toBe(0);
+    return replay(F, j.events, j.now());
+  }
+
+  it('фонд — все взносы, выигрыш победителя — только призовые', () => {
+    const s = evening([], ['A']);
+    expect(s.prizePoolRub).toBe(1500);
+    expect(computeMoney(F, s)).toEqual({
+      // 1500 → 1050 / 450
+      A: { owesRub: 500, prizeRub: 1050, netRub: 550 },
+      B: { owesRub: 500, prizeRub: 0, netRub: -500 },
+      C: { owesRub: 500, prizeRub: 450, netRub: -50 },
+    });
   });
 
-  it('сплит на 3: делится в целых рублях, остаток — первому в списке', () => {
+  it('нокаут не меняет деньги: выбил один, никто или двое — таблица та же', () => {
+    const base = computeMoney(F, evening([], []));
+    expect(computeMoney(F, evening(['A'], ['A']))).toEqual(base);
+    expect(computeMoney(F, evening(['C'], ['A']))).toEqual(base);
+    expect(computeMoney(F, evening(['A', 'C'], ['A']))).toEqual(base);
+    expect(evening(['A', 'C'], ['A']).players.A?.kos).toBe(2);
+    expect(evening([], []).players.A?.kos).toBe(0);
+  });
+
+  it('сплит нокаута: нокаут каждому из выбивших, денег ни у кого', () => {
     const j = journal().join('A', 'B', 'C', 'D');
     j.bust('D', ['C', 'A', 'B']);
     const s = replay(F, j.events, j.now());
-    expect([
-      s.players.C?.bountyWonRub,
-      s.players.A?.bountyWonRub,
-      s.players.B?.bountyWonRub,
-    ]).toEqual([34, 33, 33]);
     expect([s.players.A?.kos, s.players.B?.kos, s.players.C?.kos]).toEqual([1, 1, 1]);
+    expect([s.players.A, s.players.B, s.players.C].map((p) => p?.koVictims)).toEqual([
+      ['D'],
+      ['D'],
+      ['D'],
+    ]);
+    expect(s.prizePoolRub).toBe(2000);
+    const m = computeMoney(F, s);
+    for (const id of ['A', 'B', 'C', 'D']) {
+      expect(m[id]).toEqual({ owesRub: 500, prizeRub: 0, netRub: -500 });
+    }
   });
 
-  it('сплит на 2', () => {
-    const fmt: TournamentFormat = { ...F, bountyRub: 75 };
-    const j = journal().join('A', 'B', 'C');
+  it('сплит нокаута кратного входа: нокаут каждому, призовые — по местам', () => {
+    const j = journal().join('A', 'B');
+    j.joinStacks('C', 3);
     j.bust('C', ['B', 'A']);
-    const s = replay(fmt, j.events, j.now());
-    expect([s.players.B?.bountyWonRub, s.players.A?.bountyWonRub]).toEqual([38, 37]);
+    j.bust('B', ['A']);
+    j.finish();
+    const s = replay(F, j.events, j.now());
+    expect([s.players.A?.kos, s.players.B?.kos]).toEqual([2, 1]);
+    // Фонд 5 × 500 = 2500 → 1750 / 750.
+    expect(computeMoney(F, s)).toEqual({
+      A: { owesRub: 500, prizeRub: 1750, netRub: 1250 },
+      B: { owesRub: 500, prizeRub: 750, netRub: 250 },
+      C: { owesRub: 1500, prizeRub: 0, netRub: -1500 },
+    });
+  });
+
+  it('формат с bountyRub (до 07.10.2026) считается так же, как без него', () => {
+    const legacy = { ...F, bountyRub: 100 } as TournamentFormat;
+    expect(validateFormat(legacy)).toEqual([]);
+    const j = journal().join('A', 'B');
+    j.joinStacks('C', 2);
+    j.start();
+    j.wait(5).bust('C', ['A']);
+    j.wait(5).bust('B', []);
+    j.finish();
+    const s = replay(legacy, j.events, j.now());
+    expect(s).toEqual(replay(F, j.events, j.now()));
+    expect(s.prizePoolRub).toBe(2000);
+    expect(computeMoney(legacy, s)).toEqual(computeMoney(F, s));
   });
 });
 
 describe('вход и ребай кратно стандартному', () => {
-  it('entryAmounts: вход на 1 000 ₽ — голова 200, в фонд 800, 1 000 фишек', () => {
-    expect(entryAmounts(F, 2)).toEqual({
-      stacks: 2,
-      rub: 1000,
-      chips: 1000,
-      bountyRub: 200,
-      poolRub: 800,
-    });
-    expect(entryAmounts(F)).toEqual({
-      stacks: 1,
-      rub: 500,
-      chips: 500,
-      bountyRub: 100,
-      poolRub: 400,
-    });
+  it('entryAmounts: вход на 1 000 ₽ — 1 000 фишек, весь взнос в фонд', () => {
+    expect(entryAmounts(F, 2)).toEqual({ stacks: 2, rub: 1000, chips: 1000 });
+    expect(entryAmounts(F)).toEqual({ stacks: 1, rub: 500, chips: 500 });
   });
 
-  it('вход ×2: взнос 1 000, фонд +800, голова 200 уходит выбившему', () => {
+  it('вход ×2: взнос 1 000, фонд +1 000', () => {
     const j = journal().join('A', 'B');
     j.joinStacks('C', 2);
     j.start();
@@ -179,80 +216,45 @@ describe('вход и ребай кратно стандартному', () => {
     expect(s.totalEntries).toBe(3);
     expect(s.totalStacks).toBe(4);
     expect(s.totalChips).toBe(2000);
-    expect(s.prizePoolRub).toBe(1600);
-    expect(s.bountyPoolRub).toBe(400);
-    expect(s.players.C).toMatchObject({ entries: 1, stacks: 2, currentStacks: 2 });
+    expect(s.prizePoolRub).toBe(2000);
+    expect(s.players.C).toMatchObject({ entries: 1, stacks: 2 });
 
     j.wait(5).bust('C', ['A']);
-    s = replay(F, j.events, j.now());
-    expect(s.players.A?.bountyWonRub).toBe(200);
     j.wait(5).bust('B', ['A']);
     j.finish();
     s = replay(F, j.events, j.now());
     expect(computeMoney(F, s)).toEqual({
-      // фонд 1600: 1120 / 480; головы A: C 200 + B 100 + своя 100
-      A: { owesRub: 500, prizeRub: 1120, bountyRub: 400, netRub: 1020 },
-      B: { owesRub: 500, prizeRub: 480, bountyRub: 0, netRub: -20 },
-      C: { owesRub: 1000, prizeRub: 0, bountyRub: 0, netRub: -1000 },
+      // фонд 2000: 1400 / 600
+      A: { owesRub: 500, prizeRub: 1400, netRub: 900 },
+      B: { owesRub: 500, prizeRub: 600, netRub: 100 },
+      C: { owesRub: 1000, prizeRub: 0, netRub: -1000 },
     });
   });
 
-  it('ребаи разной кратности: у каждого входа своя голова, победитель забирает голову текущего', () => {
+  it('ребаи разной кратности: взнос — по сумме кратностей, призовые = взносы', () => {
     const j = journal();
     j.joinStacks('A', 2);
     j.join('B', 'C');
     j.start();
-    j.wait(5).bust('A', ['B']); // голова входа ×2 — 200
+    j.wait(5).bust('A', ['B']);
     j.rebuy('A'); // ×1 без поля
-    j.wait(5).bust('A', ['C']); // голова уже 100
+    j.wait(5).bust('A', ['C']);
     j.rebuy('A', 3);
-    j.wait(5).bust('B', ['A']); // 100
-    j.wait(5).bust('C', ['A']); // 100
+    j.wait(5).bust('B', ['A']);
+    j.wait(5).bust('C', ['A']);
     j.finish();
     const s = replay(F, j.events, j.now());
     expect(s.errors).toEqual([]);
-    expect(s.players.A).toMatchObject({ entries: 3, rebuys: 2, stacks: 6, currentStacks: 3 });
+    expect(s.players.A).toMatchObject({ entries: 3, rebuys: 2, stacks: 6, kos: 2 });
     expect(s.totalStacks).toBe(8);
-    expect(s.prizePoolRub).toBe(3200);
+    expect(s.prizePoolRub).toBe(4000);
     const m = computeMoney(F, s);
-    // A: взносы 6×500; головы B и C по 100 + своя голова входа ×3 — 300.
-    expect(m.A).toEqual({ owesRub: 3000, prizeRub: 2240, bountyRub: 500, netRub: -260 });
-    expect(m.B).toEqual({ owesRub: 500, prizeRub: 0, bountyRub: 200, netRub: -300 });
-    expect(m.C).toEqual({ owesRub: 500, prizeRub: 960, bountyRub: 100, netRub: 560 });
+    // Фонд 4000 → 2800 / 1200; A внёс 6 × 500.
+    expect(m.A).toEqual({ owesRub: 3000, prizeRub: 2800, netRub: -200 });
+    expect(m.B).toEqual({ owesRub: 500, prizeRub: 0, netRub: -500 });
+    expect(m.C).toEqual({ owesRub: 500, prizeRub: 1200, netRub: 700 });
     const all = Object.values(m);
-    expect(sum(all.map((x) => x.prizeRub + x.bountyRub))).toBe(sum(all.map((x) => x.owesRub)));
-  });
-
-  it('сплит головы ×2 на троих: 200 → 68 / 66 / 66 (остаток — первому в списке)', () => {
-    const j = journal().join('A', 'B', 'C');
-    j.joinStacks('D', 2);
-    j.bust('D', ['C', 'A', 'B']);
-    const s = replay(F, j.events, j.now());
-    expect([
-      s.players.C?.bountyWonRub,
-      s.players.A?.bountyWonRub,
-      s.players.B?.bountyWonRub,
-    ]).toEqual([68, 66, 66]);
-  });
-
-  it('сплит неделимой головы ×3 при 75 ₽: 225 на двоих → 113 / 112', () => {
-    const fmt: TournamentFormat = { ...F, bountyRub: 75 };
-    const j = journal().join('A', 'B');
-    j.joinStacks('C', 3);
-    j.bust('C', ['B', 'A']);
-    const s = replay(fmt, j.events, j.now());
-    expect([s.players.B?.bountyWonRub, s.players.A?.bountyWonRub]).toEqual([113, 112]);
-  });
-
-  it('сиротская голова входа ×3 уходит победителю целиком', () => {
-    const j = journal().join('A', 'B');
-    j.joinStacks('C', 3);
-    j.bust('C', []); // 300 — сиротская
-    j.bust('B', ['A']);
-    j.finish();
-    const m = computeMoney(F, replay(F, j.events, j.now()));
-    expect(m.A?.bountyRub).toBe(100 + 100 + 300); // B + своя + сиротская ×3
-    expect(m.C).toEqual({ owesRub: 1500, prizeRub: 0, bountyRub: 0, netRub: -1500 });
+    expect(sum(all.map((x) => x.prizeRub))).toBe(sum(all.map((x) => x.owesRub)));
   });
 
   it('старые события без stacks и явный stacks: 1 дают одно и то же', () => {
@@ -278,20 +280,13 @@ describe('вход и ребай кратно стандартному', () => {
 // ---------- инвариант сохранения денег на сгенерированных вечерах ----------
 
 const PAYOUTS: number[][] = [[70, 30], [100], [50, 30, 20], [33.3, 33.3, 33.4], [60, 25, 10, 5]];
-const BUYINS: [number, number][] = [
-  [500, 100],
-  [500, 0],
-  [300, 33],
-  [1000, 1],
-  [7, 7],
-  [500, 500],
-  [101, 50],
-];
+const BUYINS: number[] = [500, 300, 1000, 7, 101, 1, 333];
 
 interface Coverage {
   split2: number;
   split3: number;
-  orphan: number;
+  /** Вылеты без выбивших. */
+  noKiller: number;
   rebuys: number;
   finishOpen: number;
   lateJoin: number;
@@ -300,35 +295,30 @@ interface Coverage {
   multi: number;
   /** Ребай другой кратности, чем вход (или прошлый ребай) того же игрока. */
   mixedRebuy: number;
-  /** Сплит головы, которая не делится на число выбивших нацело. */
-  unevenSplit: number;
-  /** Сиротская голова входа кратностью больше 1. */
-  multiOrphan: number;
+  /** Фонд, который по долям не делится нацело: рубль от округления уходит 1-му месту. */
+  unevenPayout: number;
 }
 
 const newCoverage = (): Coverage => ({
   split2: 0,
   split3: 0,
-  orphan: 0,
+  noKiller: 0,
   rebuys: 0,
   finishOpen: 0,
   lateJoin: 0,
   players: new Set(),
   multi: 0,
   mixedRebuy: 0,
-  unevenSplit: 0,
-  multiOrphan: 0,
+  unevenPayout: 0,
 });
 
 function randomEvening(seed: number, cov: Coverage) {
   const r = prng(seed);
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(r() * xs.length)] as T;
   const n = 2 + Math.floor(r() * 5); // 2..6
-  const [buyInRub, bountyRub] = pick(BUYINS);
   const fmt: TournamentFormat = {
     ...F,
-    buyInRub,
-    bountyRub,
+    buyInRub: pick(BUYINS),
     payoutPct: pick(PAYOUTS),
     rebuyLimit: r() < 0.2 ? 1 : null,
     // Короткие уровни — чтобы ребаи закрывались и до, и после окончания игры.
@@ -399,12 +389,9 @@ function randomEvening(seed: number, cov: Coverage) {
       if (!by.includes(c)) by.push(c);
     }
     j.bust(victim, by);
-    const head = fmt.bountyRub * (current.get(victim) ?? 1);
-    if (k === 0) cov.orphan += 1;
-    if (k === 0 && (current.get(victim) ?? 1) > 1) cov.multiOrphan += 1;
+    if (k === 0) cov.noKiller += 1;
     if (k === 2) cov.split2 += 1;
     if (k === 3) cov.split3 += 1;
-    if (k > 1 && head % k !== 0) cov.unevenSplit += 1;
     if (
       s.rebuysOpen &&
       r() < 0.4 &&
@@ -419,56 +406,56 @@ function randomEvening(seed: number, cov: Coverage) {
   if (finishedOpen) cov.finishOpen += 1;
   cov.rebuys += sum(s.joinOrder.map((id) => s.players[id]?.rebuys ?? 0));
   cov.players.add(s.joinOrder.length);
+  const places = Math.min(s.joinOrder.length, fmt.payoutPct.length);
+  const pcts = fmt.payoutPct.slice(0, places);
+  const pctSum = sum(pcts);
+  if (pcts.some((p) => !Number.isInteger((s.prizePoolRub * p) / pctSum))) cov.unevenPayout += 1;
   return { fmt, s, j };
 }
 
 interface Expected {
   /** Взносы игрока: buyInRub × кратность каждого его входа и ребая. */
   owesRub: Map<PlayerId, number>;
-  /** Головы за нокауты: голова ТЕКУЩЕГО входа жертвы, делёж вниз до рубля, остаток — первому. */
-  wonRub: Map<PlayerId, number>;
-  /** Кратность текущего входа (у победителя — та, чью голову он забирает себе). */
-  current: Map<PlayerId, number>;
-  /** Сиротские головы — каждая своей кратности. */
-  orphanRub: number;
+  /** Нокауты: каждому из by, при дележе — каждому. */
+  kos: Map<PlayerId, number>;
 }
 
 /**
- * Независимый пересчёт денег по журналу — без replay и computeMoney: кратность из payload, голова
- * жертвы — от её последнего входа. Годится для журналов, где все события приняты (errors = []).
+ * Независимый пересчёт по журналу — без replay и computeMoney: кратность из payload, нокаут —
+ * каждому из by. Годится для журналов, где все события приняты (errors = []).
  */
-function expectedMoney(fmt: TournamentFormat, events: readonly EveningEvent[]): Expected {
-  const e: Expected = { owesRub: new Map(), wonRub: new Map(), current: new Map(), orphanRub: 0 };
+function expectedFromJournal(fmt: TournamentFormat, events: readonly EveningEvent[]): Expected {
+  const e: Expected = { owesRub: new Map(), kos: new Map() };
   const add = (map: Map<PlayerId, number>, id: PlayerId, v: number) =>
     map.set(id, (map.get(id) ?? 0) + v);
   for (const ev of [...events].sort((a, b) => a.id - b.id)) {
     if (ev.voided) continue;
     const p = ev.payload as { playerId: PlayerId; stacks?: number; by?: PlayerId[] };
     if (ev.type === 'join' || ev.type === 'rebuy') {
-      const k = p.stacks ?? 1;
-      add(e.owesRub, p.playerId, fmt.buyInRub * k);
-      e.current.set(p.playerId, k);
+      add(e.owesRub, p.playerId, fmt.buyInRub * (p.stacks ?? 1));
     } else if (ev.type === 'bust') {
-      const by = p.by ?? [];
-      const head = fmt.bountyRub * (e.current.get(p.playerId) ?? 1);
-      if (by.length === 0) {
-        e.orphanRub += head;
-        continue;
-      }
-      const share = Math.floor(head / by.length);
-      by.forEach((id, i) => add(e.wonRub, id, share + (i === 0 ? head - share * by.length : 0)));
+      for (const id of p.by ?? []) add(e.kos, id, 1);
     }
   }
   return e;
 }
 
+/** Тот же журнал, где ни у одного вылета нет выбивших: деньги от этого меняться не должны. */
+function withoutKillers(events: readonly EveningEvent[]): EveningEvent[] {
+  return events.map((ev) =>
+    ev.type === 'bust'
+      ? { ...ev, payload: { ...(ev.payload as { playerId: PlayerId }), by: [] } }
+      : ev,
+  );
+}
+
 /**
  * Полная проверка завершённого вечера одним сравнением (перебор ниже гоняет её десятки тысяч раз):
- * журнал принят целиком, места полны; инвариант prize + bounty = owes, сумма нетто — ноль; фонд и
- * головы — ровно взносы; суммы целые и неотрицательные, взнос кратен buyIn; независимый пересчёт
- * взносов и голов (expectedMoney); расчёт с банкиром сходится, когда каждый закрыл свой остаток.
- * Сам инвариант держится по построению computeMoney, а независимый пересчёт ловит потерю рубля при
- * дележе или голову не той кратности: «лишнее» иначе молча уехало бы победителю.
+ * журнал принят целиком, места полны; инвариант Σ призовых = Σ взносов, сумма нетто — ноль; фонд —
+ * ровно взносы; призовые места — доменная раскладка фонда по местам; суммы целые и
+ * неотрицательные, взнос кратен buyIn; в строке денег только взнос, призовые и нетто; независимый
+ * пересчёт взносов и нокаутов; тот же журнал без выбивших даёт ту же денежную таблицу; расчёт с
+ * банкиром сходится, когда каждый закрыл свой остаток.
  */
 function checkFinished(
   fmt: TournamentFormat,
@@ -481,35 +468,38 @@ function checkFinished(
   const rows = ids.map((id) => m[id]);
   const all = rows.filter((x): x is NonNullable<typeof x> => x !== undefined);
   const owes = sum(all.map((x) => x.owesRub));
-  const exp = expectedMoney(fmt, events);
-  const winner = s.places[0] as PlayerId;
+  const exp = expectedFromJournal(fmt, events);
+  const prizesByPlace = payouts(s.prizePoolRub, fmt.payoutPct, ids.length);
   const t0 = settlement(m, []);
   const pays = ids
     .map((id) => ({ playerId: id, amountRub: t0[id]?.dueRub ?? 0 }))
     .filter((p) => p.amountRub !== 0);
   const byId = (f: (id: PlayerId) => number | undefined) =>
     Object.fromEntries(ids.map((id) => [id, f(id)]));
+  const noKillers = withoutKillers(events);
+  // После finish время на деньги не влияет; берём момент последнего события.
+  const lastMs = Math.max(...events.map((e) => Date.parse(e.at)));
 
   const actual = {
     errors: s.errors,
     finished: s.finished,
     places: [s.places.length, new Set(s.places).size],
     rows: all.length,
-    paid: sum(all.map((x) => x.prizeRub + x.bountyRub)),
+    paid: sum(all.map((x) => x.prizeRub)),
     net: sum(all.map((x) => x.netRub)),
-    prizes: sum(all.map((x) => x.prizeRub)),
-    poolAndHeads: s.prizePoolRub + s.bountyPoolRub,
+    pool: s.prizePoolRub,
+    keys: [...new Set(all.map((x) => Object.keys(x).sort().join(',')))],
     malformed: all.filter(
       (x) =>
-        ![x.owesRub, x.prizeRub, x.bountyRub, x.netRub].every(Number.isInteger) ||
+        ![x.owesRub, x.prizeRub, x.netRub].every(Number.isInteger) ||
         x.prizeRub < 0 ||
-        x.bountyRub < 0 ||
+        x.netRub !== x.prizeRub - x.owesRub ||
         x.owesRub % fmt.buyInRub !== 0,
     ).length,
     owes: byId((id) => m[id]?.owesRub),
-    won: byId((id) => s.players[id]?.bountyWonRub),
-    bounty: byId((id) => m[id]?.bountyRub),
-    winnerStacks: s.players[winner]?.currentStacks,
+    prize: byId((id) => m[id]?.prizeRub),
+    kos: byId((id) => s.players[id]?.kos),
+    noKillersMoney: computeMoney(fmt, replay(fmt, noKillers, lastMs)),
     dueSum: sum(Object.values(t0).map((x) => x.dueRub)),
     settled: isSettled(settlement(m, pays)),
   };
@@ -520,19 +510,17 @@ function checkFinished(
     rows: ids.length,
     paid: owes,
     net: 0,
-    prizes: s.prizePoolRub,
-    // (buyIn − bounty)·Σk + bounty·Σk = buyIn·Σk
-    poolAndHeads: owes,
+    // Весь взнос — в фонд: buyIn·Σk.
+    pool: owes,
+    keys: ['netRub,owesRub,prizeRub'],
     malformed: 0,
     owes: byId((id) => exp.owesRub.get(id) ?? 0),
-    won: byId((id) => exp.wonRub.get(id) ?? 0),
-    // Победителю — свои нокауты + голова его текущего входа + каждая сиротская (своей кратности).
-    bounty: byId((id) =>
-      id === winner
-        ? (exp.wonRub.get(id) ?? 0) + fmt.bountyRub * (exp.current.get(id) ?? 1) + exp.orphanRub
-        : (exp.wonRub.get(id) ?? 0),
-    ),
-    winnerStacks: exp.current.get(winner) ?? 1,
+    prize: byId((id) => {
+      const place = s.places.indexOf(id) + 1;
+      return place > 0 ? (prizesByPlace[place - 1] ?? 0) : 0;
+    }),
+    kos: byId((id) => exp.kos.get(id) ?? 0),
+    noKillersMoney: m,
     dueSum: 0,
     settled: true,
   };
@@ -540,8 +528,8 @@ function checkFinished(
   return m;
 }
 
-describe('инвариант: сумма prize + bounty = сумма owes', () => {
-  it('на 3000 сгенерированных вечерах (2–6 игроков, кратные входы и ребаи, сплиты, сиротские головы)', () => {
+describe('инвариант: сумма призовых = сумма взносов', () => {
+  it('на 3000 сгенерированных вечерах (2–6 игроков, кратные входы и ребаи, сплиты, вылеты без выбивших)', () => {
     const cov = newCoverage();
     for (let seed = 1; seed <= 3000; seed++) {
       const { fmt, s, j } = randomEvening(seed, cov);
@@ -557,28 +545,28 @@ describe('инвариант: сумма prize + bounty = сумма owes', () =
     // Генератор действительно покрыл нужные случаи.
     expect(cov.split2).toBeGreaterThan(100);
     expect(cov.split3).toBeGreaterThan(50);
-    expect(cov.orphan).toBeGreaterThan(100);
+    expect(cov.noKiller).toBeGreaterThan(100);
     expect(cov.rebuys).toBeGreaterThan(100);
     expect(cov.finishOpen).toBeGreaterThan(10);
     expect(cov.lateJoin).toBeGreaterThan(10);
     expect(cov.multi).toBeGreaterThan(1000);
     expect(cov.mixedRebuy).toBeGreaterThan(100);
-    expect(cov.unevenSplit).toBeGreaterThan(50);
-    expect(cov.multiOrphan).toBeGreaterThan(50);
+    expect(cov.unevenPayout).toBeGreaterThan(100);
     expect([...cov.players].sort()).toEqual([2, 3, 4, 5, 6]);
   });
 
-  it('до finish: розданные головы + нераспределённые = все головы', () => {
+  it('до finish: фонд — все взносы, призовых ещё нет', () => {
     const cov = newCoverage();
     for (let seed = 5001; seed <= 5300; seed++) {
       const { fmt, j } = randomEvening(seed, cov);
       const open = j.events.filter((e) => e.type !== 'finish' && e.type !== 'payment');
       const s = replay(fmt, open, j.now());
       const m = computeMoney(fmt, s);
-      const bounty = sum(Object.values(m).map((x) => x.bountyRub));
-      expect(bounty).toBeLessThanOrEqual(s.bountyPoolRub);
-      expect(s.bountyPoolRub).toBe(s.totalStacks * fmt.bountyRub);
+      const owes = sum(Object.values(m).map((x) => x.owesRub));
+      expect(s.prizePoolRub).toBe(owes);
+      expect(s.prizePoolRub).toBe(s.totalStacks * fmt.buyInRub);
       expect(sum(Object.values(m).map((x) => x.prizeRub))).toBe(0);
+      expect(Object.values(m).every((x) => x.netRub === -x.owesRub)).toBe(true);
     }
   });
 });
@@ -587,13 +575,12 @@ describe('инвариант: сумма prize + bounty = сумма owes', () =
 
 /**
  * Все вечера на трёх игроков: каждый входит ×1 (без поля stacks, как старые события) или ×2, любой
- * вылет с любым упорядоченным списком выбивших (порядок важен: остаток головы — первому), один
- * ребай за вечер ×1 или ×3 любым вылетевшим в любой момент, finish, когда остался один. Голова
- * 75 ₽: головы 75 и 225 (×3) на двоих нацело не делятся — рубль от округления виден, 150 (×2)
- * делится. Около 22 тысяч вечеров.
+ * вылет с любым упорядоченным списком выбивших, один ребай за вечер ×1 или ×3 любым вылетевшим в
+ * любой момент, finish, когда остался один. Вход 333 ₽: фонд по 70/30 нацело не делится — рубль от
+ * округления виден. Около 22 тысяч вечеров.
  */
 describe('перебор: все маленькие вечера на трёх игроков', () => {
-  const FMT: TournamentFormat = { ...F, buyInRub: 500, bountyRub: 75, payoutPct: [70, 30] };
+  const FMT: TournamentFormat = { ...F, buyInRub: 333, payoutPct: [70, 30] };
   const IDS = ['A', 'B', 'C'];
   const MAX_REBUYS = 1;
   const REBUY_STACKS = [1, 3];
@@ -663,7 +650,7 @@ describe('перебор: все маленькие вечера на трёх �
 
   it('инвариант и независимый пересчёт на каждом листе', () => {
     let leaves = 0;
-    let sawMixed = 0;
+    let sawTripleRebuy = 0;
     for (const a of [1, 2])
       for (const b of [1, 2])
         for (const c of [1, 2]) {
@@ -679,11 +666,16 @@ describe('перебор: все маленькие вечера на трёх �
             leaves += 1;
             const s = replay(FMT, leaf, Date.parse('2026-10-08T16:00:00.000Z'));
             checkFinished(FMT, s, leaf, `лист ${leaves}`);
-            if (new Set(IDS.map((id) => s.players[id]?.currentStacks)).size > 1) sawMixed += 1;
+            if (
+              leaf.some(
+                (e) => e.type === 'rebuy' && (e.payload as { stacks?: number }).stacks === 3,
+              )
+            )
+              sawTripleRebuy += 1;
           }
         }
-    // Перебор действительно большой и с разными кратностями на руках к финишу.
+    // Перебор действительно большой и с ребаями ×3.
     expect(leaves).toBe(8 * 2820);
-    expect(sawMixed).toBeGreaterThan(1000);
+    expect(sawTripleRebuy).toBeGreaterThan(1000);
   });
 });

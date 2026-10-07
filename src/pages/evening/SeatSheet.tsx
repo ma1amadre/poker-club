@@ -3,12 +3,30 @@
 // Кратность входа (×1 по умолчанию) — одна на всех, кого сажают этим нажатием, и на гостя: кто
 // входит на другую сумму, того сажают отдельно. После гостя кратность возвращается к ×1 — иначе
 // выбранная для него сумма молча досталась бы всем отмеченным; при ×k сумма видна на кнопке.
+// Гость: повтор после ошибки или тайм-аута уходит с тем же ключом повтора (useAddGuest, миграция
+// 019) — второго гостя не будет. Если прошлая попытка дошла и гость уже в журнале, повтор не
+// уходит молча новым ключом: «Запись уже в журнале» — не записывать или записать ещё одного
+// (confirmIfLanded). Вписанное имя уже есть в клубе — подсказка посадить того же человека одной
+// кнопкой, а не заводить дубль.
 import { entryAmounts } from '@domain/money.ts';
 import { useState } from 'react';
-import { RSVP_STATUS_META, useAddGuest, usePlayers, type Rsvp } from '../../shared/api';
+import {
+  guestRetryIntent,
+  RSVP_STATUS_META,
+  useAddGuest,
+  usePlayers,
+  type Rsvp,
+} from '../../shared/api';
 import { formatRub, pluralWithNumber } from '../../shared/lib';
-import { Button, Field, PlayerPicker, Sheet, useToast } from '../../shared/ui';
-import { entryPayload, normalizeGuestName, seatButtonLabel, seatCandidates } from './lib';
+import { Button, Field, Notice, PlayerPicker, Sheet, useToast } from '../../shared/ui';
+import {
+  entryPayload,
+  nameMatches,
+  nameMatchNotice,
+  normalizeGuestName,
+  seatButtonLabel,
+  seatCandidates,
+} from './lib';
 import { StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -41,7 +59,11 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
   const [guestError, setGuestError] = useState<string | null>(null);
   const [seating, setSeating] = useState(false);
   const [stacks, setStacks] = useState(1);
+  const [seatingMatch, setSeatingMatch] = useState(false);
+  // Вопрос «Запись уже в журнале» для гостя: шторка не закрывается, кнопки ждут ответа.
+  const [guestAsking, setGuestAsking] = useState(false);
   const entryRub = entryAmounts(model.evening.format, stacks).rub;
+  const match = nameMatchNotice(nameMatches(players, model.state, guestName));
 
   // Регистрация открыта? Проверяем доменом на «новом» игроке — тот же canApply, что у join.
   const closedReason = actions.check(
@@ -94,6 +116,15 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
       return;
     }
     setGuestError(null);
+    setGuestAsking(true);
+    const landed = await actions.confirmIfLanded(guestRetryIntent(model.evening.id, name, stacks));
+    setGuestAsking(false);
+    if (landed) {
+      // Гость уже сел прошлым нажатием, банкир не стал заводить второго.
+      setGuestName('');
+      setStacks(1);
+      return;
+    }
     try {
       await addGuest.mutateAsync({ name, stacks });
       setGuestName('');
@@ -107,7 +138,23 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     }
   };
 
-  const busy = seating || addGuest.isPending;
+  // Вписанное имя уже есть в клубе: посадить того же человека, а не заводить нового гостя.
+  const seatMatch = async (playerId: string) => {
+    setSeatingMatch(true);
+    const record = await actions.send('join', entryPayload(playerId, stacks));
+    setSeatingMatch(false);
+    if (!record) return;
+    const name = players.find((p) => p.id === playerId)?.display_name ?? 'Игрок';
+    setGuestName('');
+    setStacks(1);
+    setSelected((ids) => ids.filter((id) => id !== playerId));
+    toast.show(`${name} за столом`, {
+      tone: 'positive',
+      detail: stacks > 1 ? `Вход — ${formatRub(entryRub)}.` : undefined,
+    });
+  };
+
+  const busy = seating || seatingMatch || guestAsking || addGuest.isPending;
 
   return (
     <Sheet
@@ -127,7 +174,13 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
           block
           icon="user-plus"
           loading={seating}
-          disabled={selected.length === 0 || Boolean(closedReason) || addGuest.isPending}
+          disabled={
+            selected.length === 0 ||
+            Boolean(closedReason) ||
+            addGuest.isPending ||
+            seatingMatch ||
+            guestAsking
+          }
           onClick={() => void seat()}
         >
           {seatButtonLabel(selected.length, model.evening.format, stacks)}
@@ -177,11 +230,34 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
             onChange={(event) => setGuestName(event.target.value)}
             disabled={Boolean(closedReason) || busy}
           />
+          {match && !closedReason && (
+            <Notice
+              tone="info"
+              title={match.title}
+              action={
+                match.seat ? (
+                  <Button
+                    size="sm"
+                    icon="user-plus"
+                    loading={seatingMatch}
+                    disabled={busy}
+                    onClick={() => {
+                      if (match.seat) void seatMatch(match.seat.playerId);
+                    }}
+                  >
+                    {match.seat.label}
+                  </Button>
+                ) : undefined
+              }
+            >
+              {match.text}
+            </Notice>
+          )}
           <Button
             type="submit"
             icon="plus"
             loading={addGuest.isPending}
-            disabled={Boolean(closedReason) || seating}
+            disabled={Boolean(closedReason) || seating || seatingMatch || guestAsking}
           >
             Добавить гостя
           </Button>

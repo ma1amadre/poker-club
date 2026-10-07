@@ -75,16 +75,12 @@ function levelsText(format: TournamentFormat): string {
   return same ? `${count} по${NBSP}${describeTrigger(first)}` : count;
 }
 
-/** Формат вечера: взнос, фишки, баунти, ребаи, призовые и блайнды по уровням. */
+/** Формат вечера: взнос, фишки, ребаи, призовые и блайнды по уровням. */
 export function FormatSummary({ format }: { format: TournamentFormat }) {
   const facts: [string, string][] = [
     [
       'Взнос',
       `${formatRub(format.buyInRub)} · ${formatNumber(format.startingChips)}${NBSP}${plural(format.startingChips, ['фишка', 'фишки', 'фишек'])}`,
-    ],
-    [
-      'За голову',
-      `${formatRub(format.bountyRub)}, в фонд — ${formatRub(format.buyInRub - format.bountyRub)}`,
     ],
     ['Ребаи', rebuyText(format)],
     ['Призовые', `${format.payoutPct.join(' / ')}${NBSP}%`],

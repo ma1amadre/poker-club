@@ -129,7 +129,7 @@ export function playEvening(
 
 /**
  * Простой вечер по итоговым местам (index 0 — победитель). Вылетают снизу вверх.
- * ko: 'winner' — всех выбивает победитель, 'none' — никто (сиротские головы).
+ * ko: 'winner' — всех выбивает победитель, 'none' — никто (вылеты без выбивших).
  */
 export function simpleEvening(
   eveningId: string,

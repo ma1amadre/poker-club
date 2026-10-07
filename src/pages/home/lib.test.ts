@@ -239,8 +239,8 @@ describe('незакрытые расчёты', () => {
     }));
   }
 
-  // A выбивает B. Фонд 2 × 400 = 800 → 560 / 240. A: взнос 500, приз 560, головы 200 (B и своя)
-  // → банкир должен A 260. B: взнос 500, приз 240 → B должен банкиру 260.
+  // A выбивает B. Фонд 2 × 500 = 1000 → 700 / 300 (нокаут на деньги не влияет). A: взнос 500,
+  // приз 700 → банкир должен A 200. B: взнос 500, приз 300 → B должен банкиру 200.
   const log = events([
     ['join', { playerId: 'A' }],
     ['join', { playerId: 'B' }],
@@ -260,10 +260,10 @@ describe('незакрытые расчёты', () => {
   it('кто кому должен', () => {
     const map = new Map([['e1', log]]);
     expect(openSettlements([evening()], map, 'A').debts).toEqual([
-      expect.objectContaining({ kind: 'await', amountRub: 260, bankerId: 'C' }),
+      expect.objectContaining({ kind: 'await', amountRub: 200, bankerId: 'C' }),
     ]);
     expect(openSettlements([evening()], map, 'B').debts).toEqual([
-      expect.objectContaining({ kind: 'owe', amountRub: 260 }),
+      expect.objectContaining({ kind: 'owe', amountRub: 200 }),
     ]);
     expect(openSettlements([evening()], map, 'Z').debts).toEqual([]);
   });
@@ -272,11 +272,11 @@ describe('незакрытые расчёты', () => {
     const partial = [...log, ...events([['payment', { playerId: 'B', amountRub: 100 }]])].map(
       (e, i) => ({ ...e, id: i + 1 }),
     );
-    const full = [...log, ...events([['payment', { playerId: 'B', amountRub: 260 }]])].map(
+    const full = [...log, ...events([['payment', { playerId: 'B', amountRub: 200 }]])].map(
       (e, i) => ({ ...e, id: i + 1 }),
     );
     expect(openSettlements([evening()], new Map([['e1', partial]]), 'B').debts[0]?.amountRub).toBe(
-      160,
+      100,
     );
     expect(openSettlements([evening()], new Map([['e1', full]]), 'B').debts).toEqual([]);
   });
@@ -289,16 +289,16 @@ describe('незакрытые расчёты', () => {
   });
 
   it('банкир-игрок: остальные рассчитались — напоминание про свою строку и закрытие', () => {
-    // Банкир A выиграл: ему причитается 260 (своя строка −260), B должен 260.
-    const paid = [...log, ...events([['payment', { playerId: 'B', amountRub: 260 }]])].map(
+    // Банкир A выиграл: ему причитается 200 (своя строка −200), B должен 200.
+    const paid = [...log, ...events([['payment', { playerId: 'B', amountRub: 200 }]])].map(
       (e, i) => ({ ...e, id: i + 1 }),
     );
-    const own = [...paid, ...events([['payment', { playerId: 'A', amountRub: -260 }]])].map(
+    const own = [...paid, ...events([['payment', { playerId: 'A', amountRub: -200 }]])].map(
       (e, i) => ({ ...e, id: i + 1 }),
     );
     const onlySelf = openSettlements([evening({ banker_id: 'A' })], new Map([['e1', paid]]), 'A');
     expect(onlySelf.banker).toEqual([
-      expect.objectContaining({ pending: 0, selfRemainingRub: -260, allSettled: false }),
+      expect.objectContaining({ pending: 0, selfRemainingRub: -200, allSettled: false }),
     ]);
     const allZero = openSettlements([evening({ banker_id: 'A' })], new Map([['e1', own]]), 'A');
     expect(allZero.banker).toEqual([
@@ -315,7 +315,7 @@ describe('незакрытые расчёты', () => {
     const map = new Map([['e1', log]]);
     const reopened = evening({ settle_reopened_at: '2026-10-03T10:00:00Z' });
     expect(openSettlements([reopened], map, 'B').debts).toEqual([
-      expect.objectContaining({ kind: 'owe', amountRub: 260, reopened: true }),
+      expect.objectContaining({ kind: 'owe', amountRub: 200, reopened: true }),
     ]);
     expect(openSettlements([evening()], map, 'B').debts[0]?.reopened).toBe(false);
     expect(openSettlements([{ ...reopened, banker_id: 'A' }], map, 'A').banker[0]?.reopened).toBe(

@@ -196,7 +196,7 @@ export function announcePost(input: AnnouncePostInput): Post {
   if (input.location) lines.push(`📍 ${escapeHtml(input.location)}`);
   lines.push(
     `Вход и ребай по ${formatRub(f.buyInRub)} (${formatInt(f.startingChips)} ` +
-      `${plural(f.startingChips, ['фишка', 'фишки', 'фишек'])}), ${formatRub(f.bountyRub)} из них — за голову.`,
+      `${plural(f.startingChips, ['фишка', 'фишки', 'фишек'])}).`,
   );
   if (input.note) lines.push(`📝 ${escapeHtml(input.note)}`);
   lines.push('', 'Отметьтесь, идёте ли, и сделайте прогноз на победителя 🔮');
@@ -555,14 +555,12 @@ export function resultsPost(input: ResultsPostInput): Post {
   if (input.corrected) header.push('Прошлый пост с итогами устарел — верны эти.');
   if (input.location) header.push(`📍 ${escapeHtml(input.location)}`);
 
+  // Выигрыш — только призовые за место: денег за нокауты нет (баунти убрано 07.10.2026).
   const placeLines = input.places.map((id, i) => {
-    const m = input.money[id];
-    const parts: string[] = [];
-    if (m && m.prizeRub > 0) parts.push(`приз ${formatRub(m.prizeRub)}`);
-    if (m && m.bountyRub > 0) parts.push(`головы ${formatRub(m.bountyRub)}`);
+    const prizeRub = input.money[id]?.prizeRub ?? 0;
     const mark = MEDALS[i] ?? `${i + 1}.`;
     const who = i === 0 ? `<b>${name(id)}</b>` : name(id);
-    return `${mark} ${who}${parts.length ? ` — ${parts.join(', ')}` : ''}`;
+    return `${mark} ${who}${prizeRub > 0 ? ` — приз ${formatRub(prizeRub)}` : ''}`;
   });
 
   const rebuys =
@@ -578,7 +576,7 @@ export function resultsPost(input: ResultsPostInput): Post {
       `${plural(input.totalEntries, ['вход', 'входа', 'входов'])}${rebuys}`,
   ];
 
-  // Лучший охотник: больше всех нокаутов; ничья — все лидеры.
+  // Лучший охотник: больше всех нокаутов (только статистика, денег за нокаут нет); ничья — все лидеры.
   const maxKos = Math.max(0, ...input.places.map((id) => input.kos[id] ?? 0));
   if (maxKos > 0) {
     const hunters = input.places.filter((id) => (input.kos[id] ?? 0) === maxKos).map(name);

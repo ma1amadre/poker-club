@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { AuthError, AuthErrorKind } from '../shared/auth';
-import { cn, paths } from '../shared/lib';
+import { cn, paths, SIGN_IN_SLOW_MS } from '../shared/lib';
 import { closeApp, isInTelegram } from '../shared/telegram';
 import { Button, ButtonLink, Empty, Icon, Page, Spinner, type IconName } from '../shared/ui';
 
@@ -47,8 +47,17 @@ export function AppScreen({
   );
 }
 
-/** Пока идёт вход (обычно 1–3 с): название клуба и спиннер — на фоне ground, без белой вспышки. */
-export function SplashScreen() {
+/**
+ * Пока идёт вход (обычно 1–3 с): название клуба и спиннер — на фоне ground, без белой вспышки.
+ * Вход дольше SIGN_IN_SLOW_MS — «Связь медленная» и «Повторить вход» (попытку целиком ограничивает
+ * SIGN_IN_TIMEOUT_MS, дальше экран ошибки). Повтор монтирует заставку заново (key в AuthGate).
+ */
+export function SplashScreen({ onRetry }: { onRetry?: () => void }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setSlow(true), SIGN_IN_SLOW_MS);
+    return () => clearTimeout(timer);
+  }, []);
   return (
     <div className="app-screen" aria-busy="true">
       <div className="app-screen__body">
@@ -57,6 +66,16 @@ export function SplashScreen() {
           <Spinner size={20} label="Входим в клуб" />
           <p className="m-body app-screen__text">Входим в клуб</p>
         </div>
+        {slow && onRetry && (
+          <div className="app-screen__actions" role="status">
+            <p className="m-small app-screen__text">
+              Связь медленная — вход идёт дольше обычного. Можно подождать или начать заново.
+            </p>
+            <Button icon="refresh-cw" block onClick={onRetry}>
+              Повторить вход
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -113,6 +132,7 @@ export function DeniedScreen({ error, onRetry }: { error: AuthError | null; onRe
 
 const ERROR_TITLES: Partial<Record<AuthErrorKind, string>> = {
   network: 'Нет связи с сервером',
+  timeout: 'Связь слишком медленная',
   config: 'Приложение не настроено',
   server: 'Не удалось войти',
 };
@@ -132,7 +152,7 @@ export function AuthErrorScreen({
     <AppScreen
       role="alert"
       error
-      icon={kind === 'network' ? 'globe' : 'alert-triangle'}
+      icon={kind === 'network' || kind === 'timeout' ? 'globe' : 'alert-triangle'}
       title={ERROR_TITLES[kind] ?? 'Не удалось войти'}
       text={error?.message ?? 'Повтори вход через минуту.'}
       details={error?.details}

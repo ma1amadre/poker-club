@@ -1,10 +1,12 @@
 // Вход по контракту: initData → Edge Function tg-auth (проверка подписи и членства в группе)
 // → {tokenHash, player} → auth.verifyOtp({type:'email', token_hash}) → сессия в памяти.
+// Весь вход — не дольше SIGN_IN_TIMEOUT_MS: зависшее соединение иначе держало бы заставку вечно.
 import {
   FunctionsFetchError,
   FunctionsHttpError,
   FunctionsRelayError,
 } from '@supabase/supabase-js';
+import { SIGN_IN_TIMEOUT_MS, withTimeout } from '../lib/timeout';
 import { envProblems, supabase } from '../supabase';
 import type { Player } from '../api/types';
 
@@ -22,6 +24,8 @@ export type AuthErrorKind =
   /** Не заданы VITE_SUPABASE_URL / ключ. */
   | 'config'
   | 'network'
+  /** Сервер не ответил за SIGN_IN_TIMEOUT_MS. */
+  | 'timeout'
   | 'server';
 
 /** Отказ в доступе (экран «нет доступа») в отличие от сбоя (экран ошибки с повтором). */
@@ -72,9 +76,10 @@ async function readFunctionError(response: unknown): Promise<{ message?: string;
   }
 }
 
-async function callTgAuth(initData: string): Promise<string> {
+async function callTgAuth(initData: string, signal: AbortSignal): Promise<string> {
   const { data, error } = await supabase.functions.invoke<TgAuthResponse>('tg-auth', {
     body: { initData },
+    signal,
   });
   if (error) {
     if (error instanceof FunctionsHttpError) {
@@ -132,17 +137,17 @@ async function callTgAuth(initData: string): Promise<string> {
 }
 
 /** Строка игрока текущей сессии — тем же путём, что видит RLS (auth_user_id = auth.uid()). */
-export async function loadCurrentPlayer(userId: string): Promise<Player | null> {
-  const { data, error } = await supabase
-    .from('players')
-    .select('*')
-    .eq('auth_user_id', userId)
-    .maybeSingle();
+export async function loadCurrentPlayer(
+  userId: string,
+  signal?: AbortSignal,
+): Promise<Player | null> {
+  const query = supabase.from('players').select('*').eq('auth_user_id', userId);
+  const { data, error } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
   if (error) throw new AuthError('server', 'Не удалось загрузить профиль игрока.', error.message);
   return data;
 }
 
-async function signIn(initData: string): Promise<Player> {
+async function signIn(initData: string, signal: AbortSignal): Promise<Player> {
   if (envProblems.length > 0) {
     throw new AuthError(
       'config',
@@ -150,37 +155,55 @@ async function signIn(initData: string): Promise<Player> {
       envProblems.join('; '),
     );
   }
-  const tokenHash = await callTgAuth(initData);
+  const tokenHash = await callTgAuth(initData, signal);
+  // Тайм-аут или повтор вручную, пока шёл tg-auth: сессию этой попытки не открываем.
+  if (signal.aborted) throw new AuthError('server', 'Вход начат заново.');
   const { data, error } = await supabase.auth.verifyOtp({ type: 'email', token_hash: tokenHash });
   if (error || !data.session || !data.user) {
     throw new AuthError('server', 'Не удалось открыть сессию.', error?.message);
   }
   // Игрока берём из БД, а не из ответа функции: так заодно проверяется, что RLS видит нас
   // активным участником клуба (current_player_id() не null), — иначе все экраны были бы пустыми.
-  const player = await loadCurrentPlayer(data.user.id);
+  const player = await loadCurrentPlayer(data.user.id, signal);
   if (!player || !player.is_active) {
     throw new AuthError('inactive', 'Твой профиль в клубе отключён. Обратись к админу клуба.');
   }
   return player;
 }
 
+export const SIGN_IN_TIMEOUT_TEXT =
+  'Сервер не ответил за 12 секунд. Проверь интернет и повтори вход.';
+
 // Один вход на один initData: StrictMode в dev дважды запускает эффекты, а повторный
 // generateLink инвалидировал бы первый tokenHash. Провал из кеша убираем — чтобы работал повтор.
-const inflight = new Map<string, Promise<Player>>();
+const inflight = new Map<string, { promise: Promise<Player>; cancel: AbortController }>();
 
 export function signInOnce(initData: string): Promise<Player> {
   const existing = inflight.get(initData);
-  if (existing) return existing;
-  const promise = signIn(initData).catch((error: unknown) => {
-    inflight.delete(initData);
+  if (existing) return existing.promise;
+  const cancel = new AbortController();
+  const promise: Promise<Player> = withTimeout(
+    (signal) => signIn(initData, signal),
+    SIGN_IN_TIMEOUT_MS,
+    () => new AuthError('timeout', SIGN_IN_TIMEOUT_TEXT),
+    cancel.signal,
+  ).catch((error: unknown) => {
+    // Убираем только свою запись: повтор мог уже положить на её место новую попытку.
+    if (inflight.get(initData)?.promise === promise) inflight.delete(initData);
     throw error;
   });
-  inflight.set(initData, promise);
+  inflight.set(initData, { promise, cancel });
   return promise;
 }
 
-/** Сбросить кеш входа (повтор после ошибки, смена тестового игрока, истёкшая сессия). */
+/**
+ * Сбросить кеш входа (повтор после ошибки или вручную с заставки, смена тестового игрока,
+ * истёкшая сессия). Незавершённая попытка отменяется: её запросы обрываются, сессию она не откроет.
+ */
 export function forgetSignIn(): void {
+  for (const { cancel } of inflight.values()) {
+    cancel.abort(new AuthError('server', 'Вход начат заново.'));
+  }
   inflight.clear();
 }
 

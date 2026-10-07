@@ -76,8 +76,8 @@ function TypeSample() {
         <p className="m-h2">Итоги вечера</p>
         <p className="m-h3">Ближайший вечер</p>
         <p className="m-body">
-          Вход и ребай — по 500 ₽, из каждого взноса 100 ₽ уходит «за голову». Ребаи открыты до
-          конца 5-го уровня.
+          Вход и ребай — по 500 ₽, весь взнос идёт в призовой фонд. Ребаи открыты до конца 5-го
+          уровня.
         </p>
         <p className="m-small">Обновлено в 21:40 · 6 игроков</p>
         <p className="m-figure">{formatRub(4000)}</p>
@@ -216,7 +216,7 @@ function FormsSample() {
           description="Пост в группе за 48 ч до игры."
           defaultChecked
         />
-        <Checkbox label="Сплит-нокаут" description="Голова делится между выбившими поровну." />
+        <Checkbox label="Сплит-нокаут" description="Нокаут засчитывается каждому из выбивших." />
         <RadioGroup
           label="Придёшь в четверг?"
           value={rsvp}
@@ -242,7 +242,7 @@ function FormsSample() {
         label="Кто выбил"
         error={
           killers.length === 0
-            ? 'Выбери хотя бы одного игрока или оставь голову сиротской.'
+            ? 'Выбери хотя бы одного игрока или отметь, что выбившего нет.'
             : undefined
         }
       >

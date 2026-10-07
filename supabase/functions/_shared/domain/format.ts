@@ -7,12 +7,11 @@ const level40 = (sb: number, bb: number): BlindLevel => ({
   trigger: { type: 'time', minutes: 40 },
 });
 
-/** Клубный формат: 500 ₽ = 500 фишек, 100 ₽ «за голову», ребаи до конца 5-го уровня (3:20) без лимита. */
+/** Клубный формат: 500 ₽ = 500 фишек, весь взнос в фонд, ребаи до конца 5-го уровня (3:20) без лимита. */
 export const DEFAULT_FORMAT: TournamentFormat = {
   name: 'Клубный',
   buyInRub: 500,
   startingChips: 500,
-  bountyRub: 100,
   rebuyUntilLevel: 5,
   rebuyLimit: null,
   payoutPct: [70, 30],
@@ -37,6 +36,7 @@ const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInt
  * Возвращает список ошибок по-русски; пустой список — формат годен.
  * Суммы в рублях — целые: деньги делим только в целых рублях, иначе инвариант
  * «выплаты = взносы» перестаёт быть точным.
+ * Лишние ключи не мешают: bountyRub из форматов до отмены баунти (07.10.2026) молча игнорируется.
  */
 export function validateFormat(format: unknown): string[] {
   const errors: string[] = [];
@@ -48,10 +48,6 @@ export function validateFormat(format: unknown): string[] {
     errors.push('Вход должен быть целым числом рублей больше 0');
   if (!isInt(f.startingChips) || f.startingChips <= 0)
     errors.push('Стартовый стек должен быть целым числом больше 0');
-  if (!isInt(f.bountyRub) || f.bountyRub < 0)
-    errors.push('Баунти должно быть целым числом рублей, не меньше 0');
-  else if (isInt(f.buyInRub) && f.bountyRub > f.buyInRub)
-    errors.push('Баунти не может быть больше входа');
   if (!isInt(f.rebuyUntilLevel) || f.rebuyUntilLevel < 0)
     errors.push('Уровень закрытия ребаев должен быть целым числом не меньше 0');
   if (f.rebuyLimit !== null && (!isInt(f.rebuyLimit) || f.rebuyLimit < 0))

@@ -2,12 +2,12 @@ import { DEFAULT_FORMAT } from '@domain/format.ts';
 import { computeMoney, paymentsFromEvents, settlement } from '@domain/money.ts';
 import { replay, replayLog } from '@domain/replay.ts';
 import { journal, MIN } from '@domain/test-utils.ts';
-import type { TournamentFormat } from '@domain/types.ts';
+import type { EveningEvent, TournamentFormat } from '@domain/types.ts';
 import { describe, expect, it } from 'vitest';
 import {
   averageStackBb,
   bestHunters,
-  bountyNote,
+  bustButtonLabel,
   clockView,
   describeEvent,
   describeTrigger,
@@ -16,9 +16,15 @@ import {
   feedEvents,
   formatBb,
   formatBbValue,
+  initialKillers,
+  killersHint,
   lastBust,
   lastUndoable,
   levelLabel,
+  levelNextClosesRebuys,
+  nameMatches,
+  nameMatchKey,
+  nameMatchNotice,
   normalizeGuestName,
   orderedPlayers,
   ordinalPlace,
@@ -27,8 +33,13 @@ import {
   payoutTextSum,
   paymentEvents,
   playerLine,
+  possibleKillers,
+  rebuysClosingText,
   rebuyText,
   journalVersion,
+  landedQuestion,
+  levelEdgeLeftMs,
+  levelMovedText,
   reopenedNotice,
   settledNotice,
   rebuyWindow,
@@ -40,9 +51,10 @@ import {
   settleTotals,
   signedPayment,
   stacksAmountText,
-  stacksHint,
   totalRebuys,
   triggerProgress,
+  voidImpact,
+  voidImpactText,
 } from './lib';
 import { joinNames } from '../../shared/lib/text';
 
@@ -74,11 +86,12 @@ describe('describeEvent', () => {
       title: 'Вылет: Саша',
       detail: 'выбивает Женя',
     });
+    // Денег за голову нет: при дележе нокаут засчитывается каждому.
     expect(ev('bust', { playerId: 'b', by: ['a', 'c'] }).detail).toBe(
-      'выбивают Женя и Дима — голова пополам',
+      'выбивают Женя и Дима — нокаут каждому',
     );
     expect(ev('bust', { playerId: 'b', by: ['a', 'c', 'd'] }).detail).toBe(
-      'выбивают Женя, Дима и Лёша — голова поровну на 3',
+      'выбивают Женя, Дима и Лёша — нокаут каждому',
     );
     expect(ev('bust', { playerId: 'b', by: [] }).detail).toBe('кто выбил — не указано');
   });
@@ -276,7 +289,7 @@ describe('расчёт', () => {
     };
     const after = settlement(money, [pay('a'), pay('b')]);
     expect(Object.values(after).every((r) => r.remainingRub === 0)).toBe(true);
-    expect(settleLabel(before.b ?? { remainingRub: 0 }, rub)).toBe('Должен банкиру 260 ₽'); // 500 − 30 % от фонда 800
+    expect(settleLabel(before.b ?? { remainingRub: 0 }, rub)).toBe('Должен банкиру 200 ₽'); // 500 − 30 % от фонда 1000
     expect(settleLabel(before.a ?? { remainingRub: 0 }, rub)).toMatch(/^Банкир должен /);
     expect(settleLabel({ remainingRub: 0 }, rub)).toBe('В расчёте');
   });
@@ -350,15 +363,11 @@ describe('подписи уровня и игрока', () => {
     expect(playerLine(c, DEFAULT_FORMAT)).toBe(`2${NB}входа`);
   });
 
-  it('кратность: сумма и фишки, подсказка, payload', () => {
+  it('кратность: сумма и фишки, payload', () => {
     expect(stacksAmountText(DEFAULT_FORMAT, 1)).toBe(`500${NB}₽ · 500${NB}фишек`);
     expect(stacksAmountText(DEFAULT_FORMAT, 2)).toBe(`1${NB}000${NB}₽ · 1${NB}000${NB}фишек`);
     expect(stacksAmountText({ ...DEFAULT_FORMAT, startingChips: 1 }, 1)).toBe(
       `500${NB}₽ · 1${NB}фишка`,
-    );
-    expect(stacksHint(DEFAULT_FORMAT, 2)).toBe(`Голова — 200${NB}₽, в фонд — 800${NB}₽.`);
-    expect(stacksHint({ ...DEFAULT_FORMAT, bountyRub: 0 }, 3)).toBe(
-      `Всё в фонд — 1${NB}500${NB}₽.`,
     );
     expect(entryPayload('a', 1)).toEqual({ playerId: 'a' });
     expect(entryPayload('a', 4)).toEqual({ playerId: 'a', stacks: 4 });
@@ -370,33 +379,6 @@ describe('подписи уровня и игрока', () => {
     expect(seatButtonLabel(6, DEFAULT_FORMAT, 1)).toBe('Посадить за стол: 6');
     expect(seatButtonLabel(6, DEFAULT_FORMAT, 2)).toBe(`Посадить: 6 · по${NB}1${NB}000${NB}₽`);
     expect(seatButtonLabel(1, DEFAULT_FORMAT, 3)).toBe(`Посадить: 1 · 1${NB}500${NB}₽`);
-  });
-
-  it('bountyNote: головы тех, кто сейчас в игре, по их текущим входам', () => {
-    const note = (j: ReturnType<typeof journal>) =>
-      bountyNote(replay(DEFAULT_FORMAT, j.events, j.now()), DEFAULT_FORMAT);
-    // Никого за столом — стандартная голова формата.
-    expect(note(journal())).toBe(`100${NB}₽ за голову`);
-    // Только стандартные входы.
-    expect(note(journal().join('a', 'b'))).toBe(`100${NB}₽ за голову`);
-    // Все вошли ×2 — у каждого на кону 200 ₽, а не «от 100 ₽».
-    const all2 = journal();
-    for (const id of ['a', 'b', 'c']) all2.joinStacks(id, 2);
-    expect(note(all2)).toBe(`200${NB}₽ за голову`);
-    // Смешанные кратности — диапазон.
-    const mixed = journal().join('a');
-    mixed.joinStacks('b', 3);
-    expect(note(mixed)).toBe(`100–300${NB}₽ за голову`);
-    // Вылетевший с крупной головой из подписи уходит; ребай считается по своей кратности.
-    mixed.bust('b', ['a']);
-    expect(note(mixed)).toBe(`100${NB}₽ за голову`);
-    mixed.rebuy('b', 2);
-    expect(note(mixed)).toBe(`100–200${NB}₽ за голову`);
-    // Без баунти в формате — 0 ₽, как и раньше.
-    const noBounty = { ...DEFAULT_FORMAT, bountyRub: 0 };
-    const j = journal();
-    j.joinStacks('a', 2);
-    expect(bountyNote(replay(noBounty, j.events, j.now()), noBounty)).toBe(`0${NB}₽ за голову`);
   });
 
   it('describeTrigger и formatBbValue', () => {
@@ -483,7 +465,7 @@ describe('раскладка расчёта', () => {
     expect(settleOrder(s, Object.keys(table))).toEqual(['a', 'b', 'c', 'x']);
     const totals = settleTotals(money, table);
     expect(totals.inRub).toBe(1500);
-    expect(totals.outRub).toBe(1500); // инвариант домена: всё, что внесли, выплачено
+    expect(totals.outRub).toBe(1500); // инвариант домена: всё, что внесли, выплачено призовыми
     expect(totals.bankerHoldsRub).toBe(1050);
     expect(paymentEvents(j.events).map((e) => eventPlayerId(e))).toEqual(['x', 'a', 'c', 'b']);
   });
@@ -608,5 +590,293 @@ describe('journalVersion', () => {
         { id: 9, voided: true },
       ]),
     ).toEqual({ lastEventId: 12, voidedCount: 2 });
+  });
+});
+
+describe('шторка вылета: кто выбил', () => {
+  it('выбить может любой в игре, кроме самого игрока; хедз-ап — соперник отмечен заранее', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    let s = replay(DEFAULT_FORMAT, j.events, j.now());
+    expect(possibleKillers(s, 'b')).toEqual(['a', 'c']);
+    expect(initialKillers(s, 'b')).toEqual([]);
+
+    j.bust('c', ['a']);
+    s = replay(DEFAULT_FORMAT, j.events, j.now());
+    expect(possibleKillers(s, 'b')).toEqual(['a']);
+    expect(initialKillers(s, 'b')).toEqual(['a']);
+    expect(initialKillers(s, 'a')).toEqual(['b']);
+  });
+
+  it('подсказка: двое и больше — выбили вместе, нокаут каждому; без денег', () => {
+    expect(killersHint([], false)).toBe(
+      'Отметь, кто выбил. Выбили вместе — отметь каждого, нокаут засчитается всем.',
+    );
+    expect(killersHint(['Женя'], false)).toBe(
+      'Нокаут засчитается: Женя. Выбили вместе — отметь и остальных.',
+    );
+    expect(killersHint(['Женя', 'Дима'], false)).toBe(
+      'Выбивают вместе Женя и Дима — нокаут засчитается каждому.',
+    );
+    expect(killersHint([], true)).toBe('Нокаут никому не засчитается.');
+    for (const hint of [killersHint(['Женя', 'Дима'], false), killersHint([], true)]) {
+      expect(hint).not.toMatch(/₽|голов|деньг/);
+    }
+  });
+
+  it('кнопка: пока не ясно, кто выбил, — что сделать', () => {
+    expect(bustButtonLabel(0, false)).toBe('Выбери, кто выбил');
+    expect(bustButtonLabel(0, true)).toBe('Отметить вылет');
+    expect(bustButtonLabel(2, false)).toBe('Отметить вылет');
+  });
+});
+
+describe('voidImpact / voidImpactText', () => {
+  const label = (e: EveningEvent) => `«${describeEvent(e, nameOf, rub, DEFAULT_FORMAT).title}»`;
+
+  it('отмена старого вылета: ребай после него перестаёт приниматься — это видно до отмены', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    j.wait(5);
+    const bust = j.bust('b', ['a']);
+    j.wait(1);
+    const rebuy = j.rebuy('b');
+    j.wait(1);
+    j.bust('c', ['a']);
+    const impact = voidImpact(DEFAULT_FORMAT, j.events, bust, j.now());
+    expect(impact.voided?.id).toBe(bust);
+    expect(impact.revived).toEqual([]);
+    expect(impact.rejected.map((r) => [r.event.id, r.message])).toEqual([
+      [rebuy, 'Игрок ещё в игре — ребай только после вылета'],
+    ]);
+    expect(voidImpactText(impact, label)).toBe(
+      'Журнал перестанет принимать запись: «Ребай: Саша» (игрок ещё в игре — ребай только после вылета). Она останется в ленте с пометкой «Не принято», места, нокауты и деньги посчитаются без неё.',
+    );
+  });
+
+  it('отмена вылета финалиста в завершённом вечере — прямо: придётся вернуть в игру', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    j.bust('c', ['a']);
+    const last = j.bust('b', ['a']);
+    const finish = j.finish();
+    const impact = voidImpact(DEFAULT_FORMAT, j.events, last, j.now());
+    expect(impact.finishedBefore).toBe(true);
+    expect(impact.finishedAfter).toBe(false);
+    expect(impact.rejected.map((r) => r.event.id)).toEqual([finish]);
+    const text = voidImpactText(impact, label);
+    expect(text).toContain('Вечер перестанет быть завершённым — придётся вернуть его в игру');
+    // «Игра окончена» отдельной строкой «не принято» не дублируется.
+    expect(text).not.toContain('Журнал перестанет принимать');
+  });
+
+  it('отмена самой «Игра окончена» — без фразы о завершённом вечере (её пишет вызывающий)', () => {
+    const j = journal().join('a', 'b');
+    j.start();
+    j.bust('b', ['a']);
+    const finish = j.finish();
+    const impact = voidImpact(DEFAULT_FORMAT, j.events, finish, j.now());
+    expect(impact.finishedAfter).toBe(false);
+    expect(voidImpactText(impact, label)).toBe('');
+  });
+
+  it('оживающая запись и отмена без последствий', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    const first = j.bust('b', ['a']);
+    const second = j.bust('b', ['c']); // журнал не принял: игрок уже выбыл
+    const impact = voidImpact(DEFAULT_FORMAT, j.events, first, j.now());
+    expect(impact.revived.map((e) => e.id)).toEqual([second]);
+    expect(impact.rejected).toEqual([]);
+    expect(voidImpactText(impact, label)).toBe(
+      'После отмены вступит в силу запись, которую журнал сейчас не принимает: «Вылет: Саша». Если она тоже лишняя — отмени и её.',
+    );
+
+    const k = journal().join('a', 'b', 'c');
+    k.start();
+    const bust = k.bust('b', ['a']);
+    const quiet = voidImpact(DEFAULT_FORMAT, k.events, bust, k.now());
+    expect(quiet).toMatchObject({
+      revived: [],
+      rejected: [],
+      finishedBefore: false,
+      finishedAfter: false,
+    });
+    expect(voidImpactText(quiet, label)).toBe('');
+  });
+});
+
+describe('levelNextClosesRebuys / rebuysClosingText', () => {
+  const closes = (format: TournamentFormat, events: EveningEvent[], now: number) =>
+    levelNextClosesRebuys(format, replay(format, events, now));
+
+  it('переход с 5-го уровня на 6-й закрывает ребаи; кто из вылетевших не сможет докупиться', () => {
+    const j = journal().join('a', 'b', 'c', 'd');
+    expect(closes(DEFAULT_FORMAT, j.events, j.now())).toBe(null); // таймер не запущен
+    j.start();
+    for (let i = 0; i < 3; i += 1) j.next(); // 4-й уровень: переход на 5-й ребаи не закрывает
+    j.bust('b', ['a']);
+    j.bust('d', ['a']);
+    expect(closes(DEFAULT_FORMAT, j.events, j.now())).toBe(null);
+    j.next(); // 5-й уровень
+    expect(closes(DEFAULT_FORMAT, j.events, j.now())).toEqual({ busted: ['b', 'd'] });
+
+    // Лимит ребаев исчерпан — докупиться и так нельзя.
+    const limited = { ...DEFAULT_FORMAT, rebuyLimit: 0 };
+    expect(closes(limited, j.events, j.now())).toEqual({ busted: [] });
+
+    j.next(); // 6-й: ребаи уже закрыты
+    expect(closes(DEFAULT_FORMAT, j.events, j.now())).toBe(null);
+  });
+
+  it('с последнего уровня перехода нет', () => {
+    const forever = { ...DEFAULT_FORMAT, rebuyUntilLevel: DEFAULT_FORMAT.levels.length };
+    const j = journal().join('a', 'b');
+    j.start();
+    for (let i = 1; i < DEFAULT_FORMAT.levels.length; i += 1) j.next();
+    expect(closes(forever, j.events, j.now())).toBe(null);
+  });
+
+  it('текст без рода', () => {
+    expect(rebuysClosingText([])).toBe(
+      'Ребаи и поздняя регистрация закроются: докупиться и сесть за стол будет нельзя.',
+    );
+    expect(rebuysClosingText(['Саша'])).toBe(
+      'Ребаи закроются — Саша не сможет докупиться. Поздняя регистрация тоже закроется.',
+    );
+    expect(rebuysClosingText(['Саша', 'Дима'])).toBe(
+      'Ребаи закроются — вылетевшие Саша и Дима не смогут докупиться. Поздняя регистрация тоже закроется.',
+    );
+  });
+});
+
+describe('levelEdgeLeftMs / levelMovedText — вопрос «Уровень вперёд» висел, а уровень сменился', () => {
+  const EDGE = 5000;
+
+  it('до авто-перехода меньше края — сколько осталось; пауза и не начатый таймер — null', () => {
+    const j = journal().join('a', 'b');
+    expect(levelEdgeLeftMs(replay(DEFAULT_FORMAT, j.events, j.now()), EDGE)).toBe(null);
+    j.start();
+    j.wait(39);
+    expect(levelEdgeLeftMs(replay(DEFAULT_FORMAT, j.events, j.now()), EDGE)).toBe(null); // 60 с
+    j.wait(58 / 60);
+    expect(levelEdgeLeftMs(replay(DEFAULT_FORMAT, j.events, j.now()), EDGE)).toBe(2000);
+    j.pause();
+    expect(levelEdgeLeftMs(replay(DEFAULT_FORMAT, j.events, j.now()), EDGE)).toBe(null);
+  });
+
+  it('уровень по раздачам времени не считает — края нет', () => {
+    const byHands: TournamentFormat = {
+      ...DEFAULT_FORMAT,
+      levels: [
+        { sb: 5, bb: 10, trigger: { type: 'hands', count: 3 } },
+        { sb: 10, bb: 20, trigger: { type: 'hands', count: 3 } },
+      ],
+    };
+    const j = journal().join('a', 'b');
+    j.start();
+    expect(levelEdgeLeftMs(replay(byHands, j.events, j.now()), EDGE)).toBe(null);
+  });
+
+  it('сценарий ревью: вопрос о закрытии ребаев висел 25 с, уровень сменился сам — запись не уходит', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    for (let i = 0; i < 4; i += 1) j.next(); // 5-й уровень — последний с ребаями
+    j.bust('b', ['a']);
+    j.wait(40 - 20 / 60); // до конца 5-го уровня 20 с: вопрос «Перейти на 6-й?» открыт
+    const before = replay(DEFAULT_FORMAT, j.events, j.now());
+    expect(before.timer.levelIndex).toBe(4);
+    expect(levelEdgeLeftMs(before, EDGE)).toBe(null); // 20 с — не край, спрашивают о ребаях
+    expect(levelNextClosesRebuys(DEFAULT_FORMAT, before)).toEqual({ busted: ['b'] });
+    expect(levelMovedText(4, before)).toBe(null);
+
+    j.wait(25 / 60); // банкир читает список вылетевших — уровень сменился сам
+    const after = replay(DEFAULT_FORMAT, j.events, j.now());
+    expect(after.timer.levelIndex).toBe(5);
+    expect(levelMovedText(4, after)).toBe('Уровень уже сменился — сейчас 6-й');
+
+    // Без проверки запись ушла бы — и replay перескочил бы на 7-й уровень, 6-й пропущен.
+    j.next();
+    expect(replay(DEFAULT_FORMAT, j.events, j.now()).timer.levelIndex).toBe(6);
+  });
+
+  it('уровень назад с другого устройства — тоже отказ', () => {
+    const j = journal().join('a', 'b');
+    j.start();
+    j.next();
+    j.next();
+    j.prev();
+    expect(levelMovedText(2, replay(DEFAULT_FORMAT, j.events, j.now()))).toBe(
+      'Уровень уже сменился — сейчас 2-й',
+    );
+  });
+});
+
+describe('landedQuestion — повтор записи, которая дошла без ответа', () => {
+  it('говорит, что повторять не нужно, и даёт записать ещё одну', () => {
+    const q = landedQuestion('«Раздача сыграна», 20:15');
+    expect(q).toEqual({
+      title: 'Запись уже в журнале',
+      message:
+        '«Раздача сыграна», 20:15 — прошлое нажатие дошло до сервера, хотя ответа не было. Повторять не нужно. Ещё одна запись нужна, только если это новое действие, например следующая раздача.',
+      confirmText: 'Записать ещё одну',
+      cancelText: 'Не записывать',
+    });
+  });
+});
+
+describe('nameMatches / nameMatchNotice — подсказка под полем «Гость»', () => {
+  const pl = (id: string, display_name: string, is_guest = true, is_active = true) => ({
+    id,
+    display_name,
+    is_guest,
+    is_active,
+  });
+  const players = [
+    pl('g1', 'Вова (гость)'),
+    pl('g2', 'Петя'),
+    pl('g3', 'Петя'),
+    pl('p1', 'Алёна', false),
+    pl('off', 'Костя', true, false),
+    pl('a', 'Женя', false),
+  ];
+  const s = replay(DEFAULT_FORMAT, journal().join('a').events, 0);
+
+  it('сравнение: регистр, ё/е, пробелы и пометка в скобках не важны', () => {
+    expect(nameMatchKey('  вова ')).toBe('вова');
+    expect(nameMatchKey('Вова (гость)')).toBe('вова');
+    expect(nameMatchKey('АЛЕНА')).toBe(nameMatchKey('Алёна'));
+    expect(nameMatchKey('   ')).toBe('');
+  });
+
+  it('один гость с таким именем — посадить его одной кнопкой', () => {
+    const notice = nameMatchNotice(nameMatches(players, s, 'вова'));
+    expect(notice).toEqual({
+      title: 'Такой гость уже есть: Вова (гость)',
+      text: 'Тот же человек — посади этого гостя, и вечера останутся в одном профиле. Другой человек с тем же именем — нажми «Добавить гостя».',
+      seat: { label: 'Посадить этого гостя', playerId: 'g1' },
+    });
+  });
+
+  it('игрок клуба с таким именем — посадить из клуба, а не гостем', () => {
+    const notice = nameMatchNotice(nameMatches(players, s, 'Алена'));
+    expect(notice?.title).toBe('Такой игрок клуба уже есть: Алёна');
+    expect(notice?.seat).toEqual({ label: 'Посадить этого игрока', playerId: 'p1' });
+  });
+
+  it('несколько — выбрать в списке; уже в турнире — сказать; неактивных и пустое — не трогать', () => {
+    expect(nameMatchNotice(nameMatches(players, s, 'петя'))).toEqual({
+      title: 'В клубе несколько: Петя',
+      text: 'Отметь нужного в списке выше. Другой человек с тем же именем — нажми «Добавить гостя».',
+      seat: null,
+    });
+    expect(nameMatchNotice(nameMatches(players, s, 'Женя'))).toEqual({
+      title: 'Женя уже в этом вечере',
+      text: 'Другой человек с тем же именем — нажми «Добавить гостя».',
+      seat: null,
+    });
+    expect(nameMatchNotice(nameMatches(players, s, 'Костя'))).toBe(null);
+    expect(nameMatchNotice(nameMatches(players, s, 'Новенький'))).toBe(null);
+    expect(nameMatchNotice(nameMatches(players, s, ''))).toBe(null);
   });
 });

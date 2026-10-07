@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { useAuth } from '../shared/auth';
 import { Button, PageSkeleton } from '../shared/ui';
 import { AuthErrorScreen, DeniedScreen, SplashScreen } from './screens';
@@ -10,8 +10,21 @@ const DevLoginPage = import.meta.env.DEV ? lazy(() => import('../shared/auth/Dev
 /** Пускает к приложению только после входа; иначе — загрузка, «нет доступа» или ошибка. */
 export function AuthGate({ children }: { children: ReactNode }) {
   const auth = useAuth();
+  // Каждый повтор с заставки — новая заставка: «Связь медленная» снова появится только через
+  // SIGN_IN_SLOW_MS после нового начала.
+  const [round, setRound] = useState(0);
 
-  if (auth.status === 'loading') return <SplashScreen />;
+  if (auth.status === 'loading') {
+    return (
+      <SplashScreen
+        key={round}
+        onRetry={() => {
+          setRound((r) => r + 1);
+          auth.retry();
+        }}
+      />
+    );
+  }
 
   if (auth.status === 'denied') {
     if (DevLoginPage && auth.error?.kind === 'no_telegram') {

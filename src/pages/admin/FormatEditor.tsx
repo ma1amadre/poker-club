@@ -38,7 +38,6 @@ import {
   moveLevel,
   newFormatDraft,
   payoutSum,
-  poolPerEntryRub,
   previewFormat,
   removeLevel,
   sameDraft,
@@ -102,7 +101,6 @@ const FIELD_KEYS: Record<TopField, keyof FormatDraft> = {
   name: 'name',
   buyIn: 'buyIn',
   chips: 'chips',
-  bounty: 'bounty',
   rebuyUntil: 'rebuyUntil',
   rebuyLimit: 'rebuyLimit',
 };
@@ -135,7 +133,6 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
 
   const { format, problems, ok } = useMemo(() => checkDraft(draft), [draft]);
   const preview = useMemo(() => previewFormat(format), [format]);
-  const pool = useMemo(() => (ok ? poolPerEntryRub(format) : null), [format, ok]);
   const sum = payoutSum(draft.payouts);
 
   const errorOf = (field: TopField) =>
@@ -260,7 +257,7 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
           {...bind('name')}
         />
 
-        <Section title="Взнос и фишки">
+        <Section title="Взнос и фишки" footer="Весь взнос идёт в призовой фонд.">
           <div className="adm-grid-2">
             <Field
               label="Вход и ребай"
@@ -276,18 +273,6 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
               {...bind('chips')}
             />
           </div>
-          <Field
-            label="Баунти «за голову»"
-            suffix="₽"
-            inputMode="numeric"
-            autoComplete="off"
-            hint={
-              pool !== null
-                ? `Часть взноса, которая достаётся выбившему. В призовой фонд с каждого входа — ${formatNumber(pool)}${NBSP}₽.`
-                : 'Часть взноса, которая достаётся выбившему.'
-            }
-            {...bind('bounty')}
-          />
         </Section>
 
         <Section title="Ребаи">
@@ -388,7 +373,7 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
         </Section>
 
         <Section title="Предпросмотр">
-          <FormatPreviewCard preview={preview} format={format} pool={pool} />
+          <FormatPreviewCard preview={preview} format={format} />
         </Section>
 
         {submitted && !ok && (
@@ -590,11 +575,10 @@ function LevelItems({
 interface PreviewProps {
   preview: FormatPreview;
   format: ReturnType<typeof checkDraft>['format'];
-  pool: number | null;
 }
 
 /** Предпросмотр расписания: только то, что можно посчитать; нет данных — нет плитки. */
-function FormatPreviewCard({ preview, format, pool }: PreviewProps) {
+function FormatPreviewCard({ preview, format }: PreviewProps) {
   const r = preview.rebuys;
   const first = format.levels[0];
   const tiles = [
@@ -628,15 +612,6 @@ function FormatPreviewCard({ preview, format, pool }: PreviewProps) {
         value={formatPoints(preview.startingBb)}
         unit="BB"
         note={`${formatNumber(format.startingChips)} фишек при ${formatNumber(first.sb)}/${formatNumber(first.bb)}`}
-      />
-    ),
-    pool !== null && (
-      <Stat
-        key="pool"
-        label="В фонд с входа"
-        value={formatNumber(pool)}
-        unit="₽"
-        note={`${formatNumber(format.bountyRub)}${NBSP}₽ — за голову`}
       />
     ),
   ].filter(Boolean);

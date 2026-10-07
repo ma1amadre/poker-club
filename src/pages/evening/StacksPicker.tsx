@@ -1,9 +1,9 @@
 // Кратность входа или ребая на пульте банкира: ×1 по умолчанию, до ×10. Сумма и фишки видны
-// сразу — банкир сверяет их с деньгами в руке; подсказка — сколько уйдёт за голову и в фонд.
+// сразу — банкир сверяет их с деньгами в руке. Весь взнос идёт в фонд.
 import { MAX_ENTRY_STACKS, type TournamentFormat } from '@domain/types.ts';
 import { haptic } from '../../shared/telegram';
 import { FieldGroup, IconButton } from '../../shared/ui';
-import { stacksAmountText, stacksHint } from './lib';
+import { stacksAmountText } from './lib';
 
 export interface StacksPickerProps {
   format: TournamentFormat;
@@ -11,7 +11,7 @@ export interface StacksPickerProps {
   onChange: (k: number) => void;
   /** «Вход» или «Ребай» — подпись группы и объект в подписях кнопок. */
   label: 'Вход' | 'Ребай';
-  /** Дополнение к подсказке: к кому относится выбор. */
+  /** Подсказка: к кому относится выбор. */
   note?: string;
   disabled?: boolean;
 }
@@ -30,7 +30,7 @@ export function StacksPicker({
     onChange(k);
   };
   return (
-    <FieldGroup label={label} hint={[stacksHint(format, value), note].filter(Boolean).join(' ')}>
+    <FieldGroup label={label} hint={note}>
       <div className="ev-stacks">
         <IconButton
           variant="secondary"

@@ -538,7 +538,7 @@ export type Database = {
         };
       };
       add_guest: {
-        Args: { p_evening: string; p_name: string; p_stacks?: number };
+        Args: { p_client_id?: string; p_evening: string; p_name: string; p_stacks?: number };
         Returns: string;
       };
       board_state: { Args: { p_token: string }; Returns: Json };

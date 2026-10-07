@@ -14,7 +14,6 @@ import {
   moveLevel,
   newFormatDraft,
   payoutSum,
-  poolPerEntryRub,
   previewFormat,
   removeLevel,
   sameDraft,
@@ -31,6 +30,14 @@ const valid = (patch: Partial<FormatDraft> = {}): FormatDraft => ({
 describe('draftFromFormat / formatFromDraft', () => {
   it('клубный формат проходит туда и обратно без потерь', () => {
     expect(formatFromDraft(draftFromFormat(DEFAULT_FORMAT))).toEqual(DEFAULT_FORMAT);
+  });
+
+  it('bountyRub старого формата в форму не попадает и при сохранении уходит', () => {
+    const legacy = { ...DEFAULT_FORMAT, bountyRub: 100 } as TournamentFormat;
+    const saved = formatFromDraft(draftFromFormat(legacy));
+    expect(saved).toEqual(DEFAULT_FORMAT);
+    expect(saved).not.toHaveProperty('bountyRub');
+    expect(checkDraft(draftFromFormat(legacy)).ok).toBe(true);
   });
 
   it('анте, лимит ребаев и не-временные триггеры', () => {
@@ -107,10 +114,8 @@ describe('checkDraft', () => {
 
   it('каждое сообщение validateFormat попадает к своему полю', () => {
     const cases: [Partial<FormatDraft>, string][] = [
-      [{ buyIn: '0', bounty: '0' }, 'buyIn'],
+      [{ buyIn: '0' }, 'buyIn'],
       [{ chips: '-5' }, 'chips'],
-      [{ bounty: '-1' }, 'bounty'],
-      [{ bounty: '600' }, 'bounty'],
       [{ rebuyUntil: '-1' }, 'rebuyUntil'],
       [{ rebuyLimit: '-1' }, 'rebuyLimit'],
       [{ payouts: [] }, 'payouts'],
@@ -310,18 +315,12 @@ describe('previewFormat', () => {
   });
 });
 
-describe('formatGameClock / poolPerEntryRub / formatSummary', () => {
+describe('formatGameClock / formatSummary', () => {
   it('ч:мм игрового времени', () => {
     expect(formatGameClock(200)).toBe('3:20');
     expect(formatGameClock(45)).toBe('0:45');
     expect(formatGameClock(0)).toBe('0:00');
     expect(formatGameClock(600)).toBe('10:00');
-  });
-
-  it('фонд с одного входа — из домена', () => {
-    expect(poolPerEntryRub(DEFAULT_FORMAT)).toBe(400);
-    expect(poolPerEntryRub({ ...DEFAULT_FORMAT, bountyRub: 0 })).toBe(500);
-    expect(poolPerEntryRub({ ...DEFAULT_FORMAT, levels: [] })).toBeNull();
   });
 
   it('строка о формате', () => {

@@ -22,15 +22,15 @@ const row = (table: ClubRecord[], kind: ClubRecord['kind']) => {
 };
 
 // simpleEvening(..., 'winner'): победитель выбивает всех; длина игры = число шагов, по минуте.
-// e1: A выбивает двоих. Фонд 3·400 = 1200 → 840/360; нетто A = 840 + 3 головы − 500 = 640.
+// e1: A выбивает двоих. Фонд 3·500 = 1500 → 1050/450; нетто A = 1050 − 500 = 550.
 const e1 = simpleEvening('e1', q4(1), ['A', 'B', 'C'], 'winner');
-// e2: B выбивает троих. Фонд 1600 → 1120/480; нетто B = 1120 + 400 − 500 = 1020.
+// e2: B выбивает троих. Фонд 2000 → 1400/600; нетто B = 1400 − 500 = 900.
 const e2 = simpleEvening('e2', q4(8), ['B', 'A', 'C', 'D'], 'winner');
 // e3: C повторяет всё за B.
 const e3 = simpleEvening('e3', q4(15), ['C', 'A', 'B', 'D'], 'winner');
 // e4: B снова 3 нокаута — свой же рекорд.
 const e4 = simpleEvening('e4', q4(22), ['B', 'A', 'C', 'D'], 'winner');
-// e5: гость G выбивает четверых и выигрывает. Фонд 2000.
+// e5: гость G выбивает четверых и выигрывает. Фонд 2500.
 const e5 = simpleEvening('e5', q4(29), ['G', 'A', 'B', 'C', 'D'], 'winner');
 
 describe('рекорды: таблица', () => {
@@ -44,9 +44,9 @@ describe('рекорды: таблица', () => {
 
   it('значения и держатели; порядок входа не важен', () => {
     const t = recordsTable([e2, e1], none);
-    expect(row(t, 'biggest_win')).toEqual({ value: 1020, holders: [['B', 'e2']] });
+    expect(row(t, 'biggest_win')).toEqual({ value: 900, holders: [['B', 'e2']] });
     expect(row(t, 'most_kos')).toEqual({ value: 3, holders: [['B', 'e2']] });
-    expect(row(t, 'biggest_pool')).toEqual({ value: 1600, holders: [[null, 'e2']] });
+    expect(row(t, 'biggest_pool')).toEqual({ value: 2000, holders: [[null, 'e2']] });
     expect(row(t, 'longest_game')).toEqual({ value: 3 * MIN, holders: [[null, 'e2']] });
     // Одна победа — ещё не серия.
     expect(row(t, 'win_streak')).toEqual({ value: null, holders: [] });
@@ -82,7 +82,7 @@ describe('рекорды: таблица', () => {
         ['C', 'e3'],
       ],
     });
-    expect(row(t, 'biggest_pool')).toEqual({ value: 2000, holders: [[null, 'e5']] });
+    expect(row(t, 'biggest_pool')).toEqual({ value: 2500, holders: [[null, 'e5']] });
     expect(row(t, 'longest_game')).toEqual({ value: 4 * MIN, holders: [[null, 'e5']] });
     // Без исключения гость — держатель.
     expect(row(recordsTable([e1, e2, e5], none), 'most_kos')).toEqual({
@@ -127,7 +127,7 @@ describe('рекорды: таблица', () => {
     j.finish();
     const s = summarize('p', q4(1), DEFAULT_FORMAT, j.events, DEFAULT_SCORING);
     expect(s.durationMs).toBe(60 * MIN);
-    expect(s.prizePoolRub).toBe(800);
+    expect(s.prizePoolRub).toBe(1000);
     expect(s.finishedAt).toBe('2026-10-01T18:00:00.000Z');
   });
 
@@ -168,9 +168,9 @@ describe('рекорды: какой вечер что установил', () =
     expect(Object.keys(b).sort()).toEqual(['e1', 'e2']);
     expect(b['e1']).toEqual([]);
     expect(b['e2']).toEqual([
-      { kind: 'biggest_win', value: 1020, previous: 640, status: 'new', playerIds: ['B'] },
+      { kind: 'biggest_win', value: 900, previous: 550, status: 'new', playerIds: ['B'] },
       { kind: 'most_kos', value: 3, previous: 2, status: 'new', playerIds: ['B'] },
-      { kind: 'biggest_pool', value: 1600, previous: 1200, status: 'new', playerIds: [] },
+      { kind: 'biggest_pool', value: 2000, previous: 1500, status: 'new', playerIds: [] },
       { kind: 'longest_game', value: 3 * MIN, previous: 2 * MIN, status: 'new', playerIds: [] },
     ]);
   });

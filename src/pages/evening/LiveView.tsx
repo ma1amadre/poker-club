@@ -1,6 +1,8 @@
 // Живой вечер: уровень и обратный отсчёт, блайнды, ребаи, фонд, игроки и лента. У банкира и
 // админа поверх того же экрана — пульт: таймер, уровни, раздачи, вылеты, ребаи, отмена, финиш.
 // Пока на табло олл-ин, его панель (руки, стол, шансы, ауты) — первой на экране у всех.
+// У того, кто ведёт пульт, экран не гаснет (Screen Wake Lock; нельзя — подсказка отключить
+// автоблокировку), а закрытие Mini App Telegram переспрашивает: пульт — не место для случайного свайпа.
 import { computeMoney } from '@domain/money.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
 import type { PlayerState } from '@domain/types.ts';
@@ -16,7 +18,10 @@ import {
   joinNames,
   plural,
   pluralWithNumber,
+  useWakeLock,
+  wakeLockHint,
 } from '../../shared/lib';
+import { useClosingConfirmation } from '../../shared/telegram';
 import {
   Badge,
   Button,
@@ -34,12 +39,15 @@ import {
 } from '../../shared/ui';
 import {
   averageStackBb,
-  bountyNote,
   clockView,
   describeEvent,
   formatBbValue,
   lastUndoable,
+  levelEdgeLeftMs,
   levelLabel,
+  levelMovedText,
+  levelNextClosesRebuys,
+  rebuysClosingText,
   rebuyText,
   rebuyWindow,
   triggerProgress,
@@ -74,6 +82,10 @@ export function LiveView({ model, actions }: LiveViewProps) {
   const [showdownOpen, setShowdownOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const showdown = visibleShowdown(state.showdown, model.nowMs);
+  // Пульт: экран не гаснет, закрытие Mini App — с вопросом (как в админке с несохранёнными правками).
+  const wake = useWakeLock(canControl);
+  useClosingConfirmation(canControl);
+  const wakeHint = canControl ? wakeLockHint(wake) : null;
 
   const timer = state.timer;
   const paused = timer.status === 'paused';
@@ -82,8 +94,6 @@ export function LiveView({ model, actions }: LiveViewProps) {
   const avg = averageStackBb(state);
   const lastAlive =
     state.aliveCount === 1 ? state.joinOrder.find((id) => state.players[id]?.alive) : undefined;
-  // Все головы вечера — по кратностям входов (домен); подпись — головы тех, кто сейчас в игре.
-  const bountyPoolRub = state.bountyPoolRub;
   const money = computeMoney(format, state);
   const owedRub = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
 
@@ -135,19 +145,43 @@ export function LiveView({ model, actions }: LiveViewProps) {
   };
 
   // «Уровень вперёд» за секунды до авто-перехода: запрос придёт на сервер уже на следующем уровне,
-  // и replay переключит ещё раз — уровень пропустится.
+  // и replay переключит ещё раз — уровень пропустится. Переход, который закроет ребаи, переспрашиваем
+  // всегда: ошибочный тап меняет деньги вечера, а «Уровень назад» начнёт уровень с нуля.
+  // Вопрос может висеть долго: уровень за это время сменится сам (время, вылет, раздача с другого
+  // устройства). Поэтому после ответа — свежее состояние: уровень сменился — запись не уходит
+  // (guard в send), до авто-перехода остались секунды — ещё вопрос о краю уровня.
+  const confirmEdge = (leftMs: number) =>
+    actions.confirm({
+      title: 'Уровень и так сейчас сменится',
+      message: `До конца уровня ${Math.max(1, Math.ceil(leftMs / 1000))} с — он сменится сам. Если перейти вручную, запись может прийти уже на следующем уровне, и он пропустится.`,
+      confirmText: 'Всё равно перейти',
+      cancelText: 'Подождать',
+    });
+
   const levelNext = async () => {
-    const left = timer.status === 'running' ? timer.levelRemainingMs : null;
-    if (left !== null && left < LEVEL_EDGE_MS) {
+    const before = actions.freshState();
+    const from = before.timer.levelIndex;
+    const left = levelEdgeLeftMs(before, LEVEL_EDGE_MS);
+    const closes = levelNextClosesRebuys(format, before);
+    if (left !== null) {
+      if (!(await confirmEdge(left))) return;
+    } else if (closes) {
       const ok = await actions.confirm({
-        title: 'Уровень и так сейчас сменится',
-        message: `До конца уровня ${Math.max(1, Math.ceil(left / 1000))} с — он сменится сам. Если перейти вручную, запись может прийти уже на следующем уровне, и он пропустится.`,
-        confirmText: 'Всё равно перейти',
-        cancelText: 'Подождать',
+        title: `Перейти на ${from + 2}-й уровень?`,
+        message: `${rebuysClosingText(closes.busted.map(nameOf))} Ошибочный переход отменяется кнопкой «Отменить» в тосте.`,
+        confirmText: 'Перейти и закрыть ребаи',
+        cancelText: 'Остаться на уровне',
       });
       if (!ok) return;
+      const after = actions.freshState();
+      const leftNow = levelMovedText(from, after) ? null : levelEdgeLeftMs(after, LEVEL_EDGE_MS);
+      if (leftNow !== null && !(await confirmEdge(leftNow))) return;
     }
-    void actions.send('level_next', {}, { success: 'Уровень вперёд', undo: true });
+    void actions.send(
+      'level_next',
+      {},
+      { success: 'Уровень вперёд', undo: true, guard: (fresh) => levelMovedText(from, fresh) },
+    );
   };
 
   const clock = clockView(state);
@@ -340,6 +374,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
                 {formatTime(undoTarget.at)}
               </p>
             )}
+            {wakeHint && <p className="m-small">{wakeHint}</p>}
           </div>
         </Section>
       )}
@@ -350,12 +385,6 @@ export function LiveView({ model, actions }: LiveViewProps) {
           value={formatNumber(state.prizePoolRub)}
           unit="₽"
           note={`выплаты ${format.payoutPct.join(' / ')} %`}
-        />
-        <Stat
-          label="Баунти"
-          value={formatNumber(bountyPoolRub)}
-          unit="₽"
-          note={bountyNote(state, format)}
         />
         <Stat
           label="В игре"

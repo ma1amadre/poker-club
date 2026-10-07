@@ -107,7 +107,6 @@ function initialState(format: TournamentFormat): EveningState {
     totalStacks: 0,
     totalChips: 0,
     prizePoolRub: 0,
-    bountyPoolRub: 0,
     finished: false,
     places: [],
     firstBustPlayerId: null,
@@ -151,11 +150,10 @@ function refresh(format: TournamentFormat, s: EveningState): void {
   const list = s.joinOrder.map((id) => s.players[id]).filter((p): p is PlayerState => !!p);
   s.aliveCount = list.filter((p) => p.alive).length;
   s.totalEntries = list.reduce((sum, p) => sum + p.entries, 0);
-  // Деньги и фишки — по кратностям: вход ×2 — это два стандартных входа и в фонде, и в головах.
+  // Деньги и фишки — по кратностям: вход ×2 — это два стандартных входа. Весь взнос — в фонд.
   s.totalStacks = list.reduce((sum, p) => sum + p.stacks, 0);
   s.totalChips = s.totalStacks * format.startingChips;
-  s.prizePoolRub = s.totalStacks * (format.buyInRub - format.bountyRub);
-  s.bountyPoolRub = s.totalStacks * format.bountyRub;
+  s.prizePoolRub = s.totalStacks * format.buyInRub;
 
   for (const p of list) p.place = null;
   s.places = [];
@@ -287,14 +285,12 @@ function apply(
         entries: 1,
         rebuys: 0,
         stacks: k,
-        currentStacks: k,
         alive: true,
         busts: 0,
         finalBustEventId: null,
         place: null,
         kos: 0,
         koVictims: [],
-        bountyWonRub: 0,
         bustLevel: null,
       };
       s.joinOrder.push(id);
@@ -306,8 +302,6 @@ function apply(
       p.entries += 1;
       p.rebuys += 1;
       p.stacks += k;
-      // Голова привязана к входу: после ребая на кону голова нового входа, а не прежнего.
-      p.currentStacks = k;
       p.alive = true;
       p.finalBustEventId = null;
       p.bustLevel = null;
@@ -322,18 +316,13 @@ function apply(
       p.finalBustEventId = ev.id;
       p.bustLevel = t.levelIndex + 1;
       if (s.firstBustPlayerId === null) s.firstBustPlayerId = id;
-      // Голова — текущего входа жертвы (вход ×k — голова bountyRub·k). Делится поровну в целых
-      // рублях, остаток — первому в списке. Пустой by — голова «сиротская», её получит
-      // победитель (в money.ts), здесь не начисляем.
-      const head = format.bountyRub * p.currentStacks;
-      const share = by.length > 0 ? Math.floor(head / by.length) : 0;
-      const rest = head - share * by.length;
-      by.forEach((k, i) => {
+      // Нокаут — только статистика (денег за голову нет с 07.10.2026): при дележе он засчитывается
+      // каждому из by, пустой by — нокаут никому.
+      for (const k of by) {
         const killer = s.players[k] as PlayerState;
         killer.kos += 1;
         killer.koVictims.push(id);
-        killer.bountyWonRub += share + (i === 0 ? rest : 0);
-      });
+      }
       if (t.status !== 'not_started') {
         t.bustsInLevel += 1;
         const trig = levelAt(format, t.levelIndex).trigger;

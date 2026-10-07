@@ -1,7 +1,7 @@
 // Чистые помощники экрана вечера, расчёта и табло: подписи событий, порядок игроков, оценки
 // времени. Деньги, места и очки здесь НЕ считаются — только раскладка того, что посчитал домен.
 import { entryAmounts, type SettlementRow } from '@domain/money.ts';
-import { readStacks } from '@domain/replay.ts';
+import { readStacks, replayLog } from '@domain/replay.ts';
 import { readShowdown, streetOf } from '@domain/showdown.ts';
 import type {
   BlindLevel,
@@ -84,8 +84,7 @@ export function describeEvent(
       let detail: string;
       if (by.length === 0) detail = 'кто выбил — не указано';
       else if (by.length === 1) detail = `выбивает ${by[0]}`;
-      else if (by.length === 2) detail = `выбивают ${joinNames(by)} — голова пополам`;
-      else detail = `выбивают ${joinNames(by)} — голова поровну на ${by.length}`;
+      else detail = `выбивают ${joinNames(by)} — нокаут каждому`;
       return { kind: 'bust', title: `Вылет: ${who()}`, detail };
     }
     case 'timer_start':
@@ -134,6 +133,166 @@ export function describeEvent(
     default:
       return { kind: 'clock', title: 'Событие', detail: null };
   }
+}
+
+// --- Что изменит отмена записи и переход уровня -----------------------------------------------
+
+export interface VoidImpact<T extends EveningEvent> {
+  /** Отменяемая запись (null — такой в журнале нет). */
+  voided: T | null;
+  /** Записи, которые журнал сейчас не принимает, а после отмены примет. */
+  revived: T[];
+  /** Принятые сейчас записи, которые после отмены журнал принимать перестанет, — с причиной. */
+  rejected: { event: T; message: string }[];
+  /** Вечер завершён по журналу сейчас и после отмены. */
+  finishedBefore: boolean;
+  finishedAfter: boolean;
+}
+
+/**
+ * Что сделает отмена записи: replay «до» и «после». Отмена старого вылета, например, оживляет
+ * игрока — и ребай после этого вылета журнал перестаёт принимать (ребай живому не положен), а
+ * отмена вылета финалиста в завершённом вечере снимает «Игра окончена».
+ */
+export function voidImpact<T extends EveningEvent>(
+  format: TournamentFormat,
+  events: readonly T[],
+  eventId: number,
+  nowMs: number,
+): VoidImpact<T> {
+  const before = replayLog(format, events, nowMs);
+  const after = replayLog(
+    format,
+    events.map((e) => (e.id === eventId ? { ...e, voided: true } : e)),
+    nowMs,
+  );
+  const errorsBefore = new Map(before.state.errors.map((e) => [e.eventId, e.message]));
+  const errorsAfter = new Map(after.state.errors.map((e) => [e.eventId, e.message]));
+  const appliedAfter = new Set(after.applied.map((e) => e.id));
+  const others = events.filter((e) => !e.voided && e.id !== eventId).sort((a, b) => a.id - b.id);
+  return {
+    voided: events.find((e) => e.id === eventId) ?? null,
+    revived: others.filter((e) => errorsBefore.has(e.id) && appliedAfter.has(e.id)),
+    rejected: others.flatMap((event) => {
+      const message = errorsAfter.get(event.id);
+      return message !== undefined && !errorsBefore.has(event.id) ? [{ event, message }] : [];
+    }),
+    finishedBefore: before.state.finished,
+    finishedAfter: after.state.finished,
+  };
+}
+
+/** Первая буква строчная: причина из домена встаёт внутрь фразы. */
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+/**
+ * Хвост подтверждения отмены: какие записи оживут, какие станут «не принято», перестанет ли вечер
+ * быть завершённым. label — «Ребай: Саша», 20:15 (подпись записи со временем). Пусто — отмена
+ * ничего, кроме себя, не трогает. Что вечер вернётся в игру при отмене самой «Игра окончена»,
+ * объясняет вызывающий — здесь об этом ни слова.
+ */
+export function voidImpactText<T extends EveningEvent>(
+  impact: VoidImpact<T>,
+  label: (event: T) => string,
+): string {
+  const parts: string[] = [];
+  const unfinished =
+    impact.finishedBefore && !impact.finishedAfter && impact.voided?.type !== 'finish';
+  if (impact.revived.length > 0) {
+    const many = impact.revived.length > 1;
+    parts.push(
+      `После отмены вступит в силу ${many ? 'записи' : 'запись'}, которую журнал сейчас не принимает: ${impact.revived
+        .map(label)
+        .join(
+          '; ',
+        )}. Если ${many ? 'они тоже лишние — отмени и их' : 'она тоже лишняя — отмени и её'}.`,
+    );
+  }
+  // «Игра окончена» в этом списке не нужна: о ней — отдельная фраза про завершённый вечер.
+  const rejected = impact.rejected.filter((r) => !(unfinished && r.event.type === 'finish'));
+  if (rejected.length > 0) {
+    const many = rejected.length > 1;
+    parts.push(
+      `Журнал перестанет принимать ${many ? 'записи' : 'запись'}: ${rejected
+        .map((r) => `${label(r.event)} (${lowerFirst(r.message)})`)
+        .join(
+          '; ',
+        )}. ${many ? 'Они останутся' : 'Она останется'} в ленте с пометкой «Не принято», места, нокауты и деньги посчитаются без ${many ? 'них' : 'неё'}.`,
+    );
+  }
+  if (unfinished) {
+    parts.push(
+      'Вечер перестанет быть завершённым — придётся вернуть его в игру, записать недостающее и завершить заново. Пока этого не сделать, вечер не попадёт в рейтинг, ачивки и итоги.',
+    );
+  }
+  return parts.join(' ');
+}
+
+/**
+ * «Уровень вперёд» закроет ребаи и позднюю регистрацию: кто из вылетевших ещё мог докупиться (в
+ * порядке входа). null — переход ребаи не закрывает (или перехода не будет).
+ */
+export function levelNextClosesRebuys(
+  format: TournamentFormat,
+  state: EveningState,
+): { busted: PlayerId[] } | null {
+  const t = state.timer;
+  if (!state.rebuysOpen || t.status === 'not_started') return null;
+  if (t.levelIndex >= format.levels.length - 1) return null;
+  // Номер уровня после перехода (с 1); ребаи открыты, пока он не больше rebuyUntilLevel.
+  if (t.levelIndex + 2 <= format.rebuyUntilLevel) return null;
+  const busted = state.joinOrder.filter((id) => {
+    const p = state.players[id];
+    return (
+      p !== undefined && !p.alive && (format.rebuyLimit === null || p.rebuys < format.rebuyLimit)
+    );
+  });
+  return { busted };
+}
+
+/** «Ребаи закроются — Саша и Дима не смогут докупиться». Без рода: имена бывают любые. */
+export function rebuysClosingText(bustedNames: readonly string[]): string {
+  if (bustedNames.length === 0)
+    return 'Ребаи и поздняя регистрация закроются: докупиться и сесть за стол будет нельзя.';
+  const many = bustedNames.length > 1;
+  return `Ребаи закроются — ${many ? 'вылетевшие ' : ''}${joinNames(bustedNames)} не ${many ? 'смогут' : 'сможет'} докупиться. Поздняя регистрация тоже закроется.`;
+}
+
+/** До авто-перехода уровня меньше edgeMs (таймер идёт, уровень по времени): сколько осталось. */
+export function levelEdgeLeftMs(state: EveningState, edgeMs: number): number | null {
+  const t = state.timer;
+  if (t.status !== 'running' || t.levelRemainingMs === null) return null;
+  return t.levelRemainingMs < edgeMs ? t.levelRemainingMs : null;
+}
+
+/**
+ * Уровень сменился, пока банкир отвечал на вопрос «Уровень вперёд» (время вышло, вылет или
+ * раздача с другого устройства): запись перескочила бы через уровень. Текст отказа или null.
+ */
+export function levelMovedText(fromLevelIndex: number, state: EveningState): string | null {
+  const now = state.timer.levelIndex;
+  return now === fromLevelIndex ? null : `Уровень уже сменился — сейчас ${now + 1}-й`;
+}
+
+/**
+ * Нажатие повторяет запись, которая дошла до сервера без ответа (тайм-аут, обрыв), — она уже в
+ * журнале. Повтор по совету тоста задвоил бы её, а новое действие (следующая раздача, ещё уровень)
+ * — нет: спрашиваем. `label` — «Раздача сыграна», 20:15.
+ */
+export function landedQuestion(label: string): {
+  title: string;
+  message: string;
+  confirmText: string;
+  cancelText: string;
+} {
+  return {
+    title: 'Запись уже в журнале',
+    message: `${label} — прошлое нажатие дошло до сервера, хотя ответа не было. Повторять не нужно. Ещё одна запись нужна, только если это новое действие, например следующая раздача.`,
+    confirmText: 'Записать ещё одну',
+    cancelText: 'Не записывать',
+  };
 }
 
 /** Последнее неотменённое игровое событие (платежи отменяются на экране расчёта). */
@@ -436,20 +595,46 @@ export function playerLine(p: PlayerState, format: TournamentFormat): string {
   return parts.join(' · ');
 }
 
+// --- Шторка вылета: кто выбил ----------------------------------------------------------------
+
+/** Кто может выбить игрока: все, кто сейчас в игре, кроме него самого, — в порядке входа. */
+export function possibleKillers(state: EveningState, victimId: PlayerId): PlayerId[] {
+  return state.joinOrder.filter((id) => id !== victimId && state.players[id]?.alive);
+}
+
+/**
+ * Выбор выбивших при открытии шторки. В хедз-апе выбить может только соперник — он отмечен
+ * заранее, и вылет записывается одним нажатием. Иначе — никто не отмечен.
+ */
+export function initialKillers(state: EveningState, victimId: PlayerId): PlayerId[] {
+  const killers = possibleKillers(state, victimId);
+  return killers.length === 1 ? killers : [];
+}
+
+/**
+ * Подсказка под выбором «Кто выбил». Переключателя дележа нет: два и больше отмеченных и есть
+ * «выбили вместе». Нокаут — только статистика, поэтому о деньгах ни слова.
+ */
+export function killersHint(killerNames: readonly string[], nobody: boolean): string {
+  if (nobody) return 'Нокаут никому не засчитается.';
+  if (killerNames.length === 0)
+    return 'Отметь, кто выбил. Выбили вместе — отметь каждого, нокаут засчитается всем.';
+  if (killerNames.length === 1)
+    return `Нокаут засчитается: ${killerNames[0]}. Выбили вместе — отметь и остальных.`;
+  return `Выбивают вместе ${joinNames(killerNames)} — нокаут засчитается каждому.`;
+}
+
+/** Главная кнопка шторки вылета: пока не ясно, кто выбил, — что сделать, а не «Отметить вылет». */
+export function bustButtonLabel(killers: number, nobody: boolean): string {
+  return killers === 0 && !nobody ? 'Выбери, кто выбил' : 'Отметить вылет';
+}
+
 // --- Кратность входа и ребая -----------------------------------------------------------------
 
 /** «1 000 ₽ · 1 000 фишек» — во что обходится вход или ребай кратности k. */
 export function stacksAmountText(format: TournamentFormat, k: number): string {
   const a = entryAmounts(format, k);
   return `${rubText(a.rub)} · ${formatNumber(a.chips)}${NBSP}${plural(a.chips, ['фишка', 'фишки', 'фишек'])}`;
-}
-
-/** Подсказка под выбором кратности: куда разойдутся деньги этого входа. */
-export function stacksHint(format: TournamentFormat, k: number): string {
-  const a = entryAmounts(format, k);
-  return a.bountyRub > 0
-    ? `Голова — ${rubText(a.bountyRub)}, в фонд — ${rubText(a.poolRub)}.`
-    : `Всё в фонд — ${rubText(a.poolRub)}.`;
 }
 
 /**
@@ -464,23 +649,6 @@ export function seatButtonLabel(count: number, format: TournamentFormat, k: numb
   return `Посадить: ${count} · ${count > 1 ? `по${NBSP}` : ''}${sum}`;
 }
 
-/**
- * Подпись к баунти на табло: сколько стоит голова у тех, кто сейчас в игре, — у каждого голова
- * его текущего входа или ребая. Все одинаковые — «200 ₽ за голову», разные — «100–300 ₽ за голову»;
- * в игре никого — стандартная голова формата.
- */
-export function bountyNote(state: EveningState, format: TournamentFormat): string {
-  const heads = state.joinOrder
-    .map((id) => state.players[id])
-    .filter((p): p is PlayerState => Boolean(p?.alive))
-    .map((p) => entryAmounts(format, p.currentStacks).bountyRub);
-  if (heads.length === 0) return `${rubText(format.bountyRub)} за голову`;
-  const min = Math.min(...heads);
-  const max = Math.max(...heads);
-  const range = min === max ? rubText(min) : `${formatNumber(min)}–${rubText(max)}`;
-  return `${range} за голову`;
-}
-
 /** Payload входа или ребая: кратность пишется, только если она больше 1 (стандартный — как раньше). */
 export function entryPayload(
   playerId: PlayerId,
@@ -492,6 +660,18 @@ export function entryPayload(
 // --- Кого посадить за стол -------------------------------------------------------------------
 
 export type RsvpAnswer = 'yes' | 'maybe' | 'no';
+
+/**
+ * Значение переключателя «Твой ответ»: пока ответ уходит на сервер — он, иначе сохранённый. Нет
+ * ответа (в том числе пока ответы ещё грузятся) — пустая строка: Segmented «Материи» при
+ * value === undefined подсвечивает первый вариант, «Иду», и не ответивший видел бы себя идущим.
+ */
+export function rsvpSegmentValue(
+  saved: RsvpAnswer | null | undefined,
+  pending?: RsvpAnswer | null,
+): RsvpAnswer | '' {
+  return pending ?? saved ?? '';
+}
 
 export interface SeatCandidate<P> {
   player: P;
@@ -527,6 +707,87 @@ export function normalizeGuestName(text: string): string | null {
   return name.length >= 1 && Array.from(name).length <= NAME_MAX ? name : null;
 }
 
+/**
+ * Имя для сравнения: регистр, «ё»/«е», лишние пробелы и пометка в скобках в конце («Вова (гость)»)
+ * не важны. Пусто — сравнивать не с чем.
+ */
+export function nameMatchKey(name: string): string {
+  return normalizeName(name)
+    .replace(/\s*\([^()]*\)$/, '')
+    .toLowerCase()
+    .replace(/ё/g, 'е');
+}
+
+export interface NameMatches<P> {
+  /** Активные игроки клуба с таким именем, ещё не вошедшие в турнир: их можно посадить. */
+  seatable: P[];
+  /** С таким именем уже в турнире. */
+  seated: P[];
+}
+
+/**
+ * Кто в клубе уже носит имя, вписанное в поле «Гость»: каждый ввод имени создаёт нового игрока,
+ * а дубль гостя потом не слить. Подсказка предлагает посадить того же человека.
+ */
+export function nameMatches<P extends { id: string; display_name: string; is_active: boolean }>(
+  players: readonly P[],
+  state: EveningState,
+  text: string,
+): NameMatches<P> {
+  const key = nameMatchKey(text);
+  if (!key) return { seatable: [], seated: [] };
+  const same = players.filter((p) => p.is_active && nameMatchKey(p.display_name) === key);
+  return {
+    seatable: same.filter((p) => !state.players[p.id]),
+    seated: same.filter((p) => Boolean(state.players[p.id])),
+  };
+}
+
+export interface NameMatchNotice {
+  title: string;
+  text: string;
+  /** Посадить найденного одним нажатием: подпись кнопки и id игрока. */
+  seat: { label: string; playerId: string } | null;
+}
+
+const ANOTHER_PERSON = 'Другой человек с тем же именем — нажми «Добавить гостя».';
+
+/**
+ * Подсказка под полем «Гость»: такой человек в клубе уже есть — посадить его, а не заводить дубль
+ * (вечера иначе разойдутся по двум профилям). Без рода: «уже есть», «посади этого гостя». null —
+ * совпадений нет.
+ */
+export function nameMatchNotice<P extends { id: string; display_name: string; is_guest: boolean }>(
+  matches: NameMatches<P>,
+): NameMatchNotice | null {
+  const [first] = matches.seatable;
+  if (first && matches.seatable.length === 1) {
+    return first.is_guest
+      ? {
+          title: `Такой гость уже есть: ${first.display_name}`,
+          text: `Тот же человек — посади этого гостя, и вечера останутся в одном профиле. ${ANOTHER_PERSON}`,
+          seat: { label: 'Посадить этого гостя', playerId: first.id },
+        }
+      : {
+          title: `Такой игрок клуба уже есть: ${first.display_name}`,
+          text: `Тот же человек — посади его из клуба, а не гостем: иначе вечера разойдутся по двум профилям. ${ANOTHER_PERSON}`,
+          seat: { label: 'Посадить этого игрока', playerId: first.id },
+        };
+  }
+  if (first) {
+    return {
+      title: `В клубе несколько: ${first.display_name}`,
+      text: `Отметь нужного в списке выше. ${ANOTHER_PERSON}`,
+      seat: null,
+    };
+  }
+  const [seated] = matches.seated;
+  if (seated) {
+    return { title: `${seated.display_name} уже в этом вечере`, text: ANOTHER_PERSON, seat: null };
+  }
+  return null;
+}
+
 // --- Итоги и расчёт: раскладка того, что посчитал домен -----------------------------------------
 
 /** id игроков расчёта: сначала по местам (или по входу до finish), затем «лишние» из платежей. */
@@ -539,21 +800,21 @@ export function settleOrder(state: EveningState, tableIds: readonly string[]): s
 export interface SettleTotals {
   /** Сумма взносов (входы и ребаи). */
   inRub: number;
-  /** Сумма выплат: призы и головы. */
+  /** Сумма выплат: призовые. */
   outRub: number;
   /** Деньги у банкира сейчас: все платежи игроков минус выплаты им. */
   bankerHoldsRub: number;
 }
 
 export function settleTotals(
-  money: Readonly<Record<string, { owesRub: number; prizeRub: number; bountyRub: number }>>,
+  money: Readonly<Record<string, { owesRub: number; prizeRub: number }>>,
   table: Readonly<Record<string, { paidRub: number }>>,
 ): SettleTotals {
   let inRub = 0;
   let outRub = 0;
   for (const row of Object.values(money)) {
     inRub += row.owesRub;
-    outRub += row.prizeRub + row.bountyRub;
+    outRub += row.prizeRub;
   }
   let bankerHoldsRub = 0;
   for (const row of Object.values(table)) bankerHoldsRub += row.paidRub;

@@ -1,19 +1,18 @@
 // Деньги вечера: кто сколько внёс, выиграл и сколько осталось перевести через банкира.
-// Инвариант (проверяется тестами): после finish сумма prize + bounty по всем игрокам
-// ровно равна сумме owes — деньги не появляются и не исчезают ни на рубль.
+// Весь взнос входа и ребая идёт в призовой фонд; денег «за голову» нет (баунти убрано
+// 07.10.2026 — нокауты остаются статистикой: очки, ачивки, звания, рекорды).
+// Инвариант (проверяется тестами): после finish сумма призовых по всем игрокам ровно равна
+// сумме взносов — деньги не появляются и не исчезают ни на рубль.
 //
 // Вход и ребай бывают кратными стандартному (stacks = k в payload): вход ×k — это k стандартных
-// входов по всем статьям сразу (взнос, фишки, голова, доля фонда), поэтому все суммы линейны по
-// сумме кратностей, а голова у каждого входа своя — bountyRub·k этого входа.
+// входов сразу (взнос и фишки ×k), поэтому все суммы линейны по сумме кратностей.
 import { readPayment } from './replay.ts';
 import type { EveningEvent, EveningState, PlayerId, TournamentFormat } from './types.ts';
 
 export interface EntryAmounts {
   stacks: number; // кратность k
-  rub: number; // взнос: buyInRub·k
+  rub: number; // взнос: buyInRub·k — весь в призовой фонд
   chips: number; // фишки: startingChips·k
-  bountyRub: number; // голова этого входа: bountyRub·k
-  poolRub: number; // в призовой фонд: (buyInRub − bountyRub)·k
 }
 
 /** Во что обходится вход или ребай кратности `stacks` — для пульта банкира и подписей ленты. */
@@ -22,16 +21,13 @@ export function entryAmounts(format: TournamentFormat, stacks = 1): EntryAmounts
     stacks,
     rub: format.buyInRub * stacks,
     chips: format.startingChips * stacks,
-    bountyRub: format.bountyRub * stacks,
-    poolRub: (format.buyInRub - format.bountyRub) * stacks,
   };
 }
 
 export interface MoneyRow {
   owesRub: number; // взносы: сумма кратностей входа и ребаев × buyIn
   prizeRub: number; // призовые за место
-  bountyRub: number; // головы; у победителя ещё своя голова и сиротские
-  netRub: number; // prize + bounty − owes
+  netRub: number; // prize − owes
 }
 
 export type MoneyTable = Record<PlayerId, MoneyRow>;
@@ -76,31 +72,21 @@ export function payouts(
 }
 
 /**
- * Денежная таблица вечера. Призы и «свою голову + сиротские» победитель получает только
- * после finish: до этого места не окончательны.
+ * Денежная таблица вечера. Призовые — только после finish: до этого места не окончательны.
+ * Нокауты на деньги не влияют.
  */
 export function computeMoney(format: TournamentFormat, state: EveningState): MoneyTable {
   const table: MoneyTable = {};
   const prizes = state.finished
     ? payouts(state.prizePoolRub, format.payoutPct, state.joinOrder.length)
     : [];
-  // Нераспределённые головы = голова текущего входа победителя + сиротские (bust с пустым by),
-  // каждая — своей кратности. Считаем как разность, а не перечислением — так инвариант держится
-  // по построению.
-  const distributed = state.joinOrder.reduce(
-    (s, id) => s + (state.players[id]?.bountyWonRub ?? 0),
-    0,
-  );
-  const undistributed = state.bountyPoolRub - distributed;
-  const winner = state.finished ? state.places[0] : undefined;
 
   for (const id of state.joinOrder) {
     const p = state.players[id];
     if (!p) continue;
     const owesRub = p.stacks * format.buyInRub;
     const prizeRub = p.place !== null && state.finished ? (prizes[p.place - 1] ?? 0) : 0;
-    const bountyRub = p.bountyWonRub + (id === winner ? undistributed : 0);
-    table[id] = { owesRub, prizeRub, bountyRub, netRub: prizeRub + bountyRub - owesRub };
+    table[id] = { owesRub, prizeRub, netRub: prizeRub - owesRub };
   }
   return table;
 }
@@ -134,7 +120,7 @@ export function settlement(money: MoneyTable, payments: readonly Payment[]): Set
   const table: SettlementTable = {};
   for (const id of ids) {
     const m = money[id];
-    const dueRub = m ? m.owesRub - m.prizeRub - m.bountyRub : 0;
+    const dueRub = m ? m.owesRub - m.prizeRub : 0;
     const paidRub = paid.get(id) ?? 0;
     const remainingRub = dueRub - paidRub;
     table[id] = { dueRub, paidRub, remainingRub, status: statusOf(remainingRub) };

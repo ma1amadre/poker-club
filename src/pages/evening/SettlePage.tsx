@@ -153,7 +153,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
       {model.stale && <StaleNotice updatedAt={model.updatedAt} onRetry={model.retry} />}
       {status === 'announced' || status === 'live' ? (
         <Notice tone="info" title="Игра ещё не окончена">
-          Сейчас видны только взносы. Призы и головы появятся после завершения вечера.
+          Сейчас видны только взносы. Призы появятся после завершения вечера.
         </Notice>
       ) : status === 'settled' ? (
         <Notice tone={settled.tone} title={settled.title}>
@@ -175,7 +175,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
           label="Выплаты"
           value={formatNumber(totals.outRub)}
           unit="₽"
-          note={finished ? 'призы и головы' : 'пока только головы'}
+          note={finished ? 'призы по местам' : 'после завершения вечера'}
         />
         <Stat
           label="У банкира"
@@ -218,7 +218,6 @@ function SettleScreen({ model }: { model: EveningModel }) {
                       <span className="ev-subline">
                         <span>внёс {formatRub(m?.owesRub ?? 0)}</span>
                         {finished && <span>приз {formatRub(m?.prizeRub ?? 0)}</span>}
-                        {finished && <span>головы {formatRub(m?.bountyRub ?? 0)}</span>}
                       </span>
                       <Badge tone={STATUS_TONE[direction]} dot={direction === 'none'}>
                         {settleLabel(row, formatRub)}

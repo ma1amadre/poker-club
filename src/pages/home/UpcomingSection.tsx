@@ -85,8 +85,7 @@ function Fact({ icon, children }: { icon: IconName; children: ReactNode }) {
 
 function feeText(format: Evening['format']): string {
   const fee = formatRub(format.buyInRub);
-  const base = format.rebuyLimit === 0 ? `Вход — ${fee}` : `Вход и ребай — ${fee}`;
-  return format.bountyRub > 0 ? `${base}, из них ${formatRub(format.bountyRub)} за голову` : base;
+  return format.rebuyLimit === 0 ? `Вход — ${fee}` : `Вход и ребай — ${fee}`;
 }
 
 // --- Анонс -----------------------------------------------------------------------------------

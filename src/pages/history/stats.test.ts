@@ -54,7 +54,7 @@ describe('раскладка истории', () => {
 });
 
 describe('итоги вечера по журналу', () => {
-  it('фонд — входы и ребаи × (бай-ин − баунти), состав и кто в игре', () => {
+  it('фонд — все взносы входов и ребаев, состав и кто в игре', () => {
     const j = journal();
     j.join('A', 'B', 'C');
     j.start();
@@ -67,7 +67,7 @@ describe('итоги вечера по журналу', () => {
     expect(totals).toEqual({
       players: 3,
       alive: 2,
-      prizePoolRub: 4 * (DEFAULT_FORMAT.buyInRub - DEFAULT_FORMAT.bountyRub),
+      prizePoolRub: 4 * DEFAULT_FORMAT.buyInRub,
     });
   });
 

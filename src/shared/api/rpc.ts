@@ -4,7 +4,9 @@ import type { EventPayload, EventType } from '@domain/types.ts';
 import type { VoteCategory } from '@domain/votes.ts';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useAuth } from '../auth/context';
+import { createRetryKeys, retryIntent, safeSessionStorage } from '../lib/retryKeys';
 import { addClockSample } from '../lib/serverClock';
+import { TimeoutError, WRITE_TIMEOUT_MS, withTimeout } from '../lib/timeout';
 import { supabase } from '../supabase';
 import { toError } from './errors';
 import { queryKeys } from './keys';
@@ -34,6 +36,32 @@ export function newClientId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/**
+ * Ключи повтора записей вечера (add_event, add_guest): в sessionStorage, переживают перезагрузку
+ * WebView. Одно хранилище на приложение — см. shared/lib/retryKeys.ts.
+ */
+export const retryKeys = createRetryKeys(safeSessionStorage(), newClientId);
+
+/**
+ * Тост тайм-аута записи с ключом повтора: повтор тем же ключом не задвоит запись. Если запись
+ * успела дойти и уже видна в журнале, повторное нажатие не уходит молча с новым ключом, а
+ * спрашивает, нужна ли ещё одна (`retryKeys.landed`, useEveningActions, SeatSheet).
+ */
+export const WRITE_TIMEOUT_TEXT = 'Ответа нет — нажми ещё раз: запись не задвоится';
+/** Тайм-аут записи без ключа повтора, которую повтор не испортит (те же доли, та же отметка). */
+const RETRY_TIMEOUT_TEXT = 'Ответа нет — нажми ещё раз';
+
+/**
+ * RPC записи с пределом ожидания WRITE_TIMEOUT_MS: зависшее соединение отменяется, а шторка
+ * перестаёт ждать и закрывается. Сервер мог успеть записать — повтор идёт тем же ключом.
+ */
+function writeRpc<R>(
+  call: (signal: AbortSignal) => PromiseLike<R>,
+  message = WRITE_TIMEOUT_TEXT,
+): Promise<R> {
+  return withTimeout(call, WRITE_TIMEOUT_MS, () => new TimeoutError(message, WRITE_TIMEOUT_MS));
+}
+
 /** Событие в журнал вечера. Перед вызовом страница проверяет его доменной canApply. */
 export async function addEvent({
   eveningId,
@@ -42,12 +70,16 @@ export async function addEvent({
   clientId,
 }: AddEventInput): Promise<EveningEventRecord> {
   const t0 = Date.now();
-  const { data, error } = await supabase.rpc('add_event', {
-    p_evening: eveningId,
-    p_type: type,
-    p_payload: payload,
-    ...(clientId ? { p_client_id: clientId } : {}),
-  });
+  const { data, error } = await writeRpc((signal) =>
+    supabase
+      .rpc('add_event', {
+        p_evening: eveningId,
+        p_type: type,
+        p_payload: payload,
+        ...(clientId ? { p_client_id: clientId } : {}),
+      })
+      .abortSignal(signal),
+  );
   const t1 = Date.now();
   if (error) throw toError(error);
   const record = toEventRecord(data);
@@ -59,7 +91,11 @@ export async function addEvent({
 
 /** Отменить событие (пометка voided, история сохраняется). Отмена finish возвращает вечер в live. */
 export async function voidEvent(eventId: number): Promise<void> {
-  const { error } = await supabase.rpc('void_event', { p_event: eventId });
+  const { error } = await writeRpc(
+    (signal) => supabase.rpc('void_event', { p_event: eventId }).abortSignal(signal),
+    // Ключа у отмены нет: повтор уже прошедшей отмены сервер отклонит, лента покажет итог.
+    'Ответа нет — проверь ленту: если запись не зачёркнута, отмени ещё раз',
+  );
   if (error) throw toError(error);
 }
 
@@ -75,16 +111,25 @@ export async function markSettled({
   lastEventId,
   voidedCount,
 }: MarkSettledInput): Promise<void> {
-  const { error } = await supabase.rpc('mark_settled', {
-    p_evening: eveningId,
-    p_last_event_id: lastEventId,
-    p_voided_count: voidedCount,
-  });
+  const { error } = await writeRpc(
+    (signal) =>
+      supabase
+        .rpc('mark_settled', {
+          p_evening: eveningId,
+          p_last_event_id: lastEventId,
+          p_voided_count: voidedCount,
+        })
+        .abortSignal(signal),
+    RETRY_TIMEOUT_TEXT,
+  );
   if (error) throw toError(error);
 }
 
 export async function unmarkSettled(eveningId: string): Promise<void> {
-  const { error } = await supabase.rpc('unmark_settled', { p_evening: eveningId });
+  const { error } = await writeRpc(
+    (signal) => supabase.rpc('unmark_settled', { p_evening: eveningId }).abortSignal(signal),
+    RETRY_TIMEOUT_TEXT,
+  );
   if (error) throw toError(error);
 }
 
@@ -189,8 +234,12 @@ async function invokeFunction<T>(
   name: string,
   body: Record<string, unknown>,
   emptyMessage: string,
+  timeout?: number,
 ): Promise<T> {
-  const { data, error } = await supabase.functions.invoke<T>(name, { body });
+  const { data, error } = await supabase.functions.invoke<T>(name, {
+    body,
+    ...(timeout ? { timeout } : {}),
+  });
   if (error) {
     // Тело ошибки функции: {error: текст по-русски, code}.
     const response = (error as { context?: unknown }).context;
@@ -208,7 +257,14 @@ async function invokeFunction<T>(
 }
 
 function invokeNotify(body: Record<string, unknown>): Promise<NotifyResponse> {
-  return invokeFunction<NotifyResponse>('notify', body, 'Сервер уведомлений вернул пустой ответ.');
+  // Предел ожидания: после финиша банкир ждёт этот вызов перед расчётом. Пост идемпотентен, а не
+  // дошедший добьёт cron-tick.
+  return invokeFunction<NotifyResponse>(
+    'notify',
+    body,
+    'Сервер уведомлений вернул пустой ответ.',
+    WRITE_TIMEOUT_MS,
+  );
 }
 
 /**
@@ -285,14 +341,25 @@ export async function mergePlayers(guestId: string, targetId: string): Promise<M
 /**
  * Создать гостя и сразу посадить его за стол (join) — миграция 006; `stacks` — кратность входа
  * (миграция 015, 1..10). Права как у add_event для join: банкир вечера или админ. Возвращает id
- * нового игрока. Стандартный вход уходит без p_stacks — как до 015.
+ * нового игрока. Стандартный вход уходит без p_stacks — как до 015. `clientId` — ключ повтора
+ * (миграция 019): повтор после потерянного ответа вернёт уже посаженного гостя, второго не будет.
  */
-export async function addGuest(eveningId: string, name: string, stacks = 1): Promise<string> {
-  const { data, error } = await supabase.rpc('add_guest', {
-    p_evening: eveningId,
-    p_name: name,
-    ...(stacks > 1 ? { p_stacks: stacks } : {}),
-  });
+export async function addGuest(
+  eveningId: string,
+  name: string,
+  stacks = 1,
+  clientId?: string,
+): Promise<string> {
+  const { data, error } = await writeRpc((signal) =>
+    supabase
+      .rpc('add_guest', {
+        p_evening: eveningId,
+        p_name: name,
+        ...(stacks > 1 ? { p_stacks: stacks } : {}),
+        ...(clientId ? { p_client_id: clientId } : {}),
+      })
+      .abortSignal(signal),
+  );
   if (error) throw toError(error);
   if (typeof data !== 'string') throw new Error('Сервер не вернул id гостя. Повтори попытку.');
   return data;
@@ -300,7 +367,11 @@ export async function addGuest(eveningId: string, name: string, stacks = 1): Pro
 
 /** Призовые доли вечера до старта (миграция 007) — банкир вечера или админ. */
 export async function setPayout(eveningId: string, payoutPct: number[]): Promise<void> {
-  const { error } = await supabase.rpc('set_payout', { p_evening: eveningId, p_pct: payoutPct });
+  const { error } = await writeRpc(
+    (signal) =>
+      supabase.rpc('set_payout', { p_evening: eveningId, p_pct: payoutPct }).abortSignal(signal),
+    RETRY_TIMEOUT_TEXT,
+  );
   if (error) throw toError(error);
 }
 
@@ -363,20 +434,52 @@ export function useVoidEvent(eveningId: string) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
       invalidateEvening(queryClient, eveningId);
     },
+    // Ответ мог потеряться после того, как отмена прошла (тайм-аут): лента покажет, как на деле.
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
   });
+}
+
+/** Намерение «этот гость с этой кратностью» — ключ повтора add_guest (регистр имени не важен). */
+export function guestRetryIntent(eveningId: string, name: string, stacks = 1): string {
+  return retryIntent(eveningId, 'guest', { name: name.toLowerCase(), stacks });
 }
 
 export function useAddGuest(eveningId: string) {
   const queryClient = useQueryClient();
+  const refresh = () => {
+    // Новый игрок нужен в справочнике (имя в ленте), новый join — в журнале.
+    void queryClient.invalidateQueries({ queryKey: queryKeys.players });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+    invalidateEvening(queryClient, eveningId);
+  };
   return useMutation({
-    mutationFn: ({ name, stacks = 1 }: { name: string; stacks?: number }) =>
-      addGuest(eveningId, name, stacks),
-    onSuccess: () => {
-      // Новый игрок нужен в справочнике (имя в ленте), новый join — в журнале.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.players });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
-      invalidateEvening(queryClient, eveningId);
+    // Ключ повтора — по намерению «имя + кратность»: тот же гость, нажатый ещё раз после ошибки или
+    // тайм-аута, уходит с прежним ключом, и сервер вернёт уже посаженного (миграция 019).
+    mutationFn: async ({ name, stacks = 1 }: { name: string; stacks?: number }) => {
+      const intent = guestRetryIntent(eveningId, name, stacks);
+      // Гость с этим ключом уже в журнале на экране — новый гость с тем же именем, а не повтор
+      // (дошедшую без ответа попытку SeatSheet до этого показывает и переспрашивает).
+      const journal = queryClient.getQueryData<EveningEventRecord[]>(
+        queryKeys.eveningEvents(eveningId),
+      );
+      const clientId = retryKeys.keyFor(intent, Date.now(), (key) =>
+        Boolean(journal?.some((e) => e.clientId === key)),
+      );
+      try {
+        const id = await addGuest(eveningId, name, stacks, clientId);
+        retryKeys.succeeded(intent);
+        return id;
+      } catch (error) {
+        retryKeys.failed(intent, clientId, Date.now());
+        throw error;
+      }
     },
+    onSuccess: refresh,
+    // Ответ мог потеряться после того, как гость сел: справочник и журнал — как на сервере.
+    onError: refresh,
   });
 }
 

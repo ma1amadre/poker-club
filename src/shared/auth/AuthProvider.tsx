@@ -56,15 +56,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const alive = useRef(true);
   // Во время выхода SIGNED_OUT ожидаем и перевходить не нужно.
   const signingOut = useRef(false);
+  // Номер попытки входа: состояние ставит только последняя. «Повторить вход» с заставки отменяет
+  // прежнюю попытку, и её отказ (или запоздалый успех) не должен перебить новую.
+  const attempt = useRef(0);
 
-  /** Асинхронная часть входа: состояние меняется только по результату. */
+  /** Асинхронная часть входа: состояние меняется только по результату своей попытки. */
   const complete = useCallback(async (initData: string) => {
     lastInitData = initData;
+    const mine = ++attempt.current;
     try {
       const player = await signInOnce(initData);
-      if (alive.current) setState(readyState(player));
+      if (alive.current && attempt.current === mine) setState(readyState(player));
     } catch (error) {
-      if (alive.current) setState(failedState(error));
+      if (alive.current && attempt.current === mine) setState(failedState(error));
     }
   }, []);
 
@@ -73,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (initData: string | null) => {
       forgetSignIn();
       if (!initData) {
+        attempt.current += 1;
         setState(DENIED_NO_TELEGRAM);
         return Promise.resolve();
       }
@@ -88,12 +93,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const initData = currentInitData();
     if (initData) {
       lastInitData = initData;
+      const mine = ++attempt.current;
       signInOnce(initData).then(
         (player) => {
-          if (alive.current) setState(readyState(player));
+          if (alive.current && attempt.current === mine) setState(readyState(player));
         },
         (error: unknown) => {
-          if (alive.current) setState(failedState(error));
+          if (alive.current && attempt.current === mine) setState(failedState(error));
         },
       );
     }

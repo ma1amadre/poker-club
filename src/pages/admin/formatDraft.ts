@@ -1,10 +1,9 @@
 // Черновик формата турнира для редактора админки: строки полей ввода ↔ TournamentFormat,
 // операции над уровнями, раскладка ошибок validateFormat по полям и предпросмотр расписания.
 // Чистые функции без React. Годность формата решает домен (validateFormat), здесь — только разбор
-// ввода; деньги (фонд с входа) берутся из replay, а не считаются заново.
+// ввода.
 import { DEFAULT_FORMAT, validateFormat } from '@domain/format.ts';
-import { replay } from '@domain/replay.ts';
-import type { BlindLevel, EveningEvent, LevelTrigger, TournamentFormat } from '@domain/types.ts';
+import type { BlindLevel, LevelTrigger, TournamentFormat } from '@domain/types.ts';
 // Только чистое форматирование (Intl), без React: модуль тестируется в node.
 import { formatNumber, formatRub, NBSP, plural, pluralWithNumber } from '../../shared/lib/format';
 import { intToInput, decimalToInput, parseDecimalInput, parseIntInput } from './lib';
@@ -42,7 +41,6 @@ export interface FormatDraft {
   name: string;
   buyIn: string;
   chips: string;
-  bounty: string;
   rebuyUntil: string;
   /** Пусто — без лимита. */
   rebuyLimit: string;
@@ -70,13 +68,15 @@ function levelToDraft(level: BlindLevel): LevelDraft {
   };
 }
 
-/** Формат из БД → поля формы. Формат — jsonb, поэтому разбор терпит дыры в нём. */
+/**
+ * Формат из БД → поля формы. Формат — jsonb, поэтому разбор терпит дыры в нём. bountyRub старых
+ * форматов (баунти убрано 07.10.2026) в форму не попадает — и при сохранении из формата уходит.
+ */
 export function draftFromFormat(format: TournamentFormat): FormatDraft {
   return {
     name: typeof format?.name === 'string' ? format.name : '',
     buyIn: intToInput(format?.buyInRub),
     chips: intToInput(format?.startingChips),
-    bounty: intToInput(format?.bountyRub),
     rebuyUntil: intToInput(format?.rebuyUntilLevel),
     rebuyLimit: intToInput(format?.rebuyLimit),
     payouts: Array.isArray(format?.payoutPct) ? format.payoutPct.map(decimalToInput) : [],
@@ -97,7 +97,6 @@ export function formatFromDraft(draft: FormatDraft): TournamentFormat {
     name: draft.name.trim(),
     buyInRub: intOrNaN(draft.buyIn),
     startingChips: intOrNaN(draft.chips),
-    bountyRub: intOrNaN(draft.bounty),
     rebuyUntilLevel: intOrNaN(draft.rebuyUntil),
     rebuyLimit: parseIntInput(draft.rebuyLimit),
     payoutPct: draft.payouts.map((p) => parseDecimalInput(p) ?? Number.NaN),
@@ -128,8 +127,7 @@ export function sameDraft(a: FormatDraft, b: FormatDraft): boolean {
 
 // --- Проверка: ошибки ввода + validateFormat, разложенные по полям ---------------------------
 
-export type FormatField =
-  'name' | 'buyIn' | 'chips' | 'bounty' | 'rebuyUntil' | 'rebuyLimit' | 'payouts';
+export type FormatField = 'name' | 'buyIn' | 'chips' | 'rebuyUntil' | 'rebuyLimit' | 'payouts';
 
 export type LevelField = 'sb' | 'bb' | 'ante' | 'trigger' | 'amount';
 
@@ -155,7 +153,6 @@ const FIELD_PREFIXES: readonly (readonly [string, FormatField])[] = [
   ['Не задано название', 'name'],
   ['Вход ', 'buyIn'],
   ['Стартовый стек', 'chips'],
-  ['Баунти', 'bounty'],
   ['Уровень закрытия ребаев', 'rebuyUntil'],
   ['Лимит ребаев', 'rebuyLimit'],
   ['Нужно хотя бы одно призовое', 'payouts'],
@@ -225,7 +222,6 @@ export function checkDraft(draft: FormatDraft): {
     fields.name = `Название длиннее ${FORMAT_NAME_MAX} символов. Сократи его.`;
   requiredInt('buyIn', draft.buyIn);
   requiredInt('chips', draft.chips);
-  requiredInt('bounty', draft.bounty);
   requiredInt('rebuyUntil', draft.rebuyUntil);
   if (Number.isNaN(parseIntInput(draft.rebuyLimit)))
     fields.rebuyLimit = 'Введи целое число или оставь поле пустым.';
@@ -441,22 +437,6 @@ export function previewFormat(format: TournamentFormat): FormatPreview {
 export function formatGameClock(minutes: number): string {
   const total = Math.max(0, Math.round(minutes));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
-}
-
-/**
- * Сколько с одного входа уходит в призовой фонд — ответ домена (replay одного входа), а не своя
- * арифметика. Для негодного формата — null.
- */
-export function poolPerEntryRub(format: TournamentFormat): number | null {
-  if (validateFormat(format).length > 0) return null;
-  const join: EveningEvent = {
-    id: 1,
-    type: 'join',
-    payload: { playerId: 'preview' },
-    at: '1970-01-01T00:00:00.000Z',
-    voided: false,
-  };
-  return replay(format, [join], 0).prizePoolRub;
 }
 
 function rebuyPhrase(format: TournamentFormat): string {

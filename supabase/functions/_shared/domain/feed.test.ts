@@ -152,7 +152,7 @@ describe('лента «В клубе»', () => {
       eveningId: 'f2',
       winnerId: 'B',
       entrants: 3,
-      prizePoolRub: 1200,
+      prizePoolRub: 1500,
       topHunters: ['B'],
       topHunterKos: 2,
       winnerGuessedBy: ['A', 'X'],

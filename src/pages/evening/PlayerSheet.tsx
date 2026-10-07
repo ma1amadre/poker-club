@@ -1,12 +1,22 @@
-// Пульт одного игрока у банкира: «Отметить вылет» (кто выбил — один, несколько при дележе
-// или «не знаю») для живого и «Записать ребай» для вылетевшего, пока ребаи открыты. Ребай —
-// с выбором кратности (×1 по умолчанию): у нового входа своя голова.
+// Пульт одного игрока у банкира: «Отметить вылет» для живого и «Записать ребай» для вылетевшего,
+// пока ребаи открыты. Кто выбил — набор: отмеченные двое и больше и есть «выбили вместе» (нокаут
+// каждому), переключателя дележа нет — второй тап добавляет, а не молча заменяет первого. «Никто /
+// не знаю» — отдельная кнопка. В хедз-апе соперник отмечен заранее. Ребай — с выбором кратности
+// (×1 по умолчанию). Нокаут — только статистика, денег за голову нет.
 import { entryAmounts } from '@domain/money.ts';
 import type { PlayerState } from '@domain/types.ts';
 import { useState } from 'react';
 import { formatNumber, formatRub, joinNames, NBSP, plural } from '../../shared/lib';
-import { Button, FieldGroup, Notice, PlayerPicker, Sheet, Switch } from '../../shared/ui';
-import { entryPayload, playerLine, rebuyWindow } from './lib';
+import { Button, FieldGroup, Notice, PlayerPicker, Sheet } from '../../shared/ui';
+import {
+  bustButtonLabel,
+  entryPayload,
+  initialKillers,
+  killersHint,
+  playerLine,
+  possibleKillers,
+  rebuyWindow,
+} from './lib';
 import { StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -40,32 +50,31 @@ function PlayerSheetInner({
   // игрока, «Отметить вылет» не должна под пальцем превратиться в «Записать ребай».
   const [mode] = useState<'bust' | 'rebuy'>(player.alive ? 'bust' : 'rebuy');
 
-  const [killers, setKillers] = useState<string[]>([]);
-  const [split, setSplit] = useState(false);
+  const [killers, setKillers] = useState<string[]>(() => initialKillers(state, player.playerId));
   const [unknown, setUnknown] = useState(false);
   const [stacks, setStacks] = useState(1);
   const [sending, setSending] = useState(false);
+  // Своя попытка не получила ответа (ошибка, тайм-аут): если запись всё же появится в журнале, это,
+  // скорее всего, она, а не второе устройство.
+  const [unanswered, setUnanswered] = useState(false);
   const format = evening.format;
-  // Голова на кону — текущего входа игрока (вход ×2 — двойная).
-  const headRub = entryAmounts(format, current.currentStacks).bountyRub;
   const rebuyAmounts = entryAmounts(format, stacks);
   // Пока идёт своя отправка, статус меняет наша же запись — это не «чужая» правка.
   const overtaken = !sending && (mode === 'bust') !== current.alive;
 
-  const alive = state.joinOrder
-    .filter((id) => id !== current.playerId && state.players[id]?.alive)
-    .map((id) => ({
-      id,
-      display_name: nameOf(id),
-      photo_url: playersById.get(id)?.photo_url ?? null,
-    }));
+  const alive = possibleKillers(state, current.playerId).map((id) => ({
+    id,
+    display_name: nameOf(id),
+    photo_url: playersById.get(id)?.photo_url ?? null,
+  }));
 
-  const by = unknown ? [] : killers;
+  // Отмеченный, который успел вылететь (Realtime, второй оператор), в запись не идёт.
+  const by = unknown ? [] : killers.filter((id) => alive.some((p) => p.id === id));
   const bustPayload = { playerId: current.playerId, by };
   const bustProblem = current.alive ? actions.check('bust', bustPayload) : null;
   const rebuyPayload = entryPayload(current.playerId, stacks);
   const rebuyProblem = current.alive ? null : actions.check('rebuy', rebuyPayload);
-  const ready = unknown || killers.length > 0;
+  const ready = unknown || by.length > 0;
   // Ребаи вот-вот закроются: запись, отправленная сейчас, может прийти на сервер уже после.
   const win = rebuyWindow(format, state);
   const closingSoon = win.kind === 'open' && win.msLeft !== null && win.msLeft < REBUY_EDGE_MS;
@@ -82,6 +91,7 @@ function PlayerSheetInner({
     });
     setSending(false);
     if (record) onClose();
+    else setUnanswered(true);
   };
 
   const rebuy = async () => {
@@ -93,6 +103,7 @@ function PlayerSheetInner({
     });
     setSending(false);
     if (record) onClose();
+    else setUnanswered(true);
   };
 
   const line = playerLine(current, format);
@@ -103,9 +114,11 @@ function PlayerSheetInner({
       <Sheet open onClose={onClose} title={name} description={description}>
         <div className="ev-sheet-body">
           <Notice tone="info" title={mode === 'bust' ? 'Вылет уже записан' : 'Ребай уже записан'}>
-            {mode === 'bust'
-              ? `Пока шторка была открыта, вылет игрока ${name} записали с другого устройства. Проверь запись в ленте.`
-              : `Пока шторка была открыта, ребай игрока ${name} записали с другого устройства. Проверь запись в ленте.`}
+            {unanswered
+              ? `${mode === 'bust' ? 'Вылет' : 'Ребай'} игрока ${name} уже в журнале: похоже, первая попытка дошла до сервера, хотя ответа не было. Повторять не нужно — проверь запись в ленте.`
+              : mode === 'bust'
+                ? `Пока шторка была открыта, вылет игрока ${name} записали с другого устройства. Проверь запись в ленте.`
+                : `Пока шторка была открыта, ребай игрока ${name} записали с другого устройства. Проверь запись в ленте.`}
           </Notice>
         </div>
       </Sheet>
@@ -129,7 +142,7 @@ function PlayerSheetInner({
             disabled={!ready || Boolean(bustProblem)}
             onClick={() => void bust()}
           >
-            Отметить вылет
+            {bustButtonLabel(by.length, unknown)}
           </Button>
         }
       >
@@ -139,52 +152,34 @@ function PlayerSheetInner({
               {bustProblem}.
             </Notice>
           ) : null}
-          <FieldGroup
-            label="Кто выбил"
-            hint={
-              unknown
-                ? `Голова уйдёт победителю вечера (${formatRub(headRub)}).`
-                : split
-                  ? `Голова (${formatRub(headRub)}) делится поровну, нокаут засчитывается каждому.`
-                  : 'Выбери одного игрока или включи делёж.'
-            }
-          >
+          <FieldGroup label="Кто выбил" hint={killersHint(by.map(nameOf), unknown)}>
             {alive.length > 0 ? (
               <PlayerPicker
                 players={alive}
-                value={unknown ? [] : killers}
+                value={by}
                 onChange={(ids) => {
                   setUnknown(false);
                   setKillers(ids);
                 }}
-                max={split ? alive.length : 1}
-                disabledIds={unknown ? alive.map((p) => p.id) : []}
-                label={split ? 'Выбили вместе' : undefined}
+                max={alive.length}
+                showCount={false}
               />
             ) : (
               <p className="m-small">Других игроков в игре нет.</p>
             )}
           </FieldGroup>
-          {alive.length > 1 && (
-            <Switch
-              label="Выбили вдвоём или больше"
-              description="Голова делится поровну, нокаут — каждому"
-              checked={split}
-              onChange={(next) => {
-                setSplit(next);
-                if (!next) setKillers((ids) => ids.slice(0, 1));
-              }}
-              disabled={unknown}
-            />
-          )}
-          <Switch
-            label="Не знаю, кто выбил"
-            checked={unknown}
-            onChange={(next) => {
-              setUnknown(next);
-              if (next) setKillers([]);
+          <Button
+            block
+            className="ev-nobody"
+            icon={unknown ? 'check' : 'minus'}
+            aria-pressed={unknown}
+            onClick={() => {
+              setUnknown((on) => !on);
+              setKillers([]);
             }}
-          />
+          >
+            Никто / не знаю, кто выбил
+          </Button>
         </div>
       </Sheet>
     );

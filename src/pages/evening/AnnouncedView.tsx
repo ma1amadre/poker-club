@@ -21,10 +21,11 @@ import {
   Notice,
   Section,
   Segmented,
+  type SegmentedOption,
   Skeleton,
   type Tone,
 } from '../../shared/ui';
-import { eventPlayerId } from './lib';
+import { eventPlayerId, rsvpSegmentValue } from './lib';
 import { FormatSummary, PlayersList } from './parts';
 import { PayoutSheet } from './PayoutSheet';
 import { SeatSheet } from './SeatSheet';
@@ -140,7 +141,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
         </Section>
       )}
 
-      <MyRsvp eveningId={evening.id} rsvps={rsvps} />
+      <MyRsvp eveningId={evening.id} rsvps={rsvps} loaded={rsvpsQuery.isSuccess} />
 
       <Section
         title="Кто идёт"
@@ -236,25 +237,44 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
   );
 }
 
-/** Свой ответ на анонс: применяется сразу (Segmented), гостям не показывается. */
-function MyRsvp({ eveningId, rsvps }: { eveningId: string; rsvps: readonly Rsvp[] }) {
+// Порядок вариантов — общий с главной (RSVP_CHOICES), чтобы палец не промахивался.
+const RSVP_OPTIONS: readonly SegmentedOption<RsvpStatus | ''>[] = RSVP_CHOICES.map((status) => ({
+  value: status,
+  label: RSVP_STATUS_META[status].title,
+}));
+
+/**
+ * Свой ответ на анонс: применяется сразу (Segmented), гостям не показывается. Сюда ведут кнопки
+ * анонса и поста в день игры, поэтому у не ответившего не выбрано ничего — и пока ответы грузятся.
+ */
+function MyRsvp({
+  eveningId,
+  rsvps,
+  loaded,
+}: {
+  eveningId: string;
+  rsvps: readonly Rsvp[];
+  loaded: boolean;
+}) {
   const { player } = useAuth();
   const setRsvp = useSetRsvp(eveningId);
   if (!player || player.is_guest) return null;
-  const mine = rsvps.find((r) => r.player_id === player.id)?.status;
-  const value = setRsvp.isPending ? setRsvp.variables : mine;
+  const mine = loaded ? (rsvps.find((r) => r.player_id === player.id)?.status ?? null) : undefined;
+  const value = rsvpSegmentValue(mine, setRsvp.isPending ? setRsvp.variables : null);
   return (
     <Section title="Твой ответ">
-      <Segmented<RsvpStatus>
+      <Segmented<RsvpStatus | ''>
         label="Твой ответ на анонс"
         block
         value={value}
-        options={RSVP_CHOICES.map((status) => ({
-          value: status,
-          label: RSVP_STATUS_META[status].title,
-        }))}
-        onChange={(status) => setRsvp.mutate(status)}
+        options={RSVP_OPTIONS}
+        onChange={(status) => {
+          if (status) setRsvp.mutate(status);
+        }}
       />
+      {loaded && value === '' && (
+        <p className="m-small">Ответ нужен банкиру, чтобы собрать список игроков.</p>
+      )}
     </Section>
   );
 }

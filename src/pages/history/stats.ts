@@ -62,7 +62,7 @@ export interface EveningTotals {
   players: number;
   /** Сколько сейчас в игре. */
   alive: number;
-  /** Призовой фонд (replay домена: входы × (бай-ин − баунти)). */
+  /** Призовой фонд (replay домена: все взносы входов и ребаев). */
   prizePoolRub: number;
 }
 

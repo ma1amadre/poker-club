@@ -27,6 +27,8 @@ export interface EveningEventRecord extends EveningEvent {
   createdBy: string | null;
   voidedAt: string | null;
   voidedBy: string | null;
+  /** Ключ повтора, с которым запись сделана (миграция 007); null — без ключа. */
+  clientId: string | null;
 }
 
 export type Rsvp = Omit<Tables<'rsvps'>, 'status'> & { status: RsvpStatus };
@@ -102,6 +104,7 @@ export function toEventRecord(row: Tables<'evening_events'>): EveningEventRecord
     createdBy: row.created_by,
     voidedAt: row.voided_at,
     voidedBy: row.voided_by,
+    clientId: row.client_id,
   };
 }
 

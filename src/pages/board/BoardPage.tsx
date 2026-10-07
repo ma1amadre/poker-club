@@ -19,6 +19,7 @@ import {
   formatTime,
   pluralWithNumber,
   useNow,
+  useWakeLock,
 } from '../../shared/lib';
 import { Badge, Button, Icon, List, ListItem, PageSkeleton, Stat, Stats } from '../../shared/ui';
 import {
@@ -34,7 +35,7 @@ import {
 } from '../evening/lib';
 import './board.css';
 import { ShowdownBoard } from './ShowdownBoard';
-import { useFullscreen, useWakeLock } from './useScreenControls';
+import { useFullscreen } from './useScreenControls';
 import { useBoardVoice, type BoardVoice } from './useBoardVoice';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
