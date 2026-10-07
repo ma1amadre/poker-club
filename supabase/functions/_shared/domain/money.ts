@@ -1,11 +1,34 @@
 // Деньги вечера: кто сколько внёс, выиграл и сколько осталось перевести через банкира.
 // Инвариант (проверяется тестами): после finish сумма prize + bounty по всем игрокам
 // ровно равна сумме owes — деньги не появляются и не исчезают ни на рубль.
+//
+// Вход и ребай бывают кратными стандартному (stacks = k в payload): вход ×k — это k стандартных
+// входов по всем статьям сразу (взнос, фишки, голова, доля фонда), поэтому все суммы линейны по
+// сумме кратностей, а голова у каждого входа своя — bountyRub·k этого входа.
 import { readPayment } from './replay.ts';
 import type { EveningEvent, EveningState, PlayerId, TournamentFormat } from './types.ts';
 
+export interface EntryAmounts {
+  stacks: number; // кратность k
+  rub: number; // взнос: buyInRub·k
+  chips: number; // фишки: startingChips·k
+  bountyRub: number; // голова этого входа: bountyRub·k
+  poolRub: number; // в призовой фонд: (buyInRub − bountyRub)·k
+}
+
+/** Во что обходится вход или ребай кратности `stacks` — для пульта банкира и подписей ленты. */
+export function entryAmounts(format: TournamentFormat, stacks = 1): EntryAmounts {
+  return {
+    stacks,
+    rub: format.buyInRub * stacks,
+    chips: format.startingChips * stacks,
+    bountyRub: format.bountyRub * stacks,
+    poolRub: (format.buyInRub - format.bountyRub) * stacks,
+  };
+}
+
 export interface MoneyRow {
-  owesRub: number; // взносы: (вход + ребаи) × buyIn
+  owesRub: number; // взносы: сумма кратностей входа и ребаев × buyIn
   prizeRub: number; // призовые за место
   bountyRub: number; // головы; у победителя ещё своя голова и сиротские
   netRub: number; // prize + bounty − owes
@@ -61,19 +84,20 @@ export function computeMoney(format: TournamentFormat, state: EveningState): Mon
   const prizes = state.finished
     ? payouts(state.prizePoolRub, format.payoutPct, state.joinOrder.length)
     : [];
-  // Нераспределённые головы = своя голова победителя + сиротские (bust с пустым by).
-  // Считаем как разность, а не перечислением — так инвариант держится по построению.
+  // Нераспределённые головы = голова текущего входа победителя + сиротские (bust с пустым by),
+  // каждая — своей кратности. Считаем как разность, а не перечислением — так инвариант держится
+  // по построению.
   const distributed = state.joinOrder.reduce(
     (s, id) => s + (state.players[id]?.bountyWonRub ?? 0),
     0,
   );
-  const undistributed = state.totalEntries * format.bountyRub - distributed;
+  const undistributed = state.bountyPoolRub - distributed;
   const winner = state.finished ? state.places[0] : undefined;
 
   for (const id of state.joinOrder) {
     const p = state.players[id];
     if (!p) continue;
-    const owesRub = p.entries * format.buyInRub;
+    const owesRub = p.stacks * format.buyInRub;
     const prizeRub = p.place !== null && state.finished ? (prizes[p.place - 1] ?? 0) : 0;
     const bountyRub = p.bountyWonRub + (id === winner ? undistributed : 0);
     table[id] = { owesRub, prizeRub, bountyRub, netRub: prizeRub + bountyRub - owesRub };

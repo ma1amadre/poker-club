@@ -10,6 +10,7 @@ import {
   clockView,
   describeEvent,
   describeTrigger,
+  entryPayload,
   eventPlayerId,
   feedEvents,
   formatBb,
@@ -36,6 +37,8 @@ import {
   settleOrder,
   settleTotals,
   signedPayment,
+  stacksAmountText,
+  stacksHint,
   totalRebuys,
   triggerProgress,
 } from './lib';
@@ -60,6 +63,7 @@ describe('describeEvent', () => {
       { id: 1, type, payload: payload as never, at: '2026-10-08T16:00:00Z', voided: false },
       nameOf,
       rub,
+      DEFAULT_FORMAT,
     );
 
   it('вылет: один, дележ, без выбившего', () => {
@@ -83,8 +87,24 @@ describe('describeEvent', () => {
   });
 
   it('вход и ребай', () => {
-    expect(ev('join', { playerId: 'c' }).title).toBe('Вход: Дима');
-    expect(ev('rebuy', { playerId: 'c' }).title).toBe('Ребай: Дима');
+    expect(ev('join', { playerId: 'c' })).toEqual({
+      kind: 'entry',
+      title: 'Вход: Дима',
+      detail: null,
+    });
+    expect(ev('rebuy', { playerId: 'c' })).toEqual({
+      kind: 'entry',
+      title: 'Ребай: Дима',
+      detail: null,
+    });
+  });
+
+  it('вход и ребай кратно стандартному — с суммой; ×1 явно — как стандартный', () => {
+    expect(ev('join', { playerId: 'c', stacks: 2 }).detail).toBe('вход на 1000 ₽');
+    expect(ev('rebuy', { playerId: 'c', stacks: 3 }).detail).toBe('ребай на 1500 ₽');
+    expect(ev('join', { playerId: 'c', stacks: 1 }).detail).toBeNull();
+    // Кривая кратность: журнал её не примет — подписи суммы нет.
+    expect(ev('join', { playerId: 'c', stacks: 0 }).detail).toBeNull();
   });
 });
 
@@ -269,9 +289,42 @@ describe('подписи уровня и игрока', () => {
     const a = s.players.a;
     const b = s.players.b;
     if (!a || !b) throw new Error('нет игрока');
-    expect(playerLine(a)).toBe(`3${NB}нокаута`);
-    expect(playerLine(b)).toBe(`3-е место · вылет на${NB}1-м уровне · 2${NB}входа`);
+    expect(playerLine(a, DEFAULT_FORMAT)).toBe(`3${NB}нокаута`);
+    expect(playerLine(b, DEFAULT_FORMAT)).toBe(`3-е место · вылет на${NB}1-м уровне · 2${NB}входа`);
     expect(ordinalPlace(2)).toBe('2-е');
+  });
+
+  it('playerLine: при кратном входе или ребае — сколько всего внесено', () => {
+    const j = journal();
+    j.joinStacks('a', 2);
+    j.join('b', 'c');
+    j.bust('b', ['a']);
+    j.rebuy('b', 3);
+    j.bust('c', ['b']);
+    j.rebuy('c');
+    const s = replay(DEFAULT_FORMAT, j.events, j.now());
+    const [a, b, c] = ['a', 'b', 'c'].map((id) => s.players[id]);
+    if (!a || !b || !c) throw new Error('нет игрока');
+    expect(playerLine(a, DEFAULT_FORMAT)).toBe(`взнос 1${NB}000${NB}₽ · 1${NB}нокаут`);
+    expect(playerLine(b, DEFAULT_FORMAT)).toBe(
+      `2${NB}входа · взнос 2${NB}000${NB}₽ · 1${NB}нокаут`,
+    );
+    // Только стандартные входы — суммы нет, как раньше.
+    expect(playerLine(c, DEFAULT_FORMAT)).toBe(`2${NB}входа`);
+  });
+
+  it('кратность: сумма и фишки, подсказка, payload', () => {
+    expect(stacksAmountText(DEFAULT_FORMAT, 1)).toBe(`500${NB}₽ · 500${NB}фишек`);
+    expect(stacksAmountText(DEFAULT_FORMAT, 2)).toBe(`1${NB}000${NB}₽ · 1${NB}000${NB}фишек`);
+    expect(stacksAmountText({ ...DEFAULT_FORMAT, startingChips: 1 }, 1)).toBe(
+      `500${NB}₽ · 1${NB}фишка`,
+    );
+    expect(stacksHint(DEFAULT_FORMAT, 2)).toBe(`Голова — 200${NB}₽, в фонд — 800${NB}₽.`);
+    expect(stacksHint({ ...DEFAULT_FORMAT, bountyRub: 0 }, 3)).toBe(
+      `Всё в фонд — 1${NB}500${NB}₽.`,
+    );
+    expect(entryPayload('a', 1)).toEqual({ playerId: 'a' });
+    expect(entryPayload('a', 4)).toEqual({ playerId: 'a', stacks: 4 });
   });
 
   it('describeTrigger и formatBbValue', () => {

@@ -192,6 +192,26 @@
   gap: var(--space-2);
 }
 
+/* Кратность входа и ребая (StacksPicker): «−», значение с суммой, «+» в строку. */
+.ev-stacks {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.ev-stacks__value {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  text-align: center;
+}
+
+.ev-stacks__value .m-small {
+  color: var(--ink-muted);
+}
+
 .ev-guest {
   display: grid;
   justify-items: start;

@@ -87,6 +87,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
           {seated > 0 ? (
             <PlayersList
               state={state}
+              format={evening.format}
               nameOf={nameOf}
               playersById={playersById}
               label="За столом"
@@ -129,7 +130,13 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
 
       {!canControl && seated > 0 && (
         <Section title="За столом" aside={pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}>
-          <PlayersList state={state} nameOf={nameOf} playersById={playersById} label="За столом" />
+          <PlayersList
+            state={state}
+            format={evening.format}
+            nameOf={nameOf}
+            playersById={playersById}
+            label="За столом"
+          />
         </Section>
       )}
 

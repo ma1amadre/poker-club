@@ -135,6 +135,8 @@ export function FormatSummary({ format }: { format: TournamentFormat }) {
 
 export interface PlayersListProps {
   state: EveningState;
+  /** Формат вечера: взнос игрока при кратных входах (playerLine). */
+  format: TournamentFormat;
   nameOf: NameOf;
   playersById: Map<string, Player>;
   /** Строка-кнопка: пульт игрока у банкира. */
@@ -147,6 +149,7 @@ export interface PlayersListProps {
 /** Игроки вечера строками: живые по входу, затем вылетевшие (свежие выше), после finish — по местам. */
 export function PlayersList({
   state,
+  format,
   nameOf,
   playersById,
   onSelect,
@@ -158,7 +161,7 @@ export function PlayersList({
     <List aria-label={label ?? 'Игроки вечера'}>
       {rows.map((p) => {
         const info = playersById.get(p.playerId);
-        const line = playerLine(p);
+        const line = playerLine(p, format);
         return (
           <ListItem
             key={p.playerId}
@@ -215,6 +218,8 @@ export function EventIcon({ type }: { type: EventType }) {
 export interface EventRowProps {
   event: EveningEventRecord;
   nameOf: NameOf;
+  /** Формат вечера: сумма кратного входа или ребая в подписи. */
+  format: TournamentFormat;
   /** Текст ошибки replay: событие записано, но не принято (например, ребай после закрытия). */
   error?: string;
   /** Отменить запись (строка становится кнопкой; у отменённых — нет). */
@@ -222,8 +227,8 @@ export interface EventRowProps {
 }
 
 /** Строка журнала: что случилось, кто, когда; отменённые — зачёркнуты и с пометкой. */
-export function EventRow({ event, nameOf, error, onVoid }: EventRowProps) {
-  const line = describeEvent(event, nameOf, formatRub);
+export function EventRow({ event, nameOf, format, error, onVoid }: EventRowProps) {
+  const line = describeEvent(event, nameOf, formatRub, format);
   const subtitle = [line.detail, error ? `не принято: ${error}` : null].filter(Boolean).join(' · ');
   return (
     <ListItem
@@ -249,6 +254,7 @@ export function EventRow({ event, nameOf, error, onVoid }: EventRowProps) {
 export interface EventFeedProps {
   events: readonly EveningEventRecord[];
   nameOf: NameOf;
+  format: TournamentFormat;
   errorsById: Map<number, string>;
   onVoid?: (event: EveningEventRecord) => void;
   title?: string;
@@ -260,6 +266,7 @@ export interface EventFeedProps {
 export function EventFeed({
   events,
   nameOf,
+  format,
   errorsById,
   onVoid,
   title = 'Лента',
@@ -281,6 +288,7 @@ export function EventFeed({
             key={event.id}
             event={event}
             nameOf={nameOf}
+            format={format}
             error={errorsById.get(event.id)}
             onVoid={onVoid}
           />

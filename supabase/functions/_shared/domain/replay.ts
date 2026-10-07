@@ -8,15 +8,16 @@
 //   экран вечера должен всё равно открываться.
 // - Таймер считается из времени событий (`at`, серверное время), переход time-уровней не
 //   хранится отдельным событием — его вычисляет replay, поэтому все экраны синхронны.
-import type {
-  BlindLevel,
-  EveningEvent,
-  EveningState,
-  EventPayload,
-  EventType,
-  PlayerId,
-  PlayerState,
-  TournamentFormat,
+import {
+  MAX_ENTRY_STACKS,
+  type BlindLevel,
+  type EveningEvent,
+  type EveningState,
+  type EventPayload,
+  type EventType,
+  type PlayerId,
+  type PlayerState,
+  type TournamentFormat,
 } from './types.ts';
 
 const MINUTE_MS = 60_000;
@@ -60,6 +61,19 @@ function readBy(payload: unknown): PlayerId[] | null {
   return list.every((x) => typeof x === 'string' && x !== '') ? (list as PlayerId[]) : null;
 }
 
+/**
+ * Кратность входа или ребая из payload: нет поля — 1 (события до кратных входов), иначе целое
+ * 1..MAX_ENTRY_STACKS; null — значение некорректно (replay отбросит событие с ошибкой).
+ */
+export function readStacks(payload: unknown): number | null {
+  const record = asRecord(payload);
+  if (!('stacks' in record) || record.stacks === undefined) return 1;
+  const k = record.stacks;
+  return typeof k === 'number' && Number.isInteger(k) && k >= 1 && k <= MAX_ENTRY_STACKS ? k : null;
+}
+
+const STACKS_ERROR = `Кратность входа — целое число от 1 до ${MAX_ENTRY_STACKS}`;
+
 /** Платёж из payload или null, если payload некорректен. Используется и в money.ts. */
 export function readPayment(payload: unknown): { playerId: PlayerId; amountRub: number } | null {
   const playerId = readPlayerId(payload);
@@ -89,8 +103,10 @@ function initialState(format: TournamentFormat): EveningState {
     rebuysOpen: true,
     aliveCount: 0,
     totalEntries: 0,
+    totalStacks: 0,
     totalChips: 0,
     prizePoolRub: 0,
+    bountyPoolRub: 0,
     finished: false,
     places: [],
     firstBustPlayerId: null,
@@ -133,8 +149,11 @@ function refresh(format: TournamentFormat, s: EveningState): void {
   const list = s.joinOrder.map((id) => s.players[id]).filter((p): p is PlayerState => !!p);
   s.aliveCount = list.filter((p) => p.alive).length;
   s.totalEntries = list.reduce((sum, p) => sum + p.entries, 0);
-  s.totalChips = s.totalEntries * format.startingChips;
-  s.prizePoolRub = s.totalEntries * (format.buyInRub - format.bountyRub);
+  // Деньги и фишки — по кратностям: вход ×2 — это два стандартных входа и в фонде, и в головах.
+  s.totalStacks = list.reduce((sum, p) => sum + p.stacks, 0);
+  s.totalChips = s.totalStacks * format.startingChips;
+  s.prizePoolRub = s.totalStacks * (format.buyInRub - format.bountyRub);
+  s.bountyPoolRub = s.totalStacks * format.bountyRub;
 
   for (const p of list) p.place = null;
   s.places = [];
@@ -176,6 +195,7 @@ function validate(
     case 'join': {
       const id = readPlayerId(payload);
       if (id === null) return 'Не указан игрок';
+      if (readStacks(payload) === null) return STACKS_ERROR;
       if (s.players[id]) return 'Игрок уже в турнире';
       if (!s.rebuysOpen) return 'Регистрация закрыта';
       return null;
@@ -183,6 +203,7 @@ function validate(
     case 'rebuy': {
       const id = readPlayerId(payload);
       if (id === null) return 'Не указан игрок';
+      if (readStacks(payload) === null) return STACKS_ERROR;
       const p = s.players[id];
       if (!p) return 'Игрок не входил в турнир';
       if (p.alive) return 'Игрок ещё в игре — ребай только после вылета';
@@ -238,11 +259,14 @@ function apply(
   switch (ev.type) {
     case 'join': {
       const id = readPlayerId(payload) as PlayerId;
+      const k = readStacks(payload) as number;
       s.players[id] = {
         playerId: id,
         joinedAt: ev.at,
         entries: 1,
         rebuys: 0,
+        stacks: k,
+        currentStacks: k,
         alive: true,
         busts: 0,
         finalBustEventId: null,
@@ -257,8 +281,12 @@ function apply(
     }
     case 'rebuy': {
       const p = s.players[readPlayerId(payload) as PlayerId] as PlayerState;
+      const k = readStacks(payload) as number;
       p.entries += 1;
       p.rebuys += 1;
+      p.stacks += k;
+      // Голова привязана к входу: после ребая на кону голова нового входа, а не прежнего.
+      p.currentStacks = k;
       p.alive = true;
       p.finalBustEventId = null;
       p.bustLevel = null;
@@ -273,10 +301,12 @@ function apply(
       p.finalBustEventId = ev.id;
       p.bustLevel = t.levelIndex + 1;
       if (s.firstBustPlayerId === null) s.firstBustPlayerId = id;
-      // Голова делится поровну в целых рублях, остаток — первому в списке. Пустой by —
-      // голова «сиротская», её получит победитель (в money.ts), здесь не начисляем.
-      const share = by.length > 0 ? Math.floor(format.bountyRub / by.length) : 0;
-      const rest = format.bountyRub - share * by.length;
+      // Голова — текущего входа жертвы (вход ×k — голова bountyRub·k). Делится поровну в целых
+      // рублях, остаток — первому в списке. Пустой by — голова «сиротская», её получит
+      // победитель (в money.ts), здесь не начисляем.
+      const head = format.bountyRub * p.currentStacks;
+      const share = by.length > 0 ? Math.floor(head / by.length) : 0;
+      const rest = head - share * by.length;
       by.forEach((k, i) => {
         const killer = s.players[k] as PlayerState;
         killer.kos += 1;

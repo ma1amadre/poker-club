@@ -1,6 +1,7 @@
 // Чистые помощники экрана вечера, расчёта и табло: подписи событий, порядок игроков, оценки
 // времени. Деньги, места и очки здесь НЕ считаются — только раскладка того, что посчитал домен.
-import type { SettlementRow } from '@domain/money.ts';
+import { entryAmounts, type SettlementRow } from '@domain/money.ts';
+import { readStacks } from '@domain/replay.ts';
 import type {
   BlindLevel,
   EveningEvent,
@@ -10,7 +11,15 @@ import type {
   TournamentFormat,
 } from '@domain/types.ts';
 // Только чистое форматирование (Intl), без React: модуль тестируется в node.
-import { formatClock, formatDuration, NBSP, pluralWithNumber } from '../../shared/lib/format';
+import {
+  formatClock,
+  formatDuration,
+  formatNumber,
+  formatRub as rubText,
+  NBSP,
+  plural,
+  pluralWithNumber,
+} from '../../shared/lib/format';
 import { joinNames, NAME_MAX, normalizeName } from '../../shared/lib/text';
 import { RSVP_ORDER } from '../../shared/api/types';
 
@@ -46,22 +55,28 @@ export interface EventLine {
 
 /**
  * Подпись события для ленты. Глаголы в настоящем времени («выбивает») — у них нет рода,
- * а имена игроков бывают и мужские, и женские.
+ * а имена игроков бывают и мужские, и женские. Вход и ребай кратно стандартному — с суммой
+ * («вход на 1 000 ₽»); стандартный — без подробностей, как раньше.
  */
 export function describeEvent(
   ev: EveningEvent,
   nameOf: NameOf,
   formatRub: (n: number) => string,
+  format: TournamentFormat,
 ): EventLine {
   const who = () => {
     const id = playerOf(ev);
     return id ? nameOf(id) : 'игрок';
   };
+  const entrySum = (word: string): string | null => {
+    const k = readStacks(ev.payload);
+    return k !== null && k > 1 ? `${word} на ${formatRub(entryAmounts(format, k).rub)}` : null;
+  };
   switch (ev.type) {
     case 'join':
-      return { kind: 'entry', title: `Вход: ${who()}`, detail: null };
+      return { kind: 'entry', title: `Вход: ${who()}`, detail: entrySum('вход') };
     case 'rebuy':
-      return { kind: 'entry', title: `Ребай: ${who()}`, detail: null };
+      return { kind: 'entry', title: `Ребай: ${who()}`, detail: entrySum('ребай') };
     case 'bust': {
       const by = byOf(ev).map(nameOf);
       let detail: string;
@@ -383,15 +398,41 @@ export function clockView(state: EveningState): ClockView {
 /**
  * Вторая строка игрока в списке: «5-е место · вылет на 4-м уровне · 2 входа · 1 нокаут».
  * Статус «в игре / вне игры» — в бейдже рядом. Без глаголов прошедшего времени: у них есть род,
- * а имена бывают и мужские, и женские. Пустая строка — сказать нечего.
+ * а имена бывают и мужские, и женские. Пустая строка — сказать нечего. Если хоть один вход или
+ * ребай был кратным, видно, сколько всего внесено: «2 входа · взнос 1 500 ₽».
  */
-export function playerLine(p: PlayerState): string {
+export function playerLine(p: PlayerState, format: TournamentFormat): string {
   const parts: string[] = [];
   if (!p.alive && p.place !== null) parts.push(`${ordinalPlace(p.place)} место`);
   if (!p.alive && p.bustLevel !== null) parts.push(`вылет на${NBSP}${p.bustLevel}-м уровне`);
   if (p.entries > 1) parts.push(pluralWithNumber(p.entries, ['вход', 'входа', 'входов']));
+  if (p.stacks > p.entries) parts.push(`взнос ${rubText(entryAmounts(format, p.stacks).rub)}`);
   if (p.kos > 0) parts.push(pluralWithNumber(p.kos, ['нокаут', 'нокаута', 'нокаутов']));
   return parts.join(' · ');
+}
+
+// --- Кратность входа и ребая -----------------------------------------------------------------
+
+/** «1 000 ₽ · 1 000 фишек» — во что обходится вход или ребай кратности k. */
+export function stacksAmountText(format: TournamentFormat, k: number): string {
+  const a = entryAmounts(format, k);
+  return `${rubText(a.rub)} · ${formatNumber(a.chips)}${NBSP}${plural(a.chips, ['фишка', 'фишки', 'фишек'])}`;
+}
+
+/** Подсказка под выбором кратности: куда разойдутся деньги этого входа. */
+export function stacksHint(format: TournamentFormat, k: number): string {
+  const a = entryAmounts(format, k);
+  return a.bountyRub > 0
+    ? `Голова — ${rubText(a.bountyRub)}, в фонд — ${rubText(a.poolRub)}.`
+    : `Всё в фонд — ${rubText(a.poolRub)}.`;
+}
+
+/** Payload входа или ребая: кратность пишется, только если она больше 1 (стандартный — как раньше). */
+export function entryPayload(
+  playerId: PlayerId,
+  k: number,
+): { playerId: PlayerId; stacks?: number } {
+  return k > 1 ? { playerId, stacks: k } : { playerId };
 }
 
 // --- Кого посадить за стол -------------------------------------------------------------------

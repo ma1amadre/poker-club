@@ -17,9 +17,9 @@ export interface BlindLevel {
 
 export interface TournamentFormat {
   name: string;
-  buyInRub: number; // 500 — цена входа и ребая
-  startingChips: number; // 500 — фишек за вход и за ребай
-  bountyRub: number; // 100 — из каждого входа/ребая «за голову»; в фонд идёт buyIn - bounty
+  buyInRub: number; // 500 — цена входа и ребая (стандартного; вход ×k стоит buyInRub·k)
+  startingChips: number; // 500 — фишек за вход и за ребай (×k — startingChips·k)
+  bountyRub: number; // 100 — из каждого входа/ребая «за голову»; в фонд идёт buyIn - bounty (×k — всё ×k)
   rebuyUntilLevel: number; // 5 — вход/ребай разрешён, пока номер текущего уровня (с 1) <= этого
   rebuyLimit: number | null; // null = без лимита (решение клуба)
   payoutPct: number[]; // [70, 30]
@@ -53,8 +53,13 @@ export const EVENT_TYPES: readonly EventType[] = [
   'finish',
 ];
 
+/** Наибольшая кратность входа или ребая (stacks в payload join/rebuy). */
+export const MAX_ENTRY_STACKS = 10;
+
 export type EventPayload =
-  | { playerId: PlayerId } // join, rebuy
+  // join, rebuy; stacks — кратность входа: целое 1..MAX_ENTRY_STACKS, нет поля = 1 (старые события).
+  // Вход ×k: взнос buyInRub·k, фишки startingChips·k, голова bountyRub·k, в фонд (buyIn − bounty)·k.
+  | { playerId: PlayerId; stacks?: number }
   | { playerId: PlayerId; by: PlayerId[] } // bust; by = кто выбил (0..n)
   | { playerId: PlayerId; amountRub: number; note?: string } // payment: + игрок→банкир, − банкир→игрок
   | Record<string, never>; // timer_*, level_*, hand, finish
@@ -70,8 +75,10 @@ export interface EveningEvent {
 export interface PlayerState {
   playerId: PlayerId;
   joinedAt: string;
-  entries: number; // вход + ребаи
+  entries: number; // вход + ребаи (штук, без учёта кратности)
   rebuys: number;
+  stacks: number; // сумма кратностей входа и ребаев: взнос = stacks × buyInRub
+  currentStacks: number; // кратность текущего (последнего) входа или ребая: голова = currentStacks × bountyRub
   alive: boolean;
   busts: number; // все вылеты, включая те, после которых был ребай
   finalBustEventId: number | null; // последний bust, если после него не было ребая
@@ -100,9 +107,11 @@ export interface EveningState {
   nextLevel: BlindLevel | null;
   rebuysOpen: boolean;
   aliveCount: number;
-  totalEntries: number;
-  totalChips: number;
-  prizePoolRub: number;
+  totalEntries: number; // входы и ребаи штук
+  totalStacks: number; // сумма кратностей всех входов и ребаев
+  totalChips: number; // totalStacks × startingChips
+  prizePoolRub: number; // totalStacks × (buyInRub − bountyRub)
+  bountyPoolRub: number; // все головы вечера: totalStacks × bountyRub
   finished: boolean;
   places: PlayerId[]; // index 0 = 1-е место; заполняется только при finished (до этого — [])
   firstBustPlayerId: PlayerId | null; // для прогноза «кто вылетит первым» = первый bust вечера

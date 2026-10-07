@@ -1,10 +1,14 @@
 // Шторка «кто за столом»: отметить пришедших (на старте) или опоздавшего (по ходу игры) и вписать
 // гостя без Telegram. Каждый выбранный игрок — отдельный join; гость — RPC add_guest (сразу с join).
+// Кратность входа (×1 по умолчанию) — одна на всех, кого сажают этим нажатием, и на гостя: кто
+// входит на другую сумму, того сажают отдельно.
+import { entryAmounts } from '@domain/money.ts';
 import { useState } from 'react';
 import { RSVP_STATUS_META, useAddGuest, usePlayers, type Rsvp } from '../../shared/api';
-import { pluralWithNumber } from '../../shared/lib';
+import { formatRub, pluralWithNumber } from '../../shared/lib';
 import { Button, Field, PlayerPicker, Sheet, useToast } from '../../shared/ui';
-import { normalizeGuestName, seatCandidates } from './lib';
+import { entryPayload, normalizeGuestName, seatCandidates } from './lib';
+import { StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
@@ -35,9 +39,14 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
   const [guestName, setGuestName] = useState('');
   const [guestError, setGuestError] = useState<string | null>(null);
   const [seating, setSeating] = useState(false);
+  const [stacks, setStacks] = useState(1);
+  const entryRub = entryAmounts(model.evening.format, stacks).rub;
 
   // Регистрация открыта? Проверяем доменом на «новом» игроке — тот же canApply, что у join.
-  const closedReason = actions.check('join', { playerId: '00000000-0000-4000-8000-000000000000' });
+  const closedReason = actions.check(
+    'join',
+    entryPayload('00000000-0000-4000-8000-000000000000', stacks),
+  );
 
   const hints = Object.fromEntries(
     candidates.map((c) => [
@@ -56,7 +65,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     let seated = 0;
     for (const id of selected) {
       // Состояние в замыкании не знает о только что записанных join — сервер и replay проверят.
-      const record = await actions.send('join', { playerId: id });
+      const record = await actions.send('join', entryPayload(id, stacks));
       if (!record) break;
       seated += 1;
     }
@@ -64,7 +73,13 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     if (seated > 0) {
       toast.show(
         `За стол ${seated === 1 ? 'сел' : 'сели'} ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}`,
-        { tone: 'positive' },
+        {
+          tone: 'positive',
+          detail:
+            stacks > 1
+              ? `${seated === 1 ? 'Вход' : 'Вход у каждого'} — ${formatRub(entryRub)}.`
+              : undefined,
+        },
       );
     }
     if (seated === selected.length) onClose();
@@ -79,9 +94,12 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     }
     setGuestError(null);
     try {
-      await addGuest.mutateAsync(name);
+      await addGuest.mutateAsync({ name, stacks });
       setGuestName('');
-      toast.show(`Гость ${name} за столом`, { tone: 'positive' });
+      toast.show(`Гость ${name} за столом`, {
+        tone: 'positive',
+        detail: stacks > 1 ? `Вход — ${formatRub(entryRub)}.` : undefined,
+      });
     } catch {
       // тост с причиной показал глобальный обработчик мутаций
     }
@@ -115,6 +133,14 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
       }
     >
       <div className="ev-sheet-body">
+        <StacksPicker
+          format={model.evening.format}
+          value={stacks}
+          onChange={setStacks}
+          label="Вход"
+          note="Сумма — для всех отмеченных и для гостя; кто входит на другую, того посади отдельно."
+          disabled={Boolean(closedReason) || busy}
+        />
         {candidates.length > 0 ? (
           <PlayerPicker
             label="Игроки клуба"
