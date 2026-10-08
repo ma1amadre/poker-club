@@ -2,6 +2,7 @@
 // вечера и на главной) и раскладка прогнозов после финала (блок «Прогнозы вечера» на экране итога).
 // Очки считает домен (scorePrediction), здесь только порядок строк и подписи.
 import { PREDICTION_POINTS, scorePrediction, type PredictionOutcome } from '@domain/predictions.ts';
+import { spectatesEvening } from '@domain/spectators.ts';
 import type { PlayerId } from '@domain/types.ts';
 // Только чистое форматирование, без React: модуль тестируется в node.
 import { NBSP, plural } from '../../shared/lib/format';
@@ -14,11 +15,15 @@ export interface CandidatePlayer {
   display_name: string;
   is_guest: boolean;
   is_active: boolean;
+  /** Болельщик (миграция 024); нет поля — игрок. */
+  is_spectator?: boolean | null;
 }
 
 export interface Candidate<P> {
   player: P;
   rsvp: RsvpStatus | null;
+  /** Болельщик на этот вечер (в списке только из сохранённого прогноза) — подпись «болельщик». */
+  spectator?: boolean;
 }
 
 function byName(a: CandidatePlayer, b: CandidatePlayer): number {
@@ -28,20 +33,33 @@ function byName(a: CandidatePlayer, b: CandidatePlayer): number {
 /**
  * Кого можно назвать в прогнозе: все активные игроки — сначала постоянные (идут, под вопросом,
  * не ответили, не идут; внутри — по имени), за ними гости по имени. Гость на анонс не отвечает
- * (войти в приложение он не может), поэтому ставить на него можно всегда. Игроки из уже
- * сохранённого прогноза остаются в списке, даже если перестали подходить.
+ * (войти в приложение он не может), поэтому ставить на него можно всегда. Болельщика (миграция 024)
+ * в списке нет, пока он не ответил «иду» / «под вопросом» и не сидит за столом (`seated` —
+ * seatedIds журнала): играть он не собирается. Игроки из уже сохранённого прогноза остаются в
+ * списке, даже если перестали подходить.
  */
 export function predictionCandidates<P extends CandidatePlayer>(
   players: readonly P[],
   rsvps: readonly { player_id: string; status: RsvpStatus }[],
   keepIds: readonly (string | null | undefined)[] = [],
+  seated: ReadonlySet<string> = new Set(),
 ): Candidate<P>[] {
   const status = new Map<string, RsvpStatus>();
   for (const r of rsvps) status.set(r.player_id, r.status);
   const keep = new Set(keepIds.filter((id): id is string => Boolean(id)));
+  const spectates = (p: P) =>
+    spectatesEvening({
+      spectator: p.is_spectator,
+      rsvp: status.get(p.id),
+      seated: seated.has(p.id),
+    });
   return players
-    .filter((p) => p.is_active || keep.has(p.id))
-    .map((player) => ({ player, rsvp: status.get(player.id) ?? null }))
+    .filter((p) => (p.is_active && !spectates(p)) || keep.has(p.id))
+    .map((player) => ({
+      player,
+      rsvp: status.get(player.id) ?? null,
+      spectator: spectates(player),
+    }))
     .sort(
       (a, b) =>
         Number(a.player.is_guest) - Number(b.player.is_guest) ||
@@ -50,9 +68,14 @@ export function predictionCandidates<P extends CandidatePlayer>(
     );
 }
 
-/** Подпись к кандидату в прогнозе: гость — «гость», постоянный — как ответил на анонс. */
+/**
+ * Подпись к кандидату в прогнозе: гость — «гость», постоянный — как ответил на анонс; болельщик,
+ * оставшийся в списке из сохранённого прогноза, — «болельщик».
+ */
 export function candidateHint(candidate: Candidate<CandidatePlayer>): string {
-  return candidate.player.is_guest ? 'гость' : rsvpHint(candidate.rsvp);
+  if (candidate.player.is_guest) return 'гость';
+  const hint = rsvpHint(candidate.rsvp);
+  return candidate.spectator ? `болельщик · ${hint}` : hint;
 }
 
 /** Подпись к игроку в прогнозе: как он ответил на анонс. */

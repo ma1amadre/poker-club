@@ -10,6 +10,7 @@ import {
   useClubHistory,
   useEveningEvents,
   useEvenings,
+  withoutTraining,
 } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import {
@@ -92,7 +93,8 @@ export default function HistoryPage() {
       </Page>
     );
   }
-  return <History evenings={evenings.data} history={history.data} />;
+  // Тренировки (миграция 023) — не история клуба: их нет ни в списке, ни в сезонах.
+  return <History evenings={withoutTraining(evenings.data)} history={history.data} />;
 }
 
 function History({ evenings, history }: { evenings: Evening[]; history: ClubHistory }) {

@@ -2,7 +2,9 @@
 export * from './types.ts';
 export * from './format.ts';
 export * from './replay.ts';
+export * from './amend.ts';
 export * from './showdown.ts';
+export * from './allins.ts';
 export * from './money.ts';
 export * from './scoring.ts';
 export * from './summary.ts';
@@ -15,4 +17,7 @@ export * from './feed.ts';
 export * from './recap.ts';
 export * from './clubNews.ts';
 export * from './progress.ts';
+export * from './story.ts';
+export * from './stakes.ts';
+export * from './spectators.ts';
 export * from './voice.ts';

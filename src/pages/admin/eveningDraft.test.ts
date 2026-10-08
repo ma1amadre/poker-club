@@ -9,6 +9,7 @@ import {
   eveningDirty,
   KEEP_FORMAT,
   newEveningDraft,
+  trainingEveningDraft,
   type EveningDraft,
   type FormatOption,
 } from './eveningDraft';
@@ -152,5 +153,32 @@ describe('eveningDirty', () => {
     expect(eveningDirty({ ...a, bankerId: 'p1' }, a)).toBe(true);
     expect(eveningDirty({ ...a, formatChoice: 'f1' }, a)).toBe(true);
     expect(eveningDirty({ ...a, time: '19:30' }, a)).toBe(true);
+  });
+});
+
+describe('trainingEveningDraft', () => {
+  it('сегодня по Москве, ближайшие 5 минут, банкир — кто создаёт, место и формат по умолчанию', () => {
+    const at = Date.parse('2026-10-06T12:02:30Z'); // 15:02:30 МСК
+    expect(trainingEveningDraft(at, SETTINGS, FORMATS, 'me')).toEqual({
+      date: '2026-10-06',
+      time: '15:05',
+      location: 'У Жени',
+      note: '',
+      formatChoice: 'f1',
+      bankerId: 'me',
+    });
+  });
+
+  it('ровно на границе 5 минут — это же время; перед полуночью МСК — следующий день', () => {
+    expect(trainingEveningDraft(NOW, SETTINGS, FORMATS, null).time).toBe('15:00');
+    const late = Date.parse('2026-10-06T20:58:00Z'); // 23:58 МСК
+    expect(trainingEveningDraft(late, SETTINGS, FORMATS, null)).toMatchObject({
+      date: '2026-10-07',
+      time: '00:00',
+    });
+  });
+
+  it('занятые дни не мешают: день игры с настоящим вечером — тоже можно', () => {
+    expect(trainingEveningDraft(NOW, null, FORMATS, 'me').date).toBe('2026-10-06');
   });
 });

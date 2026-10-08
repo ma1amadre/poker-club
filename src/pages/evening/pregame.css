@@ -1,0 +1,64 @@
+/* «Проверка перед игрой» (PregameCheck.tsx): пункты с иконкой статуса, подробностью и подсказкой.
+   Смысл несёт слово, цвет иконки только подкрепляет. */
+
+.pg-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pg-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.pg-item__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--ink-muted);
+}
+
+.pg-item--ok .pg-item__icon {
+  color: var(--positive);
+}
+
+.pg-item--warn .pg-item__icon {
+  color: var(--caution);
+}
+
+.pg-item--fail .pg-item__icon {
+  color: var(--critical);
+}
+
+.pg-item__body {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.pg-item__title,
+.pg-item__detail,
+.pg-item__hint {
+  margin: 0;
+}
+
+.pg-item__title {
+  font-weight: 500;
+}
+
+.pg-item__detail {
+  color: var(--ink-muted);
+}
+
+.pg-item__hint {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+}

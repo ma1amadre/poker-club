@@ -94,11 +94,17 @@ export { useToast, type ToastApi, type ToastOptions, type ToastTone } from './to
 export { useConfirm } from './useConfirm';
 
 // --- Своё, чего в «Материи» нет (из её токенов и ролей) ---
-export { EveningStatusBadge, type EveningStatusBadgeProps } from './EveningStatusBadge';
+export {
+  EveningStatusBadge,
+  TrainingBadge,
+  type EveningStatusBadgeProps,
+} from './EveningStatusBadge';
 export { BottomNav, type BottomNavItem, type BottomNavProps } from './BottomNav';
+export { LinkQr, type LinkQrProps } from './LinkQr';
 export { List, ListItem, type ListItemProps, type ListProps } from './List';
 export { Page, type PageProps } from './Page';
 export { PlayerPicker, type PickerPlayer, type PlayerPickerProps } from './PlayerPicker';
 export { PlayingCard, SuitPip, type PlayingCardProps, type PlayingCardSize } from './PlayingCard';
+export { AllInList, type AllInListProps } from './AllInList';
 export { ShowdownView, type ShowdownViewProps } from './ShowdownView';
 export { Sheet, type SheetProps } from './Sheet';

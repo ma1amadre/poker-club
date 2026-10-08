@@ -1,0 +1,432 @@
+/*
+ * Пульт банкира: «Режим стола» (TableView), шторки «Пауза», «Часы и уровень», вылеты после ривера.
+ * Только токены и роли «Материи», как в evening.css. Подключается из LiveView.
+ */
+
+.ev-pause__open {
+  grid-column: 1 / -1;
+}
+
+/* ---------- «Режим стола» ---------- */
+
+/* Экран вечера в «Столе»: группы плотнее (space-4 вместо space-6) — пульт помещается без прокрутки. */
+.ev-page--table {
+  gap: var(--space-4);
+}
+
+.ev-table {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/*
+ * Полоса часов прилипает к верху экрана (прокручивается вся страница — body). Тень цвета ground над
+ * ней закрывает то, что уезжает вверх; сверху — safe-area Telegram (полноэкранный режим).
+ */
+.ev-strip {
+  position: sticky;
+  top: var(--pc-safe-top);
+  z-index: var(--z-sticky);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--m-r-card);
+  box-shadow: 0 calc(-1 * var(--space-4)) 0 var(--ground);
+}
+
+.ev-strip--paused {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.ev-strip--due {
+  background: var(--critical-soft);
+  border-color: var(--critical);
+}
+
+/* Касание полосы — шторка «Часы и уровень»: вся левая часть — одна кнопка. */
+.ev-strip__main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'level level'
+    'blinds time';
+  align-items: end;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  min-width: 0;
+  min-height: 48px;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--m-r-control);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--m-dur) var(--m-ease);
+}
+
+.ev-strip__main:hover {
+  background: var(--fill-hover);
+}
+
+.ev-strip__main:active {
+  background: var(--fill-pressed);
+}
+
+.ev-strip__main:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ev-strip__level {
+  grid-area: level;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ev-strip__blinds {
+  grid-area: blinds;
+  min-width: 0;
+  font-size: var(--m-h3-size);
+  line-height: 1.2;
+  font-weight: 500;
+}
+
+.ev-strip__time {
+  grid-area: time;
+  font-size: calc(var(--m-figure-size) * 0.8);
+  line-height: 1;
+  font-weight: 500;
+}
+
+.ev-strip--paused .ev-strip__time,
+.ev-strip--due .ev-strip__time {
+  color: var(--ink-muted);
+}
+
+.ev-strip__note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.ev-strip--paused .ev-strip__note {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.ev-strip__due,
+.ev-strip--due .ev-strip__note {
+  color: var(--critical);
+  font-weight: 600;
+}
+
+/* ---------- Места за столом ---------- */
+
+.ev-seats {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Три плитки в ряд на 320–359 px, четыре — на 360–430; шире — сколько влезет. */
+.ev-seats__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: var(--space-2);
+}
+
+.ev-seat {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: 80px;
+  padding: var(--space-2) var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--m-r-control);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--m-dur) var(--m-ease),
+    border-color var(--m-dur) var(--m-ease),
+    transform var(--m-dur) var(--m-ease);
+}
+
+.ev-seat:hover {
+  border-color: var(--accent);
+}
+
+.ev-seat:active {
+  transform: scale(var(--scale-press));
+  background: var(--fill-pressed);
+}
+
+.ev-seat:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ev-seat__name {
+  max-width: 100%;
+  font-size: var(--m-small-size);
+  font-weight: 500;
+  line-height: 1.3;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Вылетевший: место пустует, но остаётся его — пунктир, приглушённый аватар. */
+.ev-seat--out {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--line-strong);
+}
+
+.ev-seat--out .m-avatar {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.ev-seat--out .ev-seat__name {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+/* «Посадить» — свободное место: пунктир и плюс вместо аватара. */
+.ev-seat--add {
+  align-content: center;
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ev-seat__plus {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+}
+
+.ev-seats__hint {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+/* ---------- Ряд вылетевших ---------- */
+
+.ev-out {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ev-out__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ev-out__row > li {
+  max-width: 100%;
+}
+
+.ev-out__chip {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, auto) auto;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: 44px;
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--m-small-size);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color var(--m-dur) var(--m-ease);
+}
+
+.ev-out__chip:hover {
+  border-color: var(--accent);
+}
+
+.ev-out__chip:active {
+  background: var(--fill-pressed);
+}
+
+.ev-out__chip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.ev-out__name {
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ev-out__note {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+/* Можно докупиться: рамка и подпись accent (не только цветом — иконка ребая и слово). */
+.ev-out__chip--rebuy {
+  border-color: var(--accent);
+}
+
+.ev-out__chip--rebuy .ev-out__note {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ---------- Кнопки под местами ---------- */
+
+.ev-table__actions {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* «Отметить олл-ин» и рядом «Отменить последнее» иконкой. */
+.ev-table__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+}
+
+.ev-table__hint {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+/* Под панелью олл-ина у банкира: «Записать вылет» и «Отметить карты». */
+.ev-sd-footer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  gap: var(--space-2);
+}
+
+/* ---------- Шторка «Часы и уровень» ---------- */
+
+.ev-clocksheet__time {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ev-clocksheet__time > p {
+  margin: 0;
+}
+
+/* ---------- После ривера в шторке олл-ина ---------- */
+
+.ev-river {
+  display: grid;
+  gap: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.ev-river__order {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ev-river__row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 48px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--m-r-control);
+  background: var(--surface);
+}
+
+.ev-river__n {
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.ev-river__name {
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ev-seat:active {
+    transform: none;
+  }
+}
+
+/*
+ * 320–359 px: у кнопки полосы остаётся иконка (подпись — в aria-label), цифры мельче — часам и
+ * блайндам нужна ширина; заголовок экрана и плитки мест ниже — пульт ближе к одному экрану.
+ */
+@media (max-width: 359px) {
+  .ev-strip__act .m-btn-label {
+    display: none;
+  }
+
+  .ev-strip__act .m-btn {
+    width: var(--m-control-h);
+    padding-inline: 0;
+  }
+
+  .ev-strip__time {
+    font-size: var(--m-h2-size);
+  }
+
+  .ev-strip__blinds {
+    font-size: var(--m-body-size);
+  }
+
+  .ev-page--table .ui-page__title {
+    font-size: var(--m-h3-size);
+    line-height: var(--m-h3-lh);
+  }
+
+  .ev-seat {
+    min-height: 68px;
+  }
+
+  .ev-seat .m-avatar,
+  .ev-seat__plus {
+    --_s: 32px;
+    width: 32px;
+    height: 32px;
+  }
+}

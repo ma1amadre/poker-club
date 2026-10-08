@@ -11,10 +11,13 @@ import {
   VOTE_CATEGORY_META,
   type Achievement,
   type EveningClubNews,
+  type EveningStakes,
   type MoneyTable,
   type PlayerId,
   type RecordBreak,
   type RecordKind,
+  type StakeItem,
+  type StoryItem,
   type TitleChange,
   type TournamentFormat,
   type VoteCategory,
@@ -371,6 +374,10 @@ export interface GamedayPostInput {
   nowMs: number;
   /** Сколько прогнозов на вечер уже сделано (непустые строки predictions, predictionsMade). */
   predictionsMade: number;
+  /** «На кону» (домен — eveningStakes); нет — без этих строк. */
+  stakes?: EveningStakes | null;
+  /** Имена для «На кону» (display_name), неэкранированные. */
+  names?: Record<PlayerId, string>;
 }
 
 /**
@@ -424,6 +431,88 @@ export function visibleLength(html: string): number {
   return html.replace(/<[^>]*>/g, '').replace(/&(?:amp|lt|gt|quot);/g, '&').length;
 }
 
+// ---------------------------------------------------------------------------
+// «На кону» в посте дня игры: кто в шаге от ачивки или рекорда и расклад сезона — до двух строк
+// ---------------------------------------------------------------------------
+// Что на кону, считает домен (eveningStakes); здесь только текст. О людях — без рода, в настоящем
+// времени, имена — в именительном («цель — Дима»); эмодзи в этих строках нет.
+
+/** Сколько шагов «На кону» помещается в пост: одна строка, без перегруза. */
+export const GAMEDAY_STAKES_MAX = 2;
+
+const winsText = (n: number): string => `${n}${NBSP}${plural(n, ['победа', 'победы', 'побед'])}`;
+
+/** Шаг «На кону» одной фразой: «Саша — в одной победе от ачивки «Хет-трик»». */
+export function stakeText(item: StakeItem, name: (id: PlayerId) => string): string {
+  switch (item.kind) {
+    case 'win_step': {
+      const record =
+        item.record === 'new'
+          ? `рекорда клуба (${winsText(item.streak)} подряд)`
+          : item.record === 'equal'
+            ? `повтора рекорда клуба (${winsText(item.streak)} подряд)`
+            : null;
+      const goals = [item.hatTrick ? `ачивки «${ACHIEVEMENT_META.hat_trick.title}»` : null, record]
+        .filter((x): x is string => x !== null)
+        .join(' и ');
+      return `${name(item.playerId)} — в одной победе от ${goals}`;
+    }
+    case 'enemy_step':
+      return (
+        `${name(item.playerId)} — в одном нокауте от ачивки «${ACHIEVEMENT_META.sworn_enemy.title}» ` +
+        `(цель — ${name(item.victimId)})`
+      );
+    case 'first_blood':
+      return `первый нокаут в истории клуба принесёт ачивку «${ACHIEVEMENT_META.first_blood.title}»`;
+    case 'pool_record':
+      return (
+        `идут ${item.going} — фонд ещё до ребаев ` +
+        `${item.status === 'new' ? 'побьёт' : 'повторит'} рекорд клуба (${formatRub(item.recordRub)})`
+      );
+    case 'oracle_step':
+      return `${name(item.playerId)} — в одном угаданном победителе от ачивки «${ACHIEVEMENT_META.oracle.title}»`;
+  }
+}
+
+/** Расклад сезона одной строкой; null — сказать нечего. */
+export function seasonStakeText(
+  season: NonNullable<EveningStakes['season']>,
+  name: (id: PlayerId) => string,
+): string | null {
+  if (season.first)
+    return `Сезон: первый вечер — ${formatSeason(season.seasonKey)} начинается с нуля.`;
+  const [leader] = season.leaders;
+  if (!leader) return null;
+  if (season.leaders.length > 1)
+    return (
+      `Сезон: первое место делят ${joinNames(season.leaders.map((l) => name(l.playerId)))} — ` +
+      `по ${formatPoints(leader.total)}.`
+    );
+  const head = `Сезон: лидер — ${name(leader.playerId)}, ${formatPoints(leader.total)}`;
+  const [chaser] = season.chasers;
+  if (!chaser) return `${head}.`;
+  const who = joinNames(season.chasers.map((c) => name(c.playerId)));
+  const tail =
+    chaser.gap === 0
+      ? `${who} — вровень по очкам`
+      : `${who} ${season.chasers.length > 1 ? 'отстают' : 'отстаёт'} на ${formatPoints(chaser.gap)}`;
+  return `${head}; ${tail}.`;
+}
+
+/**
+ * «На кону» в посте дня игры: строка с первыми GAMEDAY_STAKES_MAX шагами (по важности домена) и
+ * строка сезона. Нечего сказать — пусто.
+ */
+export function stakesLines(stakes: EveningStakes, names: Record<PlayerId, string>): string[] {
+  const name = (id: PlayerId): string => escapeHtml(names[id] ?? 'Игрок');
+  const lines: string[] = [];
+  const items = stakes.items.slice(0, GAMEDAY_STAKES_MAX).map((i) => stakeText(i, name));
+  if (items.length > 0) lines.push(`На кону: ${items.join('; ')}.`);
+  const season = stakes.season ? seasonStakeText(stakes.season, name) : null;
+  if (season) lines.push(season);
+  return lines;
+}
+
 type GamedayList = 'yes' | 'maybe' | 'no' | 'pending';
 
 /** Какой список укорачивать первым, если показано поровну: «идут» — последним. */
@@ -431,12 +520,14 @@ const GAMEDAY_TRIM_ORDER: readonly GamedayList[] = ['no', 'maybe', 'pending', 'y
 
 /**
  * Пост в день игры: когда и где, банкир, кто идёт, под вопросом, не идёт и кто из постоянных
- * игроков ещё не ответил (с упоминанием), в конце — сколько сделано прогнозов (predictionsLine). Нет
+ * игроков ещё не ответил (с упоминанием), «На кону» и сезон (stakesLines, до двух строк), в конце —
+ * сколько сделано прогнозов (predictionsLine). Нет
  * места или банкира — так и пишем. Из эмодзи — только масти:
  * ♠️ в заголовке и ♣️ на кнопке (решение пользователя), строки списков — чистый текст.
  *
- * Длина. В «Ещё не ответили» попадают все активные постоянные игроки, а tg-auth заводит игрока на
- * каждого участника группы, открывшего Mini App, — у большой группы видимый текст перерос бы лимит
+ * Длина. В «Ещё не ответили» попадают все активные постоянные игроки, кроме болельщиков (миграция
+ * 024: кто ответил «слежу, не играю»), а tg-auth заводит игрока на каждого участника группы,
+ * открывшего Mini App, — у большой группы видимый текст перерос бы лимит
  * Telegram (TELEGRAM_TEXT_LIMIT). sendMessage отклонил бы пост, publishOnce снял бы отметку, и пост не
  * ушёл бы ни на одном тике. Поэтому, пока текст не влезает, укорачиваем самый длинный из показанных
  * списков (при равенстве — в порядке GAMEDAY_TRIM_ORDER): первые по порядку остаются, хвост
@@ -476,6 +567,7 @@ export function gamedayPost(input: GamedayPostInput): Post {
 
   const location = input.location?.trim();
   const banker = input.bankerName?.trim();
+  const stakes = input.stakes ? stakesLines(input.stakes, input.names ?? {}) : [];
   const pending = roster.pending.length > 0;
   const maybe = roster.maybe.length > 0;
   const render = (): string => {
@@ -489,6 +581,7 @@ export function gamedayPost(input: GamedayPostInput): Post {
     if (maybe) lines.push(group('Под вопросом', 'maybe'));
     if (roster.no.length > 0) lines.push(group('Не идут', 'no'));
     if (pending) lines.push(group('Ещё не ответили', 'pending'));
+    if (stakes.length > 0) lines.push('', ...stakes);
     lines.push(
       '',
       pending && maybe
@@ -546,6 +639,8 @@ export interface ResultsPostInput {
   corrected?: boolean;
   /** «Жизнь клуба» (домен — eveningClubNews); нет или рассказывать нечего — блока нет. */
   clubNews?: EveningClubNews | null;
+  /** «Сюжет вечера» для поста (домен — eveningStory с forPost); пусто — блока нет. */
+  story?: readonly StoryItem[];
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -754,6 +849,69 @@ export function clubNewsLines(news: EveningClubNews, names: Record<PlayerId, str
   return lines.length > 0 ? ['', '♣️ <b>Жизнь клуба</b>', ...lines] : [];
 }
 
+// ---------------------------------------------------------------------------
+// «Сюжет вечера» в посте итогов (домен — eveningStory с forPost): главное о вечере, без того, что
+// пост говорит другими блоками. О людях — в настоящем времени, без рода, имена — в именительном;
+// из эмодзи — ♠️ в заголовке блока (решение пользователя для новых строк: только масти).
+// ---------------------------------------------------------------------------
+
+const STREET_PHRASE: Record<'preflop' | 'flop' | 'turn' | 'river', string> = {
+  preflop: 'до флопа',
+  flop: 'на флопе',
+  turn: 'на тёрне',
+  river: 'на ривере',
+};
+
+/** «18 %»; ноль на табло — «меньше 1 %». */
+function pctText(pct: number): string {
+  return pct > 0 ? `${pct}${NBSP}%` : `меньше 1${NBSP}%`;
+}
+
+/** Строка сюжета: «Женя забирает олл-ин с 13 % до флопа; фаворит — Саша, 87 %.» */
+export function storyText(item: StoryItem, name: (id: PlayerId) => string): string {
+  switch (item.kind) {
+    case 'swing': {
+      const s = item.swing;
+      const favs = s.favoriteIds.map(name);
+      const fav =
+        favs.length > 1
+          ? `фавориты — ${joinNames(favs)}, по ${pctText(s.favoritePct)}`
+          : `фаворит — ${favs[0] ?? 'Игрок'}, ${pctText(s.favoritePct)}`;
+      return `${name(s.winnerId)} забирает олл-ин с ${pctText(s.pct)} ${STREET_PHRASE[s.street]}; ${fav}.`;
+    }
+    case 'revenge':
+      return `Месть Немезиде: ${name(item.playerId)} выбивает игрока ${name(item.nemesisId)}.`;
+    case 'phoenix':
+      return `Феникс вечера — ${name(item.playerId)}: первый вылет и победа.`;
+    case 'comeback':
+      return item.rebuys === 1
+        ? `${name(item.playerId)} выигрывает вечер после ребая.`
+        : `${name(item.playerId)} выигрывает вечер после ${item.rebuys} ребаев.`;
+    case 'record': {
+      const r = item.record;
+      const who = r.playerIds.length > 0 ? `${joinNames(r.playerIds.map(name))}, ` : '';
+      const label = r.status === 'new' ? 'Новый рекорд клуба' : 'Рекорд клуба повторён';
+      return `${label}: ${lowerFirst(RECORD_META[r.kind].title)} — ${who}${recordValue(r.kind, r.value)}.`;
+    }
+    case 'season_leader': {
+      const [leader] = item.leaders;
+      if (!leader) return '';
+      if (item.leaders.length > 1)
+        return `Первое место сезона делят ${joinNames(item.leaders.map((l) => name(l.playerId)))}.`;
+      return item.leadersBefore.includes(leader.playerId)
+        ? `${name(leader.playerId)} — единоличный лидер сезона, ${formatPoints(leader.total)}.`
+        : `Новый лидер сезона — ${name(leader.playerId)}, ${formatPoints(leader.total)}.`;
+    }
+  }
+}
+
+/** Блок «Сюжет вечера»: заголовок и строки; сюжета нет — пусто. */
+export function storyLines(items: readonly StoryItem[], names: Record<PlayerId, string>): string[] {
+  const name = (id: PlayerId): string => escapeHtml(names[id] ?? 'Игрок');
+  const lines = items.map((item) => storyText(item, name)).filter((line) => line !== '');
+  return lines.length > 0 ? ['', '♠️ <b>Сюжет вечера</b>', ...lines] : [];
+}
+
 export function resultsPost(input: ResultsPostInput): Post {
   const name = (id: PlayerId): string => escapeHtml(input.names[id] ?? 'Игрок');
   const header = [
@@ -799,6 +957,7 @@ export function resultsPost(input: ResultsPostInput): Post {
   }
 
   lines.push(...eveningAchievementLines(input.newAchievements, input.names));
+  if (input.story) lines.push(...storyLines(input.story, input.names));
   if (input.clubNews) lines.push(...clubNewsLines(input.clubNews, input.names));
   lines.push(...seasonAchievementLines(input.newAchievements, input.names));
 

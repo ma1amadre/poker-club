@@ -6,6 +6,7 @@ import {
   upsertPlayer,
   usePlayers,
   useUpsertPlayer,
+  type MergeKind,
   type Player,
   type PlayerInput,
 } from '../../shared/api';
@@ -16,6 +17,8 @@ import {
   NAME_MAX,
   normalizeName,
   pluralWithNumber,
+  SPECTATOR_EVENING_NOTE,
+  SPECTATOR_NOTE,
   SPOKEN_NAME_DELAY_NOTE,
   SPOKEN_NAME_HINT,
   spokenNameChanged,
@@ -35,7 +38,7 @@ import {
   Switch,
   useToast,
 } from '../../shared/ui';
-import { adminErrorText, groupPlayers, nameError } from './lib';
+import { adminErrorText, groupPlayers, guestMergeTargets, nameError } from './lib';
 import { MergeSheet } from './MergeSheet';
 import { ListSkeleton } from './parts';
 
@@ -46,7 +49,8 @@ export function PlayersTab() {
   const players = usePlayers();
   const { player: me } = useAuth();
   const [openId, setOpenId] = useState<string | null>(null);
-  const [mergeId, setMergeId] = useState<string | null>(null);
+  // Слияние: кого переносим и куда — к Telegram-профилю или к другому профилю без Telegram (дубль).
+  const [merge, setMerge] = useState<{ id: string; kind: MergeKind } | null>(null);
 
   if (players.isPending) return <ListSkeleton label="Загрузка игроков" />;
   if (players.isError)
@@ -60,12 +64,14 @@ export function PlayersTab() {
 
   const { members, guests, inactive } = groupPlayers(players.data);
   const open = players.data.find((p) => p.id === openId) ?? null;
-  const merging = players.data.find((p) => p.id === mergeId) ?? null;
+  const merging = players.data.find((p) => p.id === merge?.id) ?? null;
 
   const row = (p: Player) => {
     const parts = [
       p.id === me?.id ? 'это ты' : null,
       p.username ? `@${p.username}` : p.tg_id === null ? 'без Telegram' : null,
+      // Болельщик (миграция 024): не в «Без ответа» и без упоминаний в посте дня игры.
+      p.is_spectator === true && !p.is_guest ? 'болельщик' : null,
       // Табло (голос, миграция 016) не прочитает латиницу — админ видит, кому задать имя.
       isVoiced(p) ? null : 'имя не звучит на табло',
     ].filter(Boolean);
@@ -117,18 +123,24 @@ export function PlayersTab() {
           player={open}
           isMe={open.id === me?.id}
           onClose={() => setOpenId(null)}
-          onLink={() => setMergeId(open.id)}
+          onLink={() => setMerge({ id: open.id, kind: 'telegram' })}
+          onMergeGuest={
+            open.tg_id === null && guestMergeTargets(players.data, open).length > 0
+              ? () => setMerge({ id: open.id, kind: 'guest' })
+              : undefined
+          }
         />
       )}
-      {merging && (
+      {merging && merge && (
         <MergeSheet
           // Не просто id: рядом PlayerSheet с key={id} того же игрока — одинаковые ключи соседей.
-          key={`merge-${merging.id}`}
+          key={`merge-${merge.kind}-${merging.id}`}
           guest={merging}
           players={players.data}
-          onClose={() => setMergeId(null)}
+          kind={merge.kind}
+          onClose={() => setMerge(null)}
           onMerged={() => {
-            setMergeId(null);
+            setMerge(null);
             setOpenId(null);
           }}
         />
@@ -137,7 +149,7 @@ export function PlayersTab() {
   );
 }
 
-type Flag = 'is_admin' | 'is_active' | 'is_guest';
+type Flag = 'is_admin' | 'is_active' | 'is_guest' | 'is_spectator';
 type Column = Flag | 'display_name' | 'spoken_name';
 
 function PlayerSheet({
@@ -145,12 +157,15 @@ function PlayerSheet({
   isMe,
   onClose,
   onLink,
+  onMergeGuest,
 }: {
   player: Player;
   isMe: boolean;
   onClose: () => void;
   /** Открыть «Привязать к Telegram» (только у игрока без Telegram). */
   onLink: () => void;
+  /** Открыть «Объединить дубли»; нет — объединять не с кем (или у игрока есть Telegram). */
+  onMergeGuest?: () => void;
 }) {
   const [name, setName] = useState(player.display_name);
   const [nameTouched, setNameTouched] = useState(false);
@@ -183,7 +198,7 @@ function PlayerSheet({
       ? Boolean(update.variables[flag])
       : undefined;
 
-  const toggle = (flag: 'is_admin' | 'is_active', value: boolean) => {
+  const toggle = (flag: 'is_admin' | 'is_active' | 'is_spectator', value: boolean) => {
     update.mutate(write({ [flag]: value }), {
       onSuccess: (saved) => {
         applySaved(saved);
@@ -193,9 +208,13 @@ function PlayerSheet({
             ? value
               ? `${who} теперь админ клуба`
               : `${who} больше не админ`
-            : value
-              ? `${who} снова может входить`
-              : `${who} отключён`,
+            : flag === 'is_spectator'
+              ? value
+                ? `${who} — болельщик клуба`
+                : `${who} — в составе игроков`
+              : value
+                ? `${who} снова может входить`
+                : `${who} отключён`,
         );
       },
       onError: (error) => toast.error(adminErrorText(error)),
@@ -267,6 +286,7 @@ function PlayerSheet({
 
   const adminShown = pendingFlag('is_admin') ?? player.is_admin;
   const activeShown = pendingFlag('is_active') ?? player.is_active;
+  const spectatorShown = pendingFlag('is_spectator') ?? player.is_spectator === true;
 
   return (
     <Sheet
@@ -350,6 +370,15 @@ function PlayerSheet({
           disabled={isMe || update.isPending}
           onChange={(value) => toggle('is_active', value)}
         />
+        {!player.is_guest && (
+          <Switch
+            label="Болельщик"
+            description={`${SPECTATOR_NOTE} ${SPECTATOR_EVENING_NOTE}`}
+            checked={spectatorShown}
+            disabled={update.isPending}
+            onChange={(value) => toggle('is_spectator', value)}
+          />
+        )}
       </div>
 
       {player.is_guest && (
@@ -378,6 +407,17 @@ function PlayerSheet({
           <Button icon="send" block disabled={update.isPending} onClick={onLink}>
             Привязать к Telegram
           </Button>
+          {onMergeGuest && (
+            <>
+              <p className="m-small adm-muted">
+                Если этого человека вписали гостем дважды, объедини профили: записи этого перейдут к
+                другому, а этот удалится.
+              </p>
+              <Button icon="users" block disabled={update.isPending} onClick={onMergeGuest}>
+                Объединить с другим профилем
+              </Button>
+            </>
+          )}
         </div>
       )}
     </Sheet>

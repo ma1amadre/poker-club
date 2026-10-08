@@ -29,6 +29,7 @@ import {
 } from '../../shared/ui';
 import { useClosingConfirmation } from '../../shared/telegram';
 import { BotUsernameAction, GroupActions, GroupHelp } from './BotSetup';
+import { ClubBoardSection } from './ClubBoardSection';
 import { adminErrorText } from './lib';
 import { ListSkeleton } from './parts';
 import { useFocusInvalid } from './useFocusInvalid';
@@ -50,7 +51,10 @@ export interface ClubTabProps {
   onDraftChange: (draft: SettingsDraft | null) => void;
 }
 
-/** Вкладка «Клуб»: группа и бот, расписание, очки рейтинга — одна форма с «Сохранить настройки». */
+/**
+ * Вкладка «Клуб»: группа и бот, расписание, очки рейтинга — одна форма с «Сохранить настройки»;
+ * под ней — «Табло клуба» (ссылка для ТВ, перевыпуск).
+ */
 export function ClubTab({ draft, onDraftChange }: ClubTabProps) {
   const settings = useSettings();
   const formats = useFormats();
@@ -83,12 +87,16 @@ export function ClubTab({ draft, onDraftChange }: ClubTabProps) {
     );
 
   return (
-    <ClubForm
-      settings={settings.data}
-      formats={formats.data}
-      draft={draft}
-      onDraftChange={onDraftChange}
-    />
+    <div className="adm-tab">
+      <ClubForm
+        settings={settings.data}
+        formats={formats.data}
+        draft={draft}
+        onDraftChange={onDraftChange}
+      />
+      {/* Вне формы: ссылка табло меняется своей кнопкой, а не «Сохранить настройки». */}
+      <ClubBoardSection settings={settings.data} />
+    </div>
   );
 }
 

@@ -116,6 +116,7 @@ const player = (
   tg_id: null,
   is_active: true,
   is_guest: false,
+  is_spectator: null,
   ...over,
 });
 
@@ -195,6 +196,43 @@ describe('gamedayRoster', () => {
     expect(pending).not.toContain('g1');
     expect(pending).not.toContain('x1');
     expect(pending).toHaveLength(6);
+  });
+
+  it('болельщик (миграция 024) в «не ответили» не стоит и не упоминается; ответивший — в своей группе', () => {
+    const players = [
+      ...PLAYERS,
+      player('s1', 'Болельщик', { username: 'fan_one', tg_id: 2001, is_spectator: true }),
+      player('s2', 'Болельщица', { tg_id: 2002, is_spectator: true }),
+      player('s3', 'Решил играть', { tg_id: 2003, is_spectator: false }),
+    ];
+    const roster = ids(gamedayRoster(players, [...RSVPS, rsvp('s2', 'maybe', 9)]));
+    expect(roster.pending).not.toContain('s1');
+    expect(roster.pending).toContain('s3'); // false — играет, как null
+    expect(roster.maybe).toEqual(['p3', 's2']);
+  });
+
+  it('болельщика посадили за стол — на этот вечер он игрок, как все посаженные без ответа', () => {
+    const players = [...PLAYERS, player('s1', 'Болельщик', { tg_id: 2001, is_spectator: true })];
+    expect(ids(gamedayRoster(players, RSVPS, new Set(['s1']))).pending).toContain('s1');
+    expect(ids(gamedayRoster(players, RSVPS, new Set(['p6']))).pending).not.toContain('s1');
+  });
+
+  it('болельщики — так же, как «Без ответа» на главной (groupRsvps)', () => {
+    const players = [
+      ...PLAYERS,
+      player('s1', 'Болельщик', { tg_id: 2001, is_spectator: true }),
+      player('s2', 'Болельщица', { tg_id: 2002, is_spectator: true }),
+    ];
+    const seated = new Set(['s2']);
+    const app = groupRsvps(
+      players.map((p) => ({ ...p, photo_url: null })),
+      RSVPS.map((r) => ({ player_id: r.player_id, status: r.status as 'yes' | 'maybe' | 'no' })),
+      seated,
+    );
+    const post = ids(gamedayRoster(players, RSVPS, seated));
+    expect([...post.pending].sort()).toEqual(app.silent.map((p) => p.id).sort());
+    expect(post.pending).toContain('s2');
+    expect(post.pending).not.toContain('s1');
   });
 
   it('username и tg id для упоминания — только годные', () => {

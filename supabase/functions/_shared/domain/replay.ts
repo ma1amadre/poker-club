@@ -8,8 +8,17 @@
 //   экран вечера должен всё равно открываться.
 // - Таймер считается из времени событий (`at`, серверное время), переход time-уровней не
 //   хранится отдельным событием — его вычисляет replay, поэтому все экраны синхронны.
+// - Правка записи на месте (миграция 022): поправка 'amend' ссылается на более раннюю запись
+//   (вход, ребай — кратность; вылет — выбившие) и применяется В ПОЗИЦИИ исходной записи, а не в
+//   своей: порядок мест, ребаи и уровни после неё не сдвигаются. Поправку принимает та же проверка,
+//   что и исходную запись (validate в позиции исходной); в силе последняя принятая поправка записи,
+//   отмена поправки возвращает предыдущую или исходное значение.
 import {
+  AMENDABLE_EVENT_TYPES,
   MAX_ENTRY_STACKS,
+  MAX_PAUSE_MINUTES,
+  MAX_TIME_ADJUST_SECONDS,
+  type AmendPayload,
   type BlindLevel,
   type EveningEvent,
   type EveningState,
@@ -75,6 +84,57 @@ export function readStacks(payload: unknown): number | null {
 
 const STACKS_ERROR = `Кратность входа — целое число от 1 до ${MAX_ENTRY_STACKS}`;
 
+/**
+ * Пауза из payload timer_pause: minutes — длительность перерыва, null — без срока (нет поля, как у
+ * всех пауз до миграции 022); null вместо объекта — значение некорректно.
+ */
+export function readPause(payload: unknown): { minutes: number | null } | null {
+  const record = asRecord(payload);
+  if (!('minutes' in record) || record.minutes === undefined) return { minutes: null };
+  const m = record.minutes;
+  return typeof m === 'number' && Number.isInteger(m) && m >= 1 && m <= MAX_PAUSE_MINUTES
+    ? { minutes: m }
+    : null;
+}
+
+const PAUSE_ERROR = `Пауза: длительность — целое число минут от 1 до ${MAX_PAUSE_MINUTES}`;
+
+/** Поправка остатка уровня из payload time_adjust, секунд (±), или null — значение некорректно. */
+export function readTimeAdjust(payload: unknown): number | null {
+  const s = asRecord(payload).seconds;
+  return typeof s === 'number' &&
+    Number.isInteger(s) &&
+    s !== 0 &&
+    Math.abs(s) <= MAX_TIME_ADJUST_SECONDS
+    ? s
+    : null;
+}
+
+const TIME_ADJUST_ERROR = `Поправка времени — целое число секунд, не ноль и не больше ${MAX_TIME_ADJUST_SECONDS} по модулю`;
+
+/**
+ * Поправка из payload amend: id исправляемой записи и ровно одно новое значение — stacks (вход,
+ * ребай) или by (вылет). null — форма неверна. Есть ли такая запись и подходит ли значение к ней,
+ * решает replay по журналу.
+ */
+export function readAmend(payload: unknown): AmendPayload | null {
+  const record = asRecord(payload);
+  const id = record.eventId;
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return null;
+  const hasStacks = 'stacks' in record && record.stacks !== undefined;
+  const hasBy = 'by' in record && record.by !== undefined;
+  if (hasStacks === hasBy) return null;
+  if (hasStacks) {
+    const k = readStacks(record);
+    return k === null ? null : { eventId: id, stacks: k };
+  }
+  const by = readBy(record);
+  return by === null ? null : { eventId: id, by: [...by] };
+}
+
+const AMEND_SHAPE_ERROR =
+  'Правка: нужна исправляемая запись и одно новое значение — кратность или выбившие';
+
 /** Платёж из payload или null, если payload некорректен. Используется и в money.ts. */
 export function readPayment(payload: unknown): { playerId: PlayerId; amountRub: number } | null {
   const playerId = readPlayerId(payload);
@@ -98,6 +158,7 @@ function initialState(format: TournamentFormat): EveningState {
       handsInLevel: 0,
       bustsInLevel: 0,
       totalElapsedMs: 0,
+      pause: null,
     },
     currentLevel: levelAt(format, 0),
     nextLevel: format.levels.length > 1 ? levelAt(format, 1) : null,
@@ -189,6 +250,9 @@ function validate(
       ? 'Платёж: нужен игрок и ненулевая сумма в целых рублях'
       : null;
   }
+  // Поправка встаёт на место исходной записи, поэтому законна и после завершения (правка закрытого
+  // вечера — админ). Здесь — форма; есть ли запись и подходит ли к ней значение — в replayLog.
+  if (type === 'amend') return readAmend(payload) === null ? AMEND_SHAPE_ERROR : null;
   if (s.finished) return 'Вечер уже завершён';
 
   switch (type) {
@@ -231,7 +295,22 @@ function validate(
     case 'timer_start':
       return s.timer.status === 'not_started' ? null : 'Таймер уже запущен';
     case 'timer_pause':
+      if (readPause(payload) === null) return PAUSE_ERROR;
       return s.timer.status === 'running' ? null : 'Таймер не идёт';
+    case 'time_adjust': {
+      const seconds = readTimeAdjust(payload);
+      if (seconds === null) return TIME_ADJUST_ERROR;
+      if (s.timer.status === 'not_started') return 'Таймер не запущен';
+      const dur = levelDurationMs(s.currentLevel);
+      if (dur === null) return 'Уровень не по времени — поправлять нечего';
+      if (s.nextLevel === null) return 'Последний уровень сам не кончается — поправлять нечего';
+      const after = dur - s.timer.levelElapsedMs + seconds * 1000;
+      // Ноль — это переход уровня: для него есть «Уровень вперёд», поправка его не делает.
+      if (after <= 0)
+        return 'Убавить нельзя: уровень бы закончился — для этого есть «Уровень вперёд»';
+      if (after > dur) return 'Прибавить нельзя: остаток стал бы больше длины уровня';
+      return null;
+    }
     case 'timer_resume':
       return s.timer.status === 'paused' ? null : 'Таймер не на паузе';
     case 'level_next':
@@ -338,13 +417,24 @@ function apply(
     }
     case 'timer_start':
       t.status = 'running';
+      t.pause = null;
       enterLevel(s, 0, 0);
       return;
     case 'timer_pause':
       t.status = 'paused';
+      t.pause = { eventId: ev.id, at: ev.at, minutes: readPause(payload)?.minutes ?? null };
       return;
     case 'timer_resume':
       t.status = 'running';
+      t.pause = null;
+      return;
+    case 'time_adjust':
+      // Остаток уровня = длина − прошедшее: прибавить к остатку — убавить прошедшее. Границы
+      // проверил validate: уровень не кончится и не станет длиннее себя. Игровое время не меняется.
+      t.levelElapsedMs -= (readTimeAdjust(payload) as number) * 1000;
+      return;
+    case 'amend':
+      // В своей позиции поправка ничего не меняет: она применена в позиции исходной записи.
       return;
     case 'level_next':
       enterLevel(s, t.levelIndex + 1, 0);
@@ -368,6 +458,8 @@ function apply(
       s.finished = true;
       // Время после завершения не идёт; статус 'paused' — ближайший из контрактных.
       if (t.status === 'running') t.status = 'paused';
+      // Игра окончена — «продолжаем через» не о чем.
+      t.pause = null;
       // Итог вечера важнее последней раздачи: финиш закрывает олл-ин (отмена финиша вернёт его).
       s.showdown = null;
       return;
@@ -396,8 +488,71 @@ function apply(
 
 export interface ReplayLog {
   state: EveningState;
-  /** Принятые (не voided, без ошибок) события в порядке применения. */
+  /**
+   * Принятые (не voided, без ошибок) события в порядке применения. Исправленная запись — на своём
+   * месте и с payload, как его применил replay (с поправкой в силе); принятые поправки — тоже здесь,
+   * в своих позициях (на состояние там они не влияют).
+   */
   applied: EveningEvent[];
+  /** id исправленной записи → id поправки, которая в силе (последняя принятая). */
+  amended: Map<number, number>;
+}
+
+const AMEND_TARGET_TYPES: ReadonlySet<EventType> = new Set(AMENDABLE_EVENT_TYPES);
+
+/** Первая буква строчная: причина отказа исходной записи встаёт внутрь фразы. */
+function lowerFirst(text: string): string {
+  return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+/** payload исходной записи с новым значением поправки. */
+function amendedPayload(target: EveningEvent, patch: AmendPayload): EventPayload {
+  const base = asRecord(target.payload);
+  const next =
+    'stacks' in patch ? { ...base, stacks: patch.stacks } : { ...base, by: [...patch.by] };
+  return next as unknown as EventPayload;
+}
+
+interface AmendCandidate {
+  event: EveningEvent;
+  patch: AmendPayload;
+}
+
+/**
+ * Поправки журнала по исправляемым записям (в порядке id) и отказы по форме: запись не найдена,
+ * отменена, не раньше поправки, не того типа, значение не к той записи.
+ */
+function collectAmends(sorted: readonly EveningEvent[]): {
+  byTarget: Map<number, AmendCandidate[]>;
+  errors: Map<number, string>;
+} {
+  const byId = new Map(sorted.map((e) => [e.id, e]));
+  const byTarget = new Map<number, AmendCandidate[]>();
+  const errors = new Map<number, string>();
+  for (const ev of sorted) {
+    if (ev.voided || ev.type !== 'amend') continue;
+    const patch = readAmend(ev.payload);
+    const target = patch ? byId.get(patch.eventId) : undefined;
+    let error: string | null = null;
+    if (patch === null) error = AMEND_SHAPE_ERROR;
+    else if (!target) error = 'Правка: исправляемой записи нет в журнале';
+    else if (target.id >= ev.id) error = 'Правка: исправить можно только более раннюю запись';
+    else if (target.voided) error = 'Правка: исправляемая запись отменена';
+    else if (!AMEND_TARGET_TYPES.has(target.type))
+      error = 'Правка: исправить можно только вход, ребай или вылет';
+    else if (target.type === 'bust' && 'stacks' in patch)
+      error = 'Правка: у вылета исправляются выбившие, а не кратность';
+    else if (target.type !== 'bust' && 'by' in patch)
+      error = 'Правка: у входа и ребая исправляется кратность, а не выбившие';
+    if (error !== null || patch === null || !target) {
+      errors.set(ev.id, error ?? AMEND_SHAPE_ERROR);
+      continue;
+    }
+    const list = byTarget.get(target.id) ?? [];
+    list.push({ event: ev, patch });
+    byTarget.set(target.id, list);
+  }
+  return { byTarget, errors };
 }
 
 /** replay с журналом принятых событий — нужен summary для пар нокаутов. */
@@ -408,6 +563,7 @@ export function replayLog(
 ): ReplayLog {
   const s = initialState(format);
   const applied: EveningEvent[] = [];
+  const amended = new Map<number, number>();
   let clockMs: number | null = null;
 
   const tickTo = (ms: number): void => {
@@ -417,6 +573,9 @@ export function replayLog(
   };
 
   const sorted = [...events].sort((a, b) => a.id - b.id);
+  const amends = collectAmends(sorted);
+  // Решение по поправке принимается в позиции исходной записи: null — принята, текст — отказ.
+  const amendVerdict = new Map<number, string | null>(amends.errors);
   for (const ev of sorted) {
     if (ev.voided) continue;
     const atMs = Date.parse(ev.at);
@@ -426,19 +585,46 @@ export function replayLog(
     }
     tickTo(atMs);
     refresh(format, s);
-    const payload: unknown = ev.payload;
+
+    if (ev.type === 'amend') {
+      // Решения нет — исправляемая запись так и не дошла до проверки (например, её время сломано).
+      const verdict = amendVerdict.has(ev.id)
+        ? (amendVerdict.get(ev.id) ?? null)
+        : 'Правка: исправляемая запись не принята журналом';
+      if (verdict !== null) s.errors.push({ eventId: ev.id, message: verdict });
+      else applied.push(ev);
+      continue;
+    }
+
+    // Исправленная запись: каждая поправка проверяется здесь, в позиции исходной, теми же
+    // правилами; в силе — последняя принятая. Ни одной принятой — запись остаётся как была.
+    let effective = ev;
+    for (const c of amends.byTarget.get(ev.id) ?? []) {
+      const amendedEv = { ...ev, payload: amendedPayload(ev, c.patch) };
+      const amendErr = validate(format, s, ev.type, amendedEv.payload);
+      amendVerdict.set(
+        c.event.id,
+        amendErr === null ? null : `Правка не подходит: ${lowerFirst(amendErr)}`,
+      );
+      if (amendErr === null) {
+        effective = amendedEv;
+        amended.set(ev.id, c.event.id);
+      }
+    }
+
+    const payload: unknown = effective.payload;
     const err = validate(format, s, ev.type, payload);
     if (err !== null) {
       s.errors.push({ eventId: ev.id, message: err });
       continue;
     }
-    apply(format, s, ev, payload);
-    applied.push(ev);
+    apply(format, s, effective, payload);
+    applied.push(effective);
     refresh(format, s);
   }
   tickTo(nowMs);
   refresh(format, s);
-  return { state: s, applied };
+  return { state: s, applied, amended };
 }
 
 /** Состояние вечера на момент nowMs. */
@@ -451,9 +637,24 @@ export function replay(
 }
 
 /**
+ * Сколько осталось до конца перерыва (пауза с длительностью, миграция 022), мс: меньше нуля — срок
+ * вышел, пора продолжать (таймер сам не продолжает — только банкир). null — не пауза, пауза без
+ * срока или вечер завершён. nowMs — серверное «сейчас», как у replay.
+ */
+export function pauseLeftMs(state: EveningState, nowMs: number): number | null {
+  const pause = state.timer.pause;
+  if (state.finished || state.timer.status !== 'paused' || !pause || pause.minutes === null)
+    return null;
+  const at = Date.parse(pause.at);
+  return Number.isFinite(at) ? at + pause.minutes * MINUTE_MS - nowMs : null;
+}
+
+/**
  * Можно ли сейчас добавить событие: текст ошибки или null.
  * `state` должен быть посчитан replay на тот же момент (фронт пересчитывает его раз в секунду);
  * `nowMs` оставлен по контракту — состояние не хранит свой момент, экстраполировать не из чего.
+ * Поправку ('amend') state проверить не может — только её форму; целиком её проверяет
+ * canApplySequence по журналу (canAmend в amend.ts).
  */
 export function canApply(
   format: TournamentFormat,

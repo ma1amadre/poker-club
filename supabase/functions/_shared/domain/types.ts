@@ -40,7 +40,9 @@ export type EventType =
   | 'payment'
   | 'finish'
   | 'showdown'
-  | 'showdown_close';
+  | 'showdown_close'
+  | 'amend'
+  | 'time_adjust';
 
 export const EVENT_TYPES: readonly EventType[] = [
   'join',
@@ -56,6 +58,8 @@ export const EVENT_TYPES: readonly EventType[] = [
   'finish',
   'showdown',
   'showdown_close',
+  'amend',
+  'time_adjust',
 ];
 
 /**
@@ -91,6 +95,48 @@ export type ShowdownState = ShowdownPayload & {
 /** Наибольшая кратность входа или ребая (stacks в payload join/rebuy). */
 export const MAX_ENTRY_STACKS = 10;
 
+/**
+ * Правка записи на месте (миграция 022): какие записи можно исправить поправкой 'amend'. Вход и
+ * ребай — кратность (stacks), вылет — выбивших (by). Поправка встаёт на место исходной записи.
+ */
+export const AMENDABLE_EVENT_TYPES: readonly EventType[] = ['join', 'rebuy', 'bust'];
+
+/**
+ * payload 'amend': ссылка на исправляемую запись этого вечера (id меньше id поправки) и ровно одно
+ * новое значение: stacks — у входа и ребая (целое 1..MAX_ENTRY_STACKS, хранится и 1), by — у вылета
+ * (кто выбил, 0..n). replay применяет поправку в позиции исходной записи; последняя принятая
+ * поправка записи — в силе, отмена поправки возвращает предыдущую (или исходную запись).
+ */
+export type AmendPayload =
+  | { eventId: number; stacks: number } // join, rebuy
+  | { eventId: number; by: PlayerId[] }; // bust
+
+/** Наибольшая длительность паузы с отсчётом (payload timer_pause.minutes), минут. */
+export const MAX_PAUSE_MINUTES = 120;
+
+/**
+ * Длительности перерыва, которые предлагает пульт. Для них фраза «Перерыв N минут.» озвучена
+ * заранее (FIXED_TEXTS голоса); другую длительность табло объявит коротким «Пауза.».
+ */
+export const PAUSE_MINUTES_OPTIONS: readonly number[] = [5, 10, 15, 20, 30];
+
+/**
+ * payload 'timer_pause' (миграция 022): minutes — на сколько перерыв (целое 1..MAX_PAUSE_MINUTES),
+ * нет поля — пауза без срока (так выглядят все паузы до 022). Таймер сам не продолжает: по истечении
+ * экраны только зовут продолжить.
+ */
+export type PausePayload = { minutes?: number };
+
+/** Наибольшая поправка остатка уровня одним событием 'time_adjust', секунд (по модулю). */
+export const MAX_TIME_ADJUST_SECONDS = 3600;
+
+/**
+ * payload 'time_adjust' (миграция 022): seconds — сколько прибавить к остатку текущего уровня
+ * (минус — убавить), целое, не 0, по модулю до MAX_TIME_ADJUST_SECONDS. Только уровень по времени,
+ * не последний; остаток после поправки — больше нуля и не больше длины уровня.
+ */
+export type TimeAdjustPayload = { seconds: number };
+
 export type EventPayload =
   // join, rebuy; stacks — кратность входа: целое 1..MAX_ENTRY_STACKS, нет поля = 1 (старые события).
   // Вход ×k: взнос buyInRub·k (весь — в призовой фонд), фишки startingChips·k.
@@ -99,7 +145,10 @@ export type EventPayload =
   | { playerId: PlayerId; amountRub: number; note?: string } // payment: + игрок→банкир, − банкир→игрок
   | ShowdownPayload // showdown
   | { showdownId: string } // showdown_close
-  | Record<string, never>; // timer_*, level_*, hand, finish
+  | AmendPayload // amend (022)
+  | PausePayload // timer_pause: { minutes? } (022)
+  | TimeAdjustPayload // time_adjust (022)
+  | Record<string, never>; // timer_start, timer_resume, level_*, hand, finish
 
 export interface EveningEvent {
   id: number;
@@ -124,6 +173,13 @@ export interface PlayerState {
   bustLevel: number | null; // номер уровня (с 1) окончательного вылета
 }
 
+/** Пауза таймера (миграция 022): какая запись её поставила, когда и на сколько. */
+export interface PauseState {
+  eventId: number; // принятый timer_pause
+  at: string; // его `at` — серверное время начала паузы
+  minutes: number | null; // длительность перерыва; null — пауза без срока
+}
+
 export interface TimerState {
   status: 'not_started' | 'running' | 'paused';
   levelIndex: number; // 0-based
@@ -132,6 +188,8 @@ export interface TimerState {
   handsInLevel: number;
   bustsInLevel: number;
   totalElapsedMs: number; // чистое игровое время без пауз
+  // Текущая пауза (status 'paused', вечер не завершён) или null. Конец перерыва — pauseLeftMs.
+  pause: PauseState | null;
 }
 
 export interface EveningState {

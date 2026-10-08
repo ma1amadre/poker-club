@@ -1,8 +1,8 @@
 // Эквити: эталоны курса (tests/engines.test.js, раздел 4; tests/equity-reference.js — агрегат по
 // мастям, сверенный с cardfight.com до 0,01 п. п.) и детерминизм Монте-Карло.
 import { describe, expect, it } from 'vitest';
-import { roundShares } from './analysis';
-import { parseCards, RANKS, SUITS, type Card } from './cards';
+import { roundShares } from './shares.ts';
+import { parseCards, RANKS, SUITS, type Card } from './cards.ts';
 import {
   computeEquity,
   createMcJob,
@@ -17,8 +17,8 @@ import {
   seedFor,
   showdownKey,
   suitSymmetryGroups,
-} from './equity';
-import { nCk, outsEquity } from './pokermath';
+} from './equity.ts';
+import { nCk, outsEquity } from './pokermath.ts';
 
 const H = (s: string) => parseCards(s.match(/../g) ?? []);
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);

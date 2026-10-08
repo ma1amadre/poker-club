@@ -3,6 +3,7 @@
 import { computeMoney, isSettled, paymentsFromEvents, settlement } from '@domain/money.ts';
 import { replay } from '@domain/replay.ts';
 import { sameRank, type StandingRow } from '@domain/season.ts';
+import { spectatesEvening } from '@domain/spectators.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import type { EveningEvent, PlayerId, TournamentFormat } from '@domain/types.ts';
 import type { EveningStatus, Player, Rsvp } from '../../shared/api';
@@ -40,11 +41,31 @@ export function pickUpcoming<T extends UpcomingLike>(
   return fresh ?? announced[announced.length - 1] ?? null;
 }
 
+/**
+ * Тренировка для главной (миграция 023): идущая (последняя начатая) или объявленная, время которой
+ * ещё не прошло больше чем на STALE_ANNOUNCE_MS. Забытую тренировку всем не показываем — её удаляет
+ * админ. На вход — только тренировки (ближайший настоящий вечер выбирает pickUpcoming без них).
+ */
+export function pickTraining<T extends UpcomingLike>(
+  trainings: readonly T[],
+  nowMs: number,
+): T | null {
+  const live = trainings
+    .filter((e) => e.status === 'live')
+    .sort((a, b) => ms(b.started_at ?? b.scheduled_at) - ms(a.started_at ?? a.scheduled_at));
+  if (live[0]) return live[0];
+  return (
+    trainings
+      .filter((e) => e.status === 'announced' && ms(e.scheduled_at) >= nowMs - STALE_ANNOUNCE_MS)
+      .sort((a, b) => ms(a.scheduled_at) - ms(b.scheduled_at))[0] ?? null
+  );
+}
+
 // --- Состав ----------------------------------------------------------------------------------
 
 export type PlayerLike = Pick<
   Player,
-  'id' | 'display_name' | 'photo_url' | 'is_guest' | 'is_active'
+  'id' | 'display_name' | 'photo_url' | 'is_guest' | 'is_active' | 'is_spectator'
 >;
 export type RsvpLike = Pick<Rsvp, 'player_id' | 'status'>;
 
@@ -52,14 +73,19 @@ export interface RsvpGroups<P> {
   yes: P[];
   maybe: P[];
   no: P[];
-  /** Постоянные участники клуба, которые ещё не ответили. */
+  /** Постоянные участники клуба, которые ещё не ответили (кроме болельщиков). */
   silent: P[];
 }
 
-/** Ответы на анонс по группам; внутри группы — в порядке ответов (rsvps приходят по updated_at). */
+/**
+ * Ответы на анонс по группам; внутри группы — в порядке ответов (rsvps приходят по updated_at).
+ * Болельщика (миграция 024) в «Без ответа» нет, пока его не посадили за стол (`seated` — seatedIds
+ * журнала): то же правило, что у поста дня игры (gamedayRoster, сверяет gameday.test.ts).
+ */
 export function groupRsvps<P extends PlayerLike>(
   players: readonly P[],
   rsvps: readonly RsvpLike[],
+  seated: ReadonlySet<string> = new Set(),
 ): RsvpGroups<P> {
   const byId = new Map(players.map((p) => [p.id, p]));
   const groups: RsvpGroups<P> = { yes: [], maybe: [], no: [], silent: [] };
@@ -71,7 +97,13 @@ export function groupRsvps<P extends PlayerLike>(
     groups[r.status].push(p);
   }
   groups.silent = players
-    .filter((p) => p.is_active && !p.is_guest && !answered.has(p.id))
+    .filter(
+      (p) =>
+        p.is_active &&
+        !p.is_guest &&
+        !answered.has(p.id) &&
+        !spectatesEvening({ spectator: p.is_spectator, seated: seated.has(p.id) }),
+    )
     .sort(byName);
   return groups;
 }

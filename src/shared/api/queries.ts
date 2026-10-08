@@ -126,12 +126,17 @@ export async function fetchEveningEvents(eveningId: string): Promise<EveningEven
   return rows.map(toEventRecord);
 }
 
+/** Канал Realtime журнала вечера — для useRealtimeStatus (проверка перед игрой). */
+export function eveningRealtimeTopic(eveningId: string): string {
+  return `evening:${eveningId}`;
+}
+
 /**
  * Журнал вечера (включая отменённые — replay их пропускает, а лента показывает зачёркнутыми)
  * + Realtime: новые события и смена статуса вечера приходят всем экранам без перезагрузки.
  */
 export function useEveningEvents(eveningId: string | undefined) {
-  useRealtimeInvalidation(eveningId ? `evening:${eveningId}` : undefined, [
+  useRealtimeInvalidation(eveningId ? eveningRealtimeTopic(eveningId) : undefined, [
     {
       table: 'evening_events',
       filter: `evening_id=eq.${eveningId}`,

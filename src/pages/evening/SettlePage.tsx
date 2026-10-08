@@ -288,7 +288,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
                 event={ev}
                 nameOf={nameOf}
                 format={evening.format}
-                onVoid={canPay ? (e) => void actions.voidWithConfirm(e) : undefined}
+                onSelect={canPay ? (e) => void actions.voidWithConfirm(e) : undefined}
               />
             ))}
           </List>

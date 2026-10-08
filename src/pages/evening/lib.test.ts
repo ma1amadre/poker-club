@@ -53,6 +53,7 @@ import {
   rebuyWindow,
   seatButtonLabel,
   seatCandidates,
+  seatSpectator,
   seatDrafts,
   settleDirection,
   settleLabel,
@@ -419,12 +420,13 @@ describe('seatCandidates / normalizeGuestName', () => {
   const p = (
     id: string,
     name: string,
-    extra: Partial<{ is_active: boolean; is_guest: boolean }> = {},
+    extra: Partial<{ is_active: boolean; is_guest: boolean; is_spectator: boolean | null }> = {},
   ) => ({
     id,
     display_name: name,
     is_active: true,
     is_guest: false,
+    is_spectator: null as boolean | null,
     ...extra,
   });
 
@@ -446,6 +448,21 @@ describe('seatCandidates / normalizeGuestName', () => {
     expect(list.map((c) => c.player.id)).toEqual(['f', 'd', 'c', 'b']);
     expect(list[0]?.rsvp).toBe('yes');
     expect(list[2]?.rsvp).toBeNull();
+  });
+
+  it('болельщик (миграция 024): посадить можно, но после игроков своей группы и до гостей', () => {
+    const state = replay(DEFAULT_FORMAT, journal().join('a').events, 0);
+    const players = [
+      p('b', 'Борис'),
+      p('c', 'Вова', { is_guest: true }),
+      p('s', 'Аня', { is_spectator: true }),
+      p('t', 'Алла', { is_spectator: true }),
+      p('d', 'Глеб'),
+    ];
+    const list = seatCandidates(players, state, [{ player_id: 't', status: 'yes' }]);
+    // Алла сказала «иду» — на этот вечер игрок и сверху; Аня — болельщик среди молчащих.
+    expect(list.map((c) => c.player.id)).toEqual(['t', 'b', 'd', 's', 'c']);
+    expect(list.map(seatSpectator)).toEqual([false, false, false, true, false]);
   });
 
   it('имя гостя: пробелы схлопываются, 1–40 символов', () => {

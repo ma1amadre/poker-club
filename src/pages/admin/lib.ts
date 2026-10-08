@@ -4,7 +4,7 @@ import { errorMessage } from '../../shared/api/errors';
 import type { EveningStatus } from '../../shared/api/types';
 import { clubWeekday, moscowDateKey, parseClubDate } from '../../shared/lib/clubTime';
 import { pluralWithNumber } from '../../shared/lib/format';
-import { NAME_MAX, normalizeName } from '../../shared/lib/text';
+import { NAME_MAX, nameMatchKey, normalizeName } from '../../shared/lib/text';
 
 // --- Вкладки --------------------------------------------------------------------------------
 
@@ -126,6 +126,58 @@ export function mergeTargets<T extends PlayerLike>(players: readonly T[], guestI
     );
 }
 
+// --- Слияние дублей гостя (merge_guests, миграция 024) ----------------------------------------
+
+/**
+ * С кем можно объединить профиль без Telegram: другие профили без Telegram (гости и сделанные
+ * постоянными — войти ни один не может). Сначала с тем же именем (nameMatchKey: регистр, «ё»,
+ * пометка в скобках не важны — «Вова (гость)» и «вова» — один ключ), затем включённые, внутри —
+ * по имени.
+ */
+export function guestMergeTargets<T extends PlayerLike>(players: readonly T[], guest: T): T[] {
+  const key = nameMatchKey(guest.display_name);
+  const same = (p: T) => key !== '' && nameMatchKey(p.display_name) === key;
+  return players
+    .filter((p) => p.id !== guest.id && (p.tg_id === null || p.tg_id === undefined))
+    .sort(
+      (a, b) =>
+        Number(same(b)) - Number(same(a)) ||
+        Number(b.is_active) - Number(a.is_active) ||
+        a.display_name.localeCompare(b.display_name, 'ru') ||
+        a.id.localeCompare(b.id),
+    );
+}
+
+/** Подпись профиля в выборе дубля: «то же имя · гость · 3 вечера» (вечеров нет — без числа). */
+export function guestMergeHint<T extends PlayerLike>(
+  target: T,
+  guest: T,
+  evenings: number | undefined,
+): string {
+  const key = nameMatchKey(guest.display_name);
+  return [
+    key !== '' && nameMatchKey(target.display_name) === key ? 'то же имя' : null,
+    target.is_guest ? 'гость' : 'постоянный',
+    target.is_active ? null : 'отключён',
+    evenings ? pluralWithNumber(evenings, ['вечер', 'вечера', 'вечеров']) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** Что станет с флагами профиля после слияния дублей (отчёт merge_guests_preview). */
+export function guestMergeFlagNotes(
+  report: { becomesPermanent?: boolean; becomesActive?: boolean },
+  targetName: string,
+): string[] {
+  return [
+    report.becomesPermanent
+      ? `Профиль «${targetName}» станет постоянным: дубль — постоянный игрок, его вечера войдут в рейтинг.`
+      : null,
+    report.becomesActive ? `Профиль «${targetName}» включится: дубль включён.` : null,
+  ].filter((line): line is string => line !== null);
+}
+
 export interface MergeCounts {
   evenings: number;
   events: number;
@@ -165,6 +217,8 @@ export interface EveningLike {
   id: string;
   status: EveningStatus;
   scheduled_at: string;
+  /** Тренировочный вечер (миграция 023): день клуба не занимает. */
+  is_training?: boolean | null;
 }
 
 const UPCOMING: readonly EveningStatus[] = ['live', 'announced'];
@@ -191,13 +245,23 @@ export function splitEvenings<T extends EveningLike>(
   return { upcoming, past };
 }
 
-/** Московские даты неотменённых вечеров, кроме exceptId, — в один день клуба только один вечер. */
+/**
+ * Московские даты неотменённых вечеров, кроме exceptId, — в один день клуба только один вечер.
+ * Тренировки день не занимают (индекс evenings_one_per_club_day_idx их не видит, миграция 023).
+ */
 export function takenDates(evenings: readonly EveningLike[], exceptId?: string): Set<string> {
   return new Set(
     evenings
-      .filter((e) => e.status !== 'cancelled' && e.id !== exceptId)
+      .filter((e) => e.status !== 'cancelled' && e.id !== exceptId && e.is_training !== true)
       .map((e) => moscowDateKey(e.scheduled_at)),
   );
+}
+
+/** Тост после удаления тренировки: сколько гостей ушло вместе с ней. */
+export function trainingDeletedText(guestsDeleted: number): string {
+  return guestsDeleted > 0
+    ? `Тренировка удалена вместе с ${pluralWithNumber(guestsDeleted, ['гостем', 'гостями', 'гостями'])}`
+    : 'Тренировка удалена';
 }
 
 // --- Посты о правке вечера (notify evening_changed, миграция 008) ---------------------------

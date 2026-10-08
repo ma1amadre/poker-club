@@ -12,10 +12,13 @@
 //      анонс уже в группе, если админский вызов после сохранения не дошёл (миграция 008,
 //      notify/changes.ts);
 //   5) пост в день игры за gameday_hours_before до начала объявленного вечера: кто идёт, кто ещё
-//      не ответил и сколько сделано прогнозов (миграция 014, _shared/gameday.ts);
+//      не ответил (без болельщиков, миграция 024), «На кону» (кто в шаге от ачивки или рекорда, расклад сезона — stakesOf) и сколько
+//      сделано прогнозов (миграция 014, _shared/gameday.ts);
 //   6) напоминание о голосовании за 3 ч до его закрытия: сколько игроков вечера уже проголосовали
 //      (миграция 021, _shared/votingReminder.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
+// Тренировочные вечера (миграция 023) не выбирает ни один шаг: о них бот в группу не пишет, день клуба
+// они не занимают (claimPost их тоже не застолбит — страховка).
 // Без settings.group_chat_id ничего не постит, но вечер создаёт.
 // Сбой шага или всего вызова — сообщение админу в личку (_shared/alerts.ts, не чаще раза в 6 ч на
 // один и тот же сбой); ответ функции и строки errors от этого не меняются.
@@ -26,8 +29,10 @@ import { adminClient, describeError, errorResponse, json } from '../_shared/admi
 import { alertAdmin, type AlertKind } from '../_shared/alerts.ts';
 import {
   DEFAULT_FORMAT,
+  seatedIds,
   validateFormat,
   voteResults,
+  type EventPayload,
   type TournamentFormat,
 } from '../_shared/domain/index.ts';
 import { announceSnapshot } from '../_shared/announce.ts';
@@ -51,12 +56,16 @@ import { postAnnounceChange } from '../notify/changes.ts';
 import {
   EVENING_COLUMNS,
   fetchAll,
+  loadHistory,
   loadPlayerNames,
   loadSettings,
   postEveningResults,
   publishOnce,
   claimPost,
+  scoringConfig,
+  stakesOf,
   votesOf,
+  type ClubHistory,
   type EveningRow,
   type PostOutcome,
   type SettingsRow,
@@ -211,9 +220,11 @@ async function ensureUpcomingEvening(
   // «Слот свободен» — в любом статусе нет вечера ни в этот московский день, ни закреплённого за
   // ним (slot_date, миграция 010): отменённый админом вечер не воскрешаем, перенесённый на другое
   // время того же дня или на другой день не дублируем (см. holdsSlot).
+  // Тренировка (миграция 023) день клуба не держит: в день игры с тренировкой вечер всё равно нужен.
   const { data: existing, error } = await db
     .from('evenings')
     .select('scheduled_at, slot_date')
+    .eq('is_training', false)
     .or(slotFilter(gameMs));
   if (error) throw new Error(`evenings: ${describeError(error)}`);
   if (((existing ?? []) as SlotEvening[]).some((e) => holdsSlot(e, gameMs))) return;
@@ -242,6 +253,7 @@ async function postAnnouncements(
   const { data, error } = await db
     .from('evenings')
     .select(EVENING_COLUMNS)
+    .eq('is_training', false)
     .eq('status', 'announced')
     .is('announce_posted_at', null)
     .gt('scheduled_at', new Date(nowMs).toISOString())
@@ -292,6 +304,7 @@ async function postGamedayPosts(
   const { data, error } = await db
     .from('evenings')
     .select(EVENING_COLUMNS)
+    .eq('is_training', false)
     .eq('status', 'announced')
     .is('gameday_posted_at', null)
     .gt('scheduled_at', new Date(nowMs).toISOString())
@@ -307,13 +320,15 @@ async function postGamedayPosts(
     players ??= await fetchAll<GamedayPlayerRow>((from, to) =>
       db
         .from('players')
-        .select('id, display_name, username, tg_id, is_active, is_guest')
+        .select('id, display_name, username, tg_id, is_active, is_guest, is_spectator')
         .order('id')
         .range(from, to),
     );
     return players;
   };
 
+  // null — ещё не загружали; false — не загрузилась (в этом тике больше не пробуем).
+  let history: ClubHistory | false | null = null;
   for (const e of evenings) {
     try {
       const decision = decideGamedayPost(e, hours, nowMs);
@@ -350,16 +365,46 @@ async function postGamedayPosts(
         .select('winner_id, first_out_id')
         .eq('evening_id', e.id);
       if (pError) throw new Error(`predictions: ${describeError(pError)}`);
+      // Кто уже за столом (действующий вход): посаженный болельщик на этот вечер игрок (миграция 024).
+      const { data: joins, error: jError } = await db
+        .from('evening_events')
+        .select('type, payload, voided_at')
+        .eq('evening_id', e.id)
+        .eq('type', 'join')
+        .is('voided_at', null);
+      if (jError) throw new Error(`evening_events: ${describeError(jError)}`);
+      const seated = seatedIds(
+        (joins ?? []).map((j) => ({
+          type: 'join' as const,
+          payload: j.payload as EventPayload,
+          voided: j.voided_at !== null,
+        })),
+      );
       const banker = e.banker_id ? all.find((p) => p.id === e.banker_id) : undefined;
+      // «На кону» — по истории клуба (одна загрузка на шаг). Это дополнение: история не загрузилась
+      // или подсчёт упал — пост уходит без этих строк (ошибка в лог), а не застревает.
+      if (history === null) {
+        try {
+          history = await loadHistory(db, scoringConfig(s));
+        } catch (err) {
+          console.error(`«На кону»: история клуба не загрузилась — ${describeError(err)}`);
+          history = false;
+        }
+      }
+      const stakes = history
+        ? stakesOf(history, e, all, (rsvps ?? []) as GamedayRsvpRow[], s.season_best_n, seated)
+        : null;
       const post = gamedayPost({
         eveningId: e.id,
         scheduledAt: e.scheduled_at,
         location: e.location,
         bankerName: banker?.display_name ?? null,
-        roster: gamedayRoster(all, (rsvps ?? []) as GamedayRsvpRow[]),
+        roster: gamedayRoster(all, (rsvps ?? []) as GamedayRsvpRow[], seated),
         botUsername: s.bot_username,
         nowMs,
         predictionsMade: predictionsMade((predictions ?? []) as GamedayPredictionRow[]),
+        stakes,
+        names: Object.fromEntries(all.map((p) => [p.id, p.display_name])),
       });
       report.gameday[e.id] = await publishOnce(
         db,
@@ -383,6 +428,7 @@ async function backfillResults(db: Db, nowMs: number, report: TickState): Promis
   const { data, error } = await db
     .from('evenings')
     .select(EVENING_COLUMNS)
+    .eq('is_training', false)
     .in('status', ['finished', 'settled'])
     .is('results_posted_at', null)
     .not('finished_at', 'is', null)
@@ -409,6 +455,7 @@ async function postVotingResults(
   const { data, error } = await db
     .from('evenings')
     .select(EVENING_COLUMNS)
+    .eq('is_training', false)
     .in('status', ['finished', 'settled'])
     .is('voting_posted_at', null)
     .lte('voting_closes_at', new Date(nowMs).toISOString())
@@ -470,6 +517,7 @@ async function postVotingReminders(
   const { data, error } = await db
     .from('evenings')
     .select(EVENING_COLUMNS)
+    .eq('is_training', false)
     .in('status', ['finished', 'settled'])
     .is('voting_reminder_posted_at', null)
     .gt('voting_closes_at', nowIso)
@@ -577,6 +625,7 @@ async function postAnnounceChanges(
   const { data, error } = await db
     .from('evenings')
     .select(EVENING_COLUMNS)
+    .eq('is_training', false)
     .in('status', ['announced', 'cancelled'])
     .not('announce_posted_at', 'is', null)
     .gte('scheduled_at', new Date(nowMs - 7 * 24 * HOUR_MS).toISOString())

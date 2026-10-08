@@ -36,11 +36,12 @@ supabase/
 .env.production                  # облачные VITE_SUPABASE_URL / _PUBLISHABLE_KEY (публичные)
 src/
   main.tsx, app/*, pages/*, shared/{supabase,telegram,auth,api,ui,lib}/*
-  shared/lib/poker/*             # движок олл-ина: оценка рук, эквити, ауты, Web Worker (раздел «Олл-ин»)
+  shared/lib/poker/*             # олл-ин на клиенте: ауты, подписи, хуки шансов с Web Worker (раздел «Олл-ин»);
+                                 # сам движок (карты, оценка рук, эквити) — в домене: _shared/domain/poker/*
   vendor/materia/*               # вендоренная «Материя» (scripts/sync-materia.mjs)
   styles/fonts.css               # @font-face своих шрифтов (пишет scripts/fetch-fonts.mjs)
 public/fonts/                    # woff2 шрифтов «Материи» + OFL.txt (scripts/fetch-fonts.mjs)
-scripts/                         # node-скрипты разработки (check-merge-replay.mjs — слияние на seed;
+scripts/                         # node-скрипты разработки (check-merge-replay.mjs — оба вида слияния на seed;
                                  # sync-materia.mjs — вендоринг «Материи»; fetch-fonts.mjs — шрифты)
 scripts/voice/                   # генератор голоса табло (его запускает voice.yml в poker-club-ops):
                                  # manifest.mjs — манифест фраз (Node), generate.py — Silero → MP3 →
@@ -114,9 +115,19 @@ export type EventType =
   | 'timer_start' | 'timer_pause' | 'timer_resume'
   | 'level_next' | 'level_prev' | 'hand'
   | 'payment' | 'finish'
-  | 'showdown' | 'showdown_close';           // олл-ин на табло (миграция 017), на игру не влияет
+  | 'showdown' | 'showdown_close'            // олл-ин на табло (миграция 017), на игру не влияет
+  | 'amend' | 'time_adjust';                 // правка записи на месте, ±время уровня (миграция 022)
 
 export const MAX_ENTRY_STACKS = 10;
+export const AMENDABLE_EVENT_TYPES = ['join', 'rebuy', 'bust'];         // что исправляет amend (022)
+export type AmendPayload =
+  | { eventId: number; stacks: number }      // join, rebuy: новая кратность 1..10 (хранится и 1)
+  | { eventId: number; by: PlayerId[] };     // bust: новые выбившие
+export const MAX_PAUSE_MINUTES = 120;
+export const PAUSE_MINUTES_OPTIONS = [5, 10, 15, 20, 30]; // длительности перерыва на пульте (фразы озвучены)
+export type PausePayload = { minutes?: number };          // timer_pause; нет поля — пауза без срока
+export const MAX_TIME_ADJUST_SECONDS = 3600;
+export type TimeAdjustPayload = { seconds: number };      // time_adjust: ± к остатку уровня
 
 export type EventPayload =
   | { playerId: PlayerId; stacks?: number }                  // join, rebuy; stacks — кратность k (1..10, нет = 1)
@@ -124,7 +135,8 @@ export type EventPayload =
   | { playerId: PlayerId; amountRub: number; note?: string } // payment: + игрок→банкир, − банкир→игрок
   | ShowdownPayload                                          // showdown
   | { showdownId: string }                                   // showdown_close
-  | Record<string, never>;                                   // timer_*, level_*, hand, finish
+  | AmendPayload | PausePayload | TimeAdjustPayload           // amend, timer_pause, time_adjust (022)
+  | Record<string, never>;                                   // timer_start, timer_resume, level_*, hand, finish
 
 export type CardCode = string; // 'As', 'Td', '9h': ранг 2–9TJQKA, масть s h d c
 export type ShowdownHand = { playerId: PlayerId; cards: [CardCode, CardCode] };
@@ -194,6 +206,44 @@ export interface EveningEvent {
   ачивки олл-ин не влияет: `apply` трогает только `state.showdown` (`showdown.test.ts` сверяет replay,
   `computeMoney` и `summarize` одного журнала с олл-инами и без них — отменёнными, с теми же id). Отмена (void)
   — как у всех событий: отменить последнюю правку — раздача возвращается к предыдущей версии.
+- **Правка записи на месте** (аудит 07.10.2026, миграция 022, `amend.test.ts`): `amend {eventId, stacks | by}` исправляет
+  у более ранней записи вечера кратность (`join`/`rebuy`) или выбивших (`bust`) и применяется **в позиции исходной
+  записи**, а не в своей: исправленная запись проходит `validate` с новым значением там, где стоит, — порядок мест
+  (`finalBustEventId` — id исходной записи), ребаи и уровни после неё не сдвигаются (раньше «отменить и записать
+  заново» ставило вылет в конец журнала, и ребай после него становился «не принят»). Поправки собираются заранее
+  (`collectAmends`); каждая проверяется в позиции исходной записи, в силе — **последняя принятая** (отмена её
+  возвращает предыдущую или исходное значение); ни одной принятой — запись как была. Отказы поправки (её id в
+  `errors`): форма (`readAmend`: id — целое > 0, ровно одно из `stacks` 1..10 / `by` — список строк), записи нет,
+  она не раньше поправки, отменена, не вход/ребай/вылет, значение не к той записи, исправленная запись не проходит
+  правила («Правка не подходит: выбить может только игрок, который сейчас в игре» и т. п.); исходная запись не
+  принята по другой причине (сломанное время) — «Правка: исправляемая запись не принята журналом». Поправка может и
+  починить непринятую запись (вылет с выбывшим выбившим). Поправка законна и после `finish` (правка закрытого вечера
+  — админ): места и завершение не меняются, меняются нокауты и деньги. Кратность и выбившие не участвуют ни в одном
+  правиле приёма записей, поэтому поправка **принятой** записи не меняет приём других записей журнала. Починка
+  непринятой — меняет: запись вступает в силу в своей позиции, и записи после неё журнал может принять иначе
+  (повторно записанный вылет того же игрока — «Игрок уже выбыл», ребай вслед — вступает в силу, «Игра окончена» —
+  «не принято», места и деньги сдвигаются). replay такие поправки читает, как раньше (старые журналы не меняются), а
+  пульт их не пишет: `canAmend` отказывает, если правка задевает другие записи (`amendImpact`, ревью 08.10.2026).
+  `ReplayLog.applied` несёт
+  исправленную запись на её месте **с payload в силе** (summary, «Ты за столом», табло видят исправленное), принятые
+  поправки — в своих позициях; `ReplayLog.amended: Map<id записи, id поправки в силе>`. `canApply` для `amend`
+  проверяет только форму — целиком `canAmend` (`amend.ts`). Тесты: сценарий аудита (ребай после исправленного
+  вылета принят, нокаут у нового выбившего, деньги и места те же), отмена правки, цепочка правок, все отказы, правка
+  после финиша (инвариант призовые = взносы), summarize, 2000 сгенерированных вечеров с правками (в т. ч. неверными
+  и отменёнными): replay ≡ журнал «как будто так и записали» (поправки вписаны в исходные записи), без правок журнал
+  принимает и отклоняет то же, инвариант денег и независимый пересчёт взносов, summarize того же итога.
+- **Пауза на N минут** (миграция 022, `clock.test.ts`): `timer_pause {minutes?}` — целое 1..`MAX_PAUSE_MINUTES` (120),
+  нет поля — пауза без срока (все паузы до 022). Неверное — запись не принята («Пауза: длительность — целое число
+  минут от 1 до 120»), часы идут. Принятая пауза кладёт `timer.pause = {eventId, at, minutes}`; `timer_resume`,
+  `timer_start` и `finish` её снимают. `pauseLeftMs(state, nowMs)` — до конца перерыва (меньше нуля — срок вышел),
+  null — не пауза, пауза без срока или вечер завершён. **Таймер сам не продолжает**: по истечении экраны зовут
+  продолжить, продолжает `timer_resume` банкира.
+- **Поправка остатка уровня ±1 мин** (миграция 022, `clock.test.ts`): `time_adjust {seconds}` — целое, не 0, по модулю до
+  `MAX_TIME_ADJUST_SECONDS` (3600); прибавляет к остатку текущего уровня (`levelElapsedMs −= seconds·1000`), игровое
+  время (`totalElapsedMs`) не трогает. Только уровень по времени, не последний («Последний уровень сам не кончается»),
+  таймер запущен (на паузе — можно), вечер не завершён. Не в минус: остаток после поправки должен быть больше нуля
+  (ноль — это переход уровня: «Убавить нельзя: уровень бы закончился — для этого есть «Уровень вперёд»»); не
+  длиннее уровня («Прибавить нельзя: остаток стал бы больше длины уровня»). Окно ребаев сдвигается вместе с уровнем.
 - Ошибочные события (ребай живого, bust мёртвого, join после закрытия) не ломают replay: они
   пропускаются и попадают в `state.errors: {eventId, message}[]`. `canApply(format, state, type, payload, nowMs)`
   возвращает текст ошибки или null — фронт проверяет перед отправкой.
@@ -210,6 +260,7 @@ export interface PlayerState {
   alive: boolean; busts: number; finalBustEventId: number | null; place: number | null;
   kos: number; koVictims: PlayerId[]; bustLevel: number | null;
 }
+export interface PauseState { eventId: number; at: string; minutes: number | null } // 022
 export interface TimerState {
   status: 'not_started' | 'running' | 'paused';
   levelIndex: number;          // 0-based
@@ -217,6 +268,7 @@ export interface TimerState {
   levelRemainingMs: number | null; // null для не-time триггеров
   handsInLevel: number; bustsInLevel: number;
   totalElapsedMs: number;      // чистое игровое время без пауз
+  pause: PauseState | null;    // текущая пауза (status 'paused', вечер не завершён), миграция 022
 }
 export interface EveningState {
   players: Record<PlayerId, PlayerState>;
@@ -326,7 +378,12 @@ export interface EveningState {
   порядок ключей — порядок `FIXED_TEXTS` и подгрузки табло), «Минута до повышения блайндов.», «Последний уровень
   ребаев.», «Пять минут до закрытия ребаев.» (обе — аудит 07.10.2026), «Ребаи закрыты.», «Пауза.», «Продолжаем.»,
   «Нокаут!» (назвать некого), «Игра окончена!» (победителя назвать нельзя); `Announcement` — `voice_on`, `start`,
-  `level`, `minute`, `rebuys_last_level`, `rebuys_soon`, `rebuys_closed`, `pause`, `resume`, `knockout`, `winner`; `knockoutPhrase(victim, killers)` — «Нокаут! Вылетает Эрдни. Выбил Саша.» / «… Выбили Саша и Дима.» /
+  `level`, `minute`, `rebuys_last_level`, `rebuys_soon`, `rebuys_closed`, `pause`, `resume`, `knockout`, `winner`;
+  перерыв (миграция 022): `PHRASES.breakMinute` «Минута до конца перерыва.», `breakPhrase(n)` «Перерыв десять минут.»
+  (`minutesWords(n)` — минуты с согласованием: «одна минута», «две минуты», «двадцать одна минута»), `BREAK_TEXTS` —
+  фразы для `PAUSE_MINUTES_OPTIONS` (5/10/15/20/30), входят в `FIXED_TEXTS` (их подхватывают манифест генератора и
+  предзагрузка табло; на seed манифест — 98 фраз вместо 92); объявления `break {minutes}` (варианты: «Перерыв N
+  минут.», запасной — «Пауза.»: длительность не из пульта не озвучена) и `break_minute`; `knockoutPhrase(victim, killers)` — «Нокаут! Вылетает Эрдни. Выбил Саша.» / «… Выбили Саша и Дима.» /
   «… Выбили Саша, Дима и Женя.» / без выбивших «Нокаут! Вылетает Эрдни.» / без жертвы «Нокаут! Выбил Саша.»;
   `winnerPhrase` — «Победитель вечера — Женя!». Куски для сборки (`SEGMENTS`, `knockoutSegments`): «Нокаут!
   Вылетает», «Выбил», «Выбили», «и», «Победитель вечера —» и имя отдельным клипом.
@@ -347,22 +404,90 @@ export interface EveningState {
   `SHOWDOWN_RIVER_HOLD_MS` (2 мин) с последней правки, на любой улице — не дольше `SHOWDOWN_IDLE_HIDE_MS` (10 мин)
   без правок; время серверное, поэтому табло, пульт и экраны игроков прячут раздачу одновременно. Типы
   олл-ина (`SHOWDOWN_EVENT_TYPES`) — в `types.ts`.
+- `amend.ts` (миграция 022) — помощники пульта для правки на месте: `amendField(ev)` → `'stacks'` (вход, ребай) |
+  `'by'` (вылет) | null; `currentAmendValue(format, events, eventId, nowMs)` → `{stacks}` | `{by}` — значение записи с
+  правкой в силе; `amendDraft(eventId, value)` → `EventDraft` `amend`; `canAmend(format, events, payload, nowMs)` →
+  текст отказа или null: форма, запись есть и не отменена, исправляется, значение не то же самое («Правка ничего не
+  меняет»; порядок выбивших не важен), исправленная запись проходит правила (replay журнала с поправкой в хвосте —
+  тексты те же, что даст replay) и **не задевает другие записи** — иначе `AMEND_IMPACT_ERROR` («Правка заденет другие
+  записи журнала — так исправить нельзя. Отмени непринятую запись и, если нужно, запиши её заново»).
+  `amendImpact(format, events, payload, nowMs)` → `{revived, rejected: {eventId, message}[], resultChanged}` — что
+  правка заденет, кроме самой записи: какие записи журнал примет / перестанет принимать, перестанет ли завершённый
+  вечер быть завершённым или сдвинутся ли в нём места; `hasAmendImpact`. У принятой записи всегда пусто (тест: 600
+  сгенерированных вечеров с непринятыми вылетами и ребаями вслед, починки и отказы; пропущенная правка не меняет
+  приём других записей, места и завершение, инвариант денег, summarize не падает).
+- `poker/` — движок олл-ина (истории клуба, аудит 07.10.2026: перенесён из `src/shared/lib/poker`, чтобы сюжет
+  вечера в посте итогов считал те же шансы, что табло): `cards.ts`, `evaluator.ts`, `equity.ts`, `pokermath.ts`,
+  `shares.ts` (`roundShares` — целые проценты, как на табло) и их тесты; описание движка — раздел «Олл-ин», «Движок».
+  Без зависимостей и `Date.now`/`Math.random` (Монте-Карло — `mulberry32` с seed из карт), импорты с `.ts`. В
+  `index.ts` домена не реэкспортируется (имена `Street`, `Card` не смешиваются с остальными) — импорт по пути. Во
+  фронте `src/shared/lib/poker/{cards,evaluator,equity,pokermath}.ts` — реэкспорт отсюда (прежние пути импорта).
+- `allins.ts` («Олл-ины вечера», истории клуба): `eveningAllIns(format, events, nowMs?)` / `allInsFromApplied(applied)`
+  → `AllIn[]` — все раздачи вечера из **принятых** replay событий `showdown` (отклонённые и отменённые — нет), в
+  порядке первой версии: `{showdownId, openedEventId, openedAt, updatedAt, hands, board, boardSizes, winners}`. Руки и
+  стол — последней версии (опечатку в карте банкир правит новой версией); `boardSizes` — размеры стола (0/3/4/5), с
+  которыми раздачу показывали, не больше итогового (ривер, снятый правкой, не в счёт; олл-ин с флопа — без улицы «до
+  флопа»); `winners` — `riverWinners(hands, board)` (лучшая рука на полном столе, делёж — все; до ривера — null;
+  ею же пользуется `riverOutcome` пульта). `allInStreets(allIn)` — улицы с префиксом итогового стола и ключом движка;
+  `allInShares(allIn, street, equity?)` — доли банка, целые % (`roundShares`). **«Победа с N %»** —
+  `swingFromShares(allIn, sharesBySize)`: победитель один, на какой-то улице до ривера его доля меньше, чем у кого-то
+  из соперников, и не больше `ALLIN_SWING_MAX_PCT` (35); N — наименьшая такая доля (равные — ранняя улица), фаворит —
+  у кого на той улице доля больше всех (ничья — все), `favoritePct`. `allInSwing(allIn, equity?)` — то же со
+  счётом движка: до флопа полный Монте-Карло (~0,1 с на руку) только там, где быстрая прикидка (`ALLIN_QUICK_SAMPLES`
+  = 3 000 раздач) оставляет победителю не больше 35 + `ALLIN_QUICK_MARGIN_PCT` (8, около 8 погрешностей прикидки);
+  ответ совпадает со `swingFromShares` по всем улицам (тест: 300 случайных раздач с флопа и тёрна и 24 — с улицей до
+  флопа). `allInSwings`, `bestSwing` — по всем раздачам вечера. На деньги, места и очки олл-ин по-прежнему не влияет.
+- `story.ts` («Сюжет вечера»): `eveningStory({summary, allIns, excluded, club?, equity?, swings?, forPost?})` →
+  `StoryItem[]`, до `STORY_MAX_ITEMS` (4) по важности: `swing` (самая невероятная «победа с N %» вечера) → `revenge`
+  (игрок выбил свою Немезиду — звание `titles` по вечерам ДО этого) → `record` (рекорд игрока, установленный вечером:
+  `eveningClubNews(...).records`, как в «Жизни клуба» — повторённый рекорд вечера не новость) → `season_leader`
+  (первое место сезона сменилось: `eveningClubNews(...).season.leaders`, с `leadersBefore`) → `phoenix` (первый вылет
+  вечера — и победа) → `comeback` (победа после ребаев; `achievement` — за неё выдан «Камбэк»: не гость и ребаев не
+  меньше `comebackRebuys`; «феникс» её заменяет) → рекорд вечера (фонд, длина) → повторённый рекорд игрока. Без
+  `club` (история клуба) — только то, что видно из журнала вечера (`swing`, `phoenix`, `comeback`): так считает
+  табло. `swings` — готовые «победы с N %» (клиент считает их воркером, `useAllInSwings`), иначе — `allInSwing` с
+  `equity`. `forPost` — для поста итогов: без того, что пост говорит другими блоками (`toldElsewhereInPost`: рекорды
+  и лидер сезона — «Жизнь клуба», «Камбэк» с ачивкой — «Новые ачивки»), отсев до предела строк. Тексты: экраны —
+  `storyLine` (`src/shared/lib/stories.ts`), пост — `storyText`/`storyLines` (`_shared/messages.ts`): о людях в
+  настоящем времени и без рода, имена в именительном («Месть Немезиде: Лёша выбивает игрока Дима», «Феникс вечера —
+  Лёша: первый вылет и победа», «Лёша забирает олл-ин с 13 % до флопа; фаворит — Саша, 87 %», ноль — «меньше 1 %»).
+- `stakes.ts` («На кону»): `eveningStakes(input, {eveningDate, players, buyInRub})` → `{items, season}` перед
+  объявленным вечером (`input.summaries` — только прошедшие вечера; `players` — постоянные игроки с ответом на анонс:
+  кто может прийти — все, кроме «не иду» и болельщиков на этот вечер — `StakesPlayer.spectator`, миграция 024: у них
+  только шаг к «Оракулу», в «идут» для рекорда фонда они не считаются). Шаги по правилам `computeAchievements`/`recordsTable`: `win_step`
+  (две победы подряд — третья даст «Хет-трик», серии не перекрываются, как у ачивки; и/или рекорд клуба по серии —
+  `record: 'new' | 'equal'`, только если серия после победы от трёх и не короче рекорда: первая серия из двух побед
+  «рекордом» не объявляется), `enemy_step` (4 нокаута одного соперника, оба могут прийти), `first_blood` (в клубе ещё
+  не было нокаута), `pool_record` («иду» × взнос уже не меньше рекорда фонда), `oracle_step` (два угаданных
+  победителя подряд — у всех переданных игроков: прогноз делают и не играющие); порядок: рекорд серии → «Хет-трик» →
+  «Заклятый враг» → «Первая кровь» → фонд → «Оракул», внутри — по id. `season` — сезон вечера по его дате:
+  `first` (вечеров в сезоне ещё не было), `leaders` (первое место, ничья — все), `chasers` (следующее место и
+  отставание `gap`), `rows` (таблица до вечера — экран показывает своё место). Тексты: экраны — `stakeLine`,
+  `seasonStakeLines`; пост дня игры — `stakeText`, `seasonStakeText`, `stakesLines` (имена ачивок в именительном:
+  «в одной победе от ачивки «Хет-трик»», «(цель — Лёша)»).
+- `spectators.ts` (болельщик, миграция 024): `spectatesEvening({spectator, rsvp?, seated?})` — болельщик на этот вечер:
+  флаг `players.is_spectator = true`, и нет ни «иду»/«под вопросом», ни места за столом; `seatedIds(events)` — кто за
+  столом (действующий `join`, как `is_participant` в SQL; принял ли его replay — не важно). Правило — чтение: флаг от
+  ответа или посадки не меняется, отмена ответа/входа возвращает всё как было. Одно правило на «Без ответа» главной
+  (`groupRsvps`), пост дня игры (`gamedayRoster`), кандидатов прогноза (`predictionCandidates`), посадку
+  (`seatCandidates`) и «На кону» (клиент `useEveningStakes`, сервер `stakesOf`).
 - `index.ts` — реэкспорт всего.
 
 ## База данных (public)
 
 | Таблица | Колонки |
 |---|---|
-| `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at`, `spoken_name text` (имя для озвучки на табло: 1–50 символов, русские буквы, пробел, дефис, апостроф и «+» только перед гласной, хотя бы одна буква, без пробелов по краям и двойных — constraint `players_spoken_name_shape`; null — голос берёт `display_name`, если оно кириллическое; миграция 016) |
-| `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `gameday_hours_before int default 5` (1–48: за сколько часов до начала пост в день игры; миграция 014), `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at` |
+| `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at`, `spoken_name text` (имя для озвучки на табло: 1–50 символов, русские буквы, пробел, дефис, апостроф и «+» только перед гласной, хотя бы одна буква, без пробелов по краям и двойных — constraint `players_spoken_name_shape`; null — голос берёт `display_name`, если оно кириллическое; миграция 016), `is_spectator bool` (болельщик, миграция 024: true — «слежу, не играю»: не в «Без ответа», без упоминания в посте дня игры, не кандидат прогноза и не «может прийти» у «На кону», но видит всё и делает прогнозы; на вечер с «иду»/«под вопросом» или входом за стол — игрок, `spectatesEvening` домена; false — играет; null — ещё не выбирал, считается игроком, главная задаёт вопрос «Играешь или следишь?». Свой меняет `set_my_spectator`, чужой — админ формой «Игроки». Backfill 024: сыгравшим настоящий вечер — false; seed.sql повторяет это после заливки) |
+| `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `gameday_hours_before int default 5` (1–48: за сколько часов до начала пост в день игры; миграция 014), `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at`, `club_board_token text not null` (код постоянной ссылки «табло клуба» `/tv/<код>`: 12 hex — 48 случайных бит, `substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)`, check `settings_club_board_token_shape`; читают все участники — его показывают «Вывести на ТВ» и админка; меняет только `rotate_club_board_token`, миграция 023) |
 | `formats` | `id uuid pk`, `name text`, `config jsonb` (TournamentFormat), `is_archived bool default false`, `created_at` |
-| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `gameday_posted_at` (пост в день игры ушёл или не понадобился; пишет только cron-tick; перенос на другой московский день снимает отметку — триггер `evenings_reset_gameday_post`, before update of `scheduled_at`, любой путь записи, включая upsert формы админки; перенос в пределах дня не трогает; миграция 014), `results_posted_at`, `voting_posted_at`, `voting_reminder_posted_at` (напоминание о голосовании ушло или не понадобилось; пишет только cron-tick; смена `voting_closes_at` — отмена finish, новое завершение, правка админом — снимает отметку триггером `evenings_reset_voting_reminder`, before update of `voting_closes_at`, то же значение не трогает; миграция 021), `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `scoring jsonb` (снимок правил очков `{koPoints, winBonus}` из settings в момент завершения; есть ровно у `finished`/`settled` — constraint `evenings_scoring_when_closed`, форма — `evenings_scoring_shape`; ставит и снимает триггер `evenings_scoring_snapshot`, снаружи не пишется; миграция 013), `created_by`, `created_at` |
+| `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `gameday_posted_at` (пост в день игры ушёл или не понадобился; пишет только cron-tick; перенос на другой московский день снимает отметку — триггер `evenings_reset_gameday_post`, before update of `scheduled_at`, любой путь записи, включая upsert формы админки; перенос в пределах дня не трогает; миграция 014), `results_posted_at`, `voting_posted_at`, `voting_reminder_posted_at` (напоминание о голосовании ушло или не понадобилось; пишет только cron-tick; смена `voting_closes_at` — отмена finish, новое завершение, правка админом — снимает отметку триггером `evenings_reset_voting_reminder`, before update of `voting_closes_at`, то же значение не трогает; миграция 021), `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `is_training bool not null default false` (тренировочный вечер, миграция 023: ставится только при создании — триггер `evenings_training_guard` отказывает 22023 на смену пометки в любую сторону; у тренировки `voting_closes_at` всегда null — тот же триггер снимает его при finish; день клуба она не занимает — см. индекс ниже; удаляется целиком `delete_training_evening`), `scoring jsonb` (снимок правил очков `{koPoints, winBonus}` из settings в момент завершения; есть ровно у `finished`/`settled` — constraint `evenings_scoring_when_closed`, форма — `evenings_scoring_shape`; ставит и снимает триггер `evenings_scoring_snapshot`, снаружи не пишется; миграция 013), `created_by`, `created_at` |
 | `evening_events` | `id bigserial pk`, `evening_id uuid → evenings on delete cascade`, `type text check (EventType)`, `payload jsonb default '{}'`, `at timestamptz default now()`, `created_by uuid → players`, `voided_at timestamptz`, `voided_by uuid → players`, `client_id uuid` (ключ повтора, unique `(evening_id, client_id)`, миграция 007) |
 | `rsvps` | pk `(evening_id, player_id)`, `status text check in ('yes','no','maybe')`, `updated_at` |
 | `predictions` | pk `(evening_id, player_id)`, `winner_id uuid → players`, `first_out_id uuid → players`, `updated_at` |
 | `votes` | pk `(evening_id, voter_id, category)`, `category text check in ('hand','bluff','badbeat')`, `nominee_id uuid → players`, `caption text check (char_length <= 200)`, `photo_path text`, `created_at`; `check (voter_id <> nominee_id)` |
 | `season_rules` | `season_key text pk` (`'2026-Q3'`, квартал по Москве, как `seasonKey` домена), `best_n int ≥ 1`, `frozen_at timestamptz default now()` — «лучшие N» закрытых сезонов; пишет только триггер `settings_freeze_season_best_n` (и backfill 013); `authenticated` — select (RLS: участник клуба), `service_role` — select/insert/update/delete. Миграция 013 |
 | `admin_alerts` | `key text pk` (1–200 символов: вид сбоя или `telegram:<код>`), `last_sent_at timestamptz not null`, `suppressed_count int ≥ 0 default 0`, `updated_at timestamptz default now()` — журнал троттлинга оповещений админа о сбоях (`_shared/alerts.ts`, раздел Edge Functions). RLS без политик, права только у `service_role` (select/insert/update/delete); клиенту не виден. Миграция 012 |
+| `board_presence` | `evening_id uuid pk → evenings on delete cascade`, `seen_at timestamptz not null` (последняя отметка табло, показывающего этот вечер — по ссылке вечера или табло клуба), `voice_at timestamptz` (последняя отметка с включённым голосом) — «табло на связи» для проверки перед игрой. Пишет только `board_ping` (anon, security definer), не чаще раза в 5 с; ни адреса, ни устройства. RLS: select — участник клуба; `authenticated` — select, `service_role` — select/insert/update/delete, `anon` — ничего. Не в публикации Realtime (отметка раз в 20 с будила бы все экраны). Миграция 023 |
 | `cron_heartbeat` | одна строка: `id int pk default 1 check (id = 1)`, `last_run_at timestamptz` (тик `cron-tick` отработал), `last_ok_at timestamptz` (отработал без единой ошибки), `updated_at` — сторож будильника. Пишет только `mark_cron_tick` (service_role), читает `cron_last_tick` (anon). RLS без политик, права только у `service_role` (select/insert/update/delete). Миграция 021 |
 | `voice_clips` | pk `(voice, text_hash)`; `voice text` (`^[a-z0-9][a-z0-9_.-]{0,63}$`, сейчас `silero-v5_5-xenia`), `text_hash text` (64 hex = SHA-256 от «voice + перевод строки + text» в UTF-8 — constraint `voice_clips_hash_matches`), `text text` (что озвучено: 1–300 символов, NFC, без пробелов по краям, двойных и переводов строк — `voice_clips_text_normalized`), `audio bytea` (1 байт – 256 КБ), `mime text default 'audio/mpeg'` (только MP3), `duration_ms int` (1–30 000), `created_at` — клипы голоса табло (MP3 моно). Пишет генератор (`scripts/voice/generate.py`, запуск — `voice.yml` в `poker-club-ops`) ролью `postgres` (владелец таблицы, RLS его не касается); RLS без политик, у `anon`/`authenticated` прав нет, `service_role` — select/insert/update/delete; табло читает через `board_voice_clips`. Миграция 016 |
 
@@ -397,7 +522,8 @@ export interface EveningState {
 тест сверяет итог обеих) как `default_format_id`. Повторный прогон ничего не меняет.
 
 Индексы-ограничения: `evenings_one_per_club_day_idx` — unique по `((scheduled_at at time zone 'Europe/Moscow')::date)`
-`where status <> 'cancelled'`: не больше одного неотменённого вечера на московскую дату (вставка второго → 23505). Миграция 006.
+`where status <> 'cancelled' and not is_training`: не больше одного неотменённого настоящего вечера на московскую дату
+(вставка второго → 23505). Миграция 006; тренировки — вне индекса с 023 (тренировка в день игры законна).
 
 Хелперы (security definer, stable): `current_player_id() → uuid` (по `auth.uid()`, только `is_active`),
 `is_admin() → bool`, `is_banker(evening uuid) → bool`, `is_participant(evening uuid, player uuid) → bool`
@@ -459,6 +585,24 @@ export interface EveningState {
   Клиент — `addGuest(…, paidRub)`, `useAddGuest({name, stacks, paidRub})`, намерение `guestRetryIntent(…, paidRub)`
   (без оплаты строка та же, что до 020). Гранты всех трёх — `authenticated`, `service_role`; служебные `private.*` —
   revoke у `public`/`anon`/`authenticated`.
+- **Правка записи на месте, перерыв, ±время уровня** (миграция 022, `supabase/tests/022_amend_pause_time_adjust.sql`):
+  `add_event` (тело из 017) принимает:
+  `amend` — `{eventId, stacks}` или `{eventId, by}` (ровно одно значение; лишний ключ — 22023). `eventId` — число
+  (`private.json_event_id`: целое ≥ 1), запись **этого вечера** (иначе 22023 «Правка: записи № N нет в журнале этого
+  вечера»), не отменена (P0001 «Правка: запись отменена — исправлять нечего»), типа join/rebuy/bust (22023). `stacks`
+  — только у входа и ребая (`json_entry_stacks`, 1..10, **хранится и 1**), `by` — только у вылета: разбор как у
+  bust (`private.json_bust_by(by, жертва исходной записи)`: список, ≤ 10, без повторов и самой жертвы, игроки
+  существуют; нормализованная копия — uuid в нижнем регистре, порядок сохранён). Нормализованная копия —
+  `{eventId, stacks}` / `{eventId, by}`. Права — как у всех записей (`lock_evening_for_write`: банкир вечера или админ,
+  после завершения — только админ); правка закрытого расчёта открывает его (триггер 008); отмена — `void_event`.
+  `timer_pause` — `{}` или `{minutes}` (целое 1..120, `3.0` → 3); `time_adjust` — `{seconds}` (целое, не 0, по
+  модулю ≤ 3600); границы времени (уровень по времени, не последний, остаток > 0 и ≤ длины) — правило replay.
+  Ключ повтора (как раньше — до блокировки вечера) сверяет и `eventId`, `by` правки (списком, регистр не важен, порядок
+  важен), `minutes`, `seconds`: то же намерение с другим значением — 22023 «Ключ повтора уже занят…». Служебная пауза
+  перед `finish` по-прежнему `{}`; паузы с минутами автомат статуса таймера считает как обычные. `add_events` (020)
+  новые типы не принимает. `private.json_event_id`/`json_bust_by` — revoke у `public`/`anon`/`authenticated`.
+  `board_state` не менялся: правки и поправки времени уходят на табло как все события. Слияние гостя переносит игрока и
+  в `by` правки (`payload_replace_player`/`payload_mentions_player` из 017 смотрят на `by` любого события).
 - **Правка журнала открывает закрытый расчёт** (миграция 008): любой новый `evening_events` (add_event любого
   типа, в том числе платёж банкира и join из `add_guest`) или отмена события (`voided_at` null → не null) у вечера
   в `settled` в той же транзакции возвращает его в `finished`: `settled_at = null`, `settle_reopened_at = now()`.
@@ -546,10 +690,59 @@ export interface EveningState {
   живому токену (то же правило) — `[{hash, mime, duration_ms, audio}]` найденных клипов `voice_clips` этого голоса
   (`audio` — base64 без переводов строк); не озвученных в ответе нет; токен погас — null; больше 100 хешей — 22023.
   Клиент — `fetchVoiceClips` в `src/shared/api/board.ts` (пачками по 40).
+- **Табло клуба, «табло на связи», тренировка** (миграция 023, `supabase/tests/023_club_board_pregame_training.sql`):
+  - `board_state` пересоздан на `private.board_payload(evening uuid)` (тело из 016; правило срока — то же
+    `board_evening_id`); в `evening` добавлено `is_training`. Старые ссылки вечеров работают как раньше.
+  - `club_board_state(p_code text) → jsonb` — **доступен anon**: код не тот (`private.club_board_token_ok`) — null;
+    иначе `{board, next_at, schedule: {weekday, time: 'HH:MM'}, server_now}`. `board` — ответ как у `board_state`
+    для вечера, который сейчас важен (`private.club_board_evening_id()`), или null. Выбор по ступеням: идущий
+    настоящий → идущая тренировка → итог настоящего (finished/settled, до 6 ч после `finished_at`) → сегодняшний (по
+    Москве) анонс настоящего → итог тренировки → сегодняшний анонс тренировки; внутри ступени — последний начатый /
+    последний завершённый / самый ранний анонс. Идущая тренировка важнее анонса и итога настоящего вечера (её
+    сейчас и прогоняют), но не идущего вечера. `next_at` — ближайший будущий анонс настоящего вечера.
+  - `club_board_voice_clips(p_code text, p_voice text, p_hashes text[]) → jsonb` — **доступен anon**: как
+    `board_voice_clips`, но по коду клуба и даже между вечерами (проверка звука «Голос включён.»); код не тот — null;
+    больше 100 хешей — 22023.
+  - `board_ping(p_token text, p_voice boolean default false) → boolean` — **доступен anon**: токен вечера (uuid,
+    правило срока `board_state`) или код клуба (вечер, который табло клуба сейчас показывает); upsert
+    `board_presence` (`seen_at`, при `p_voice` — и `voice_at`), не чаще раза в 5 с; true — отметка относится к вечеру,
+    false — токен чужой, null, длиннее 64 или между вечерами.
+  - `voice_clips_present(p_voice text, p_hashes text[]) → text[]` — участник клуба (`require_player`): какие хеши
+    уже озвучены, без звука; до 300 за запрос (22023).
+  - `rotate_club_board_token() → text` — только админ (42501): новый код; старая ссылка гаснет сразу.
+  - `delete_training_evening(p_evening uuid) → jsonb` — только админ (42501); вечера нет — 22023; не тренировка —
+    P0001 «Удалить можно только тренировочный вечер…». Под блокировкой вечера удаляет его (журнал, ответы, прогнозы,
+    голоса, отметки табло — cascade) и гостей, которых завели на нём: `is_guest`, без `tg_id` и входа, созданы не
+    раньше вечера и после удаления не упомянуты нигде (`private.player_references`). Ответ `{evening, guestsDeleted}`.
+  - `private.voice_manifest_input()`: `last_played_at` — без тренировок; форматы объявленных и идущих тренировок
+    в манифесте остаются (их уровни озвучатся).
+  Гранты: `club_board_state`, `club_board_voice_clips`, `board_ping` — anon, authenticated, service_role;
+  `voice_clips_present`, `rotate_club_board_token`, `delete_training_evening` — authenticated, service_role; служебные
+  `private.*` — revoke у public/anon/authenticated. Все — security definer с пустым `search_path`.
 - `set_my_spoken_name(p_name text) → text` — своё имя для озвучки (миграция 016): нормализация как
   `normalizeSpokenName` (типографские апострофы → «'», пробелы схлопываются), пустое — сброс в null, иначе
   проверки и тексты 22023 как у `spokenNameError` домена; возвращает сохранённое. Клиент — `setMySpokenName` /
   `useSetMySpokenName`. Чужое имя для озвучки пишет только админ — формой «Игроки» (upsert `players` под RLS).
+- **Болельщик и слияние гостя с гостем** (миграция 024, `supabase/tests/024_spectator_merge_guests.sql`):
+  - `set_my_spectator(p_spectator boolean) → boolean` — участник клуба (`require_player`, отключённый — 42501): свой
+    `is_spectator`; null — 22023 «Выбери: играешь или следишь за игрой». Клиент — `setMySpectator` /
+    `useSetMySpectator` (обновляет игрока в контексте входа, справочник и историю).
+  - `merge_guests(p_guest uuid, p_target uuid) → jsonb` / `merge_guests_preview(p_guest, p_target) → jsonb` — только
+    админ (42501 «Объединять игроков может только админ»): дубль гостя `p_guest` → профиль `p_target`, оба без
+    Telegram (`tg_id` и `auth_user_id` пусты; иначе 22023 — у профиля с Telegram совет «Привязать к Telegram»), одно и
+    то же, null, нет профиля — 22023. Перенос, препятствия (P0001 «Объединить профиль «…» с профилем «…» нельзя: …»;
+    «оба в журнале» — с советом отменить лишние записи, если одного человека посадили дважды) и проверка остатков
+    ссылок (XX000) — те же, что у `merge_players`. Флаги профиля после слияния: `is_guest` — гость, только если гостями
+    были оба (решение админа «постоянный» не теряется); `is_active` — включён, если включён хоть один; `spoken_name` и
+    `is_spectator` — свои, а нет своих — дубля; имя (`display_name`) — своё. Отчёт — как у `merge_players` плюс
+    `becomesPermanent`, `becomesActive`. Клиент — `mergeGuestsPreview`/`mergeGuests`, хуки `useMergePreview(…, kind)`
+    и `useMergePlayers(kind)` с `MergeKind = 'telegram' | 'guest'` (ключ предпросмотра — с видом).
+  - Общая часть слияния вынесена: `private.merge_report_body(guest, target, kind)` (препятствия и счётчики; `kind`
+    меняет только тексты двух препятствий) и `private.merge_move(guest, target)` (журнал, банкир/автор вечера, ответы,
+    прогнозы, голоса, имя для озвучки). `private.merge_players_report` и `merge_players` пересозданы на них —
+    поведение и тексты прежние (их держат тесты 008/010/016/017 и `check-merge-replay`).
+    `private.merge_guests_report` — проверка аргументов вида «дубль». Гранты: `set_my_spectator`, `merge_guests`,
+    `merge_guests_preview` — authenticated, service_role; `private.merge_*` — revoke у public/anon/authenticated.
 - `private.voice_manifest_input() → jsonb` — для генератора озвучки (роль `postgres`; у anon/authenticated права
   нет): `{players: [{id, display_name, spoken_name, is_guest, is_active, last_played_at}], formats: [TournamentFormat]}`
   — активные игроки (с гостями), `last_played_at` — `scheduled_at` последнего вечера с их неотменённым `join`;
@@ -563,9 +756,12 @@ export interface EveningState {
   `votes` — свои всегда, чужие только после `voting_closes_at`;
   `admin_alerts` — RLS включён без политик: клиенту не видна вовсе (только `service_role`, миграция 012);
   `voice_clips` — так же (016): табло читает клипы только через `board_voice_clips`.
+  `board_presence` (023) — select участнику клуба, запись только через `board_ping`.
 - `evening_events`, `rsvps`, `predictions`, `votes` — запись только через RPC.
 - `players`, `settings`, `formats`, `evenings` — insert/update только `is_admin()`; игрок может менять
-  у себя только `display_name` (через RPC `set_my_name(p_name text)`) и `spoken_name` (`set_my_spoken_name`, 016).
+  у себя только `display_name` (через RPC `set_my_name(p_name text)`), `spoken_name` (`set_my_spoken_name`, 016) и
+  `is_spectator` (`set_my_spectator`, 024). Политики «своя строка» нет намеренно: права `authenticated` на `players`
+  выданы на таблицу целиком, и такая политика открыла бы игроку и `is_admin`.
 - Storage: приватный бакет `vote-photos`, лимит 2 МБ, `image/jpeg`/`image/webp`; путь
   `{evening_id}/{player_id}/{12 hex}.jpg` (номинации в имени нет); загрузка — только в свою папку,
   участнику вечера при открытом голосовании, по шаблону имени и не больше 6 файлов на игрока и вечер
@@ -578,8 +774,10 @@ export interface EveningState {
 `anon`/`authenticated`/`service_role` права на новые объекты `public` (changelog «Tables not exposed to Data
 and GraphQL API automatically»); локально так же — `[api] auto_expose_new_tables = false` в `config.toml`.
 - `authenticated` — ровно нужное, миграция 002 (select на все таблицы, insert/update на `players`, `settings`,
-  `formats`, `evenings`; `season_rules` — select, миграция 013); `anon` — только RPC `board_state`, `server_now`,
-  `board_voice_clips` (016), `cron_last_tick` (021). Исключения — `admin_alerts` (012), `voice_clips` (016) и
+  `formats`, `evenings`; `season_rules` — select, миграция 013; свои флаги игрок меняет только RPC — см. RLS);
+  `anon` — только RPC `board_state`, `server_now`,
+  `board_voice_clips` (016), `cron_last_tick` (021), `club_board_state`, `club_board_voice_clips`, `board_ping` (023);
+  `board_presence` (023) — `authenticated` только select, `anon` — ничего. Исключения — `admin_alerts` (012), `voice_clips` (016) и
   `cron_heartbeat` (021): у `anon`/`authenticated` прав нет вовсе (`revoke all`), только `service_role`.
 - `service_role` (Edge Functions через `adminClient`) — select/insert/update/delete на все таблицы и
   usage/select на sequences `public`, миграция 011; execute на RPC — поимённо в миграциях.
@@ -665,7 +863,13 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   повторённые рекорды вечера — фонд, длина игры — не идут, повторённые рекорды игрока — с пометкой «(повторён)»),
   звания («Звания: «Форма» — Саша (прежде — Дима); Дима — Немезида игрока Лёша»), сезон («Сезон: новый лидер — …,
   12,5 очка; рывок — …, с 5-го места на 2-е»). Нечего сказать — блока нет; подсчёт упал — пост уходит без блока
-  (ошибка в лог). О людях — без рода, из эмодзи — только масти (решение пользователя для новых строк). Идемпотентно по `results_posted_at`; при
+  (ошибка в лог). О людях — без рода, из эмодзи — только масти (решение пользователя для новых строк).
+  **«Сюжет вечера»** (истории клуба): `storyOf` (`notify/results.ts`) — `eveningStory` с `forPost` по той же истории
+  (олл-ины — `eveningAllIns` из журнала вечера в `loadHistory`, шансы — движок домена: до флопа полный Монте-Карло
+  только у раздач, где прикидка не исключает «победу с N %»), `storyLines` — блок «♠️ Сюжет вечера» сразу перед
+  «Жизнью клуба»: олл-ин, месть Немезиде, феникс, победа после ребаев (без «Камбэка», если ачивка уже в «Новых
+  ачивках»); рекорды и лидер сезона — только в «Жизни клуба», дублей нет. Подсчёт упал — пост без блока. Проверено
+  локально (dry-run, cron-tick добил итоги вечера с тремя олл-инами): весь тик — около 0,35 с. Идемпотентно по `results_posted_at`; при
   `results_revision > 0` заголовок «Исправленные итоги». `kind: 'evening_corrected'` — только админ:
   исправленный итог закрытого вечера, если после `results_posted_at` журнал менялся (кроме платежей),
   иначе `no_changes`; защита от дублей — перестановка `results_posted_at` по старому значению.
@@ -713,8 +917,14 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   Пост — `gamedayPost` (`_shared/messages.ts`): «Сегодня покер в 19:00» («Завтра …», если окно
   переходит через полночь, дальше — с датой), место или «Место пока не назначено», банкир или «Банкир пока не
   назначен», «Идут (n)» (пусто — «пока никто»), «Под вопросом (n)», «Не идут (n)» — имена в порядке ответа;
+  «На кону» (истории клуба; `stakesOf` в `notify/results.ts`, история — `loadHistory` один раз на шаг) — после всех списков
+  (и «Ещё не ответили» ниже), до призыва отметиться, строка «На кону: …» с двумя первыми шагами `eveningStakes` и строка сезона («Сезон: лидер — Дима, 8 очков; Лёша
+  отстаёт на 3,5 очка.»), `stakesLines`; история не загрузилась или подсчёт упал — пост без этих строк (ошибка в
+  лог), кто может прийти — постоянные игроки, кроме «не иду» и болельщиков на этот вечер (выключенный, но ответивший
+  «иду» / «под вопросом», — тоже);
   «Ещё не ответили (n)» — `gamedayRoster`: активные постоянные игроки (`is_active`, не `is_guest`) без строки
-  `rsvps` на вечер, по имени, с упоминанием (`mentionHtml`: «Имя (@username)», без username —
+  `rsvps` на вечер, кроме болельщиков (миграция 024; болельщик, которого уже посадили за стол, — игрок: cron-tick
+  читает действующие `join` вечера и передаёт `seatedIds` в `gamedayRoster` и `stakesOf`), по имени, с упоминанием (`mentionHtml`: «Имя (@username)», без username —
   `<a href="tg://user?id=…">Имя</a>`, без `tg_id` — имя); под призывом отметиться — последняя строка «Прогнозы
   закрываются со стартом — сделано N» (аудит 07.10.2026; `predictionsLine`, N — `predictionsMade`: строки
   `predictions` вечера хотя бы с одним полем, только число — содержимое до старта скрыто RLS; ноль — «пока ни
@@ -740,6 +950,13 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   закрытие не сдвинули между чтением и отметкой. В отчёте тика — `votingReminder[id]`.
   **Отметка тика** (миграция 021): в конце каждого тика, прошедшего проверку секрета, — `mark_cron_tick(p_ok)`,
   `p_ok` — `errors` пуст (`markTick`, не бросает).
+  **Тренировки** (миграция 023): ни один шаг их не выбирает — у всех выборок вечеров `.eq('is_training', false)`, в
+  том числе у проверки слота (тренировка в день игры не мешает создать настоящий вечер); страховка — `claimPost`
+  тоже с `is_training = false` (тренировку не застолбит ни один пост). Проверено локально (dry-run): тренировки
+  в окне анонса, дня игры и добивки итогов — без постов, настоящий вечер на день с тренировкой создан и объявлен.
+- `notify` и тренировка (миграция 023): `EVENING_COLUMNS` с `is_training`; `loadHistory` — без тренировок (итоги,
+  ачивки, «Жизнь клуба»); `postEveningResults`/`postCorrectedResults` и `postAnnounceChange` для тренировки — outcome
+  `'training'` без поста (`PostOutcome`, клиентский `NotifyOutcome`). Пульт после финиша тренировки notify не зовёт.
 - `bot-setup` (`verify_jwt = true`, только админ — `resolveCaller` + `is_admin`, иначе 403): POST
   `{action: 'me'}` → `getMe` → `{bot: {username, name, canJoinGroups, canReadAllGroupMessages}}`;
   `{action: 'chats'}` → `getUpdates` с `allowed_updates: ['my_chat_member', 'message']`, `limit 100`, **без
@@ -815,18 +1032,24 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   `useElementWidth`, `clubLife` (подписи «Жизни клуба»: `ACHIEVEMENT_SHORT` — описания ачивок без рода,
   `recordValueParts`/`recordValueText` — одно значение рекорда на все экраны, выигрыш со знаком), `timeout`
   (`withTimeout`, `TimeoutError`, пределы ожидания), `retryKeys` (ключи повтора в sessionStorage), `wakeLock` +
-  `useWakeLock` (удержание экрана, подсказка `wakeLockHint`) — см. «Надёжность связи»; `poker/` — движок
-  олл-ина, импорт из `shared/lib/poker` (свой `index.ts`: в нём React-хук с Web Worker, поэтому чистые модули —
-  например `pages/evening/lib.ts` — и тесты берут `poker/cards`, `poker/equity` напрямую). Между папками
+  `useWakeLock` (удержание экрана, подсказка `wakeLockHint`) — см. «Надёжность связи»; `clipboard` (`copyText` — ссылки
+  табло); `stories` (истории клуба: `storyLine`, `stakeLine`, `seasonStakeLines`, `swingPill`, `favoritePill`,
+  `allInCaption`, `pctText` — о себе на «ты»: «Ты забираешь олл-ин…», «цель — ты»); `poker/` — олл-ин
+  на клиенте, импорт из `shared/lib/poker` (свой `index.ts`: в нём React-хуки с Web Worker — `useShowdownEquity`,
+  `useShowdownEquities` (шансы списка ключей тем же кешем и воркером), `useAllInSwings` (`swingFromShares` по долям
+  воркера: экран итога, табло и шторка голосования не считают Монте-Карло на главном потоке); чистые модули —
+  например `pages/evening/lib.ts` — и тесты берут `poker/cards`, `poker/equity` напрямую; сами карты, оценка рук и
+  эквити — в домене, `domain/poker`). Между папками
   `src/pages/*` разрешены только три связи: табло берёт подписи вечера из `pages/evening/lib`, карточка игрока — места
-  и чемпиона из `pages/rating/stats`, главная — «Твой вечер» и блок прогноза из `pages/evening` (`EveningRecap`,
-  `useEveningRecap`, `recap`, `PredictionSection`: те же карточки, что на экране вечера); остальное общее — здесь.
+  и чемпиона из `pages/rating/stats`, главная — «Твой вечер», блок прогноза и «На кону» из `pages/evening`
+  (`EveningRecap`, `useEveningRecap`, `recap`, `PredictionSection`, `EveningStakes`, `useEveningStakes`: те же карточки,
+  что на экране вечера); остальное общее — здесь.
   Статус вечера везде — `EveningStatusBadge` кита; `errorMessage` показывает русские тексты RPC как есть,
   а английские служебные сообщения Postgres/PostgREST заменяет переводом по коду (исходник — в `cause`).
 - Никакого `dangerouslySetInnerHTML` и сырого HTML из пользовательских данных.
 - Маршруты (HashRouter): `/` главная; `/evening/:id` вечер (живой экран; у банкира — пульт);
   `/evening/:id/settle` расчёт; `/evening/:id/vote` голосование; `/board/:token` табло (публичное,
-  вне AuthProvider); `/rating` (сезон / деньги / всё время / оракул / рекорды / зал славы, `?tab=season|money|
+  вне AuthProvider); `/tv/:code` табло клуба (так же, миграция 023); `/rating` (сезон / деньги / всё время / оракул / рекорды / зал славы, `?tab=season|money|
   alltime|oracle|records|fame`, `useRatingParams`); `/player/:id`; `/history` (вкладки «Вечера» и «Моменты»,
   `?tab=moments`); `/admin`, `/admin/evening/new`, `/admin/evening/:id`; только в dev — `/dev/kit`, `/dev/kit-yantar`.
   `/admin` без `?tab` (и с неизвестной вкладкой) открывает «Вечера» (`adminTab` в `pages/admin/lib.ts`).
@@ -842,7 +1065,26 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   иначе удалить бота и добавить снова. ID группы и имя бота по-прежнему можно вписать руками.
 - Админка «Игроки»: у игрока без `tg_id` — «Привязать к Telegram» (`pages/admin/MergeSheet.tsx`): выбор профиля
   с Telegram, предпросмотр `merge_players_preview` (что перенесётся, что мешает), подтверждение с перечнем,
-  результат тостом. «Вечер»: после сохранения вечера с уже ушедшим анонсом — `notifyEveningChanged`; отмена
+  результат тостом. Там же «Объединить с другим профилем» (миграция 024; есть, если в клубе есть другой профиль без
+  Telegram) — та же шторка с `kind="guest"` («Объединить дубли»): профиль, из карточки которого открыли, удаляется,
+  выбранный остаётся; в выборе (`guestMergeTargets` в `pages/admin/lib.ts`) — профили без Telegram, сначала с тем же
+  именем (`nameMatchKey`, переехал в `shared/lib/text`: регистр, «ё» и пометка в скобках не важны), подпись
+  `guestMergeHint` («то же имя · гость · 2 вечера»; вечера — по истории клуба), под перечнем и в подтверждении — что
+  станет с флагами профиля (`guestMergeFlagNotes`). У постоянного игрока — переключатель «Болельщик» (upsert под RLS,
+  как «Активен»), в строке списка — «болельщик».
+- **Болельщик на экранах** (миграция 024; тексты — `SPECTATOR_*` в `shared/lib/text`). Главная: вопрос «Играешь или
+  следишь?» (`pages/home/RoleQuestion.tsx`) под ближайшим вечером, пока `is_spectator` = null и это не гость: «Играю» /
+  «Слежу за игрой» с тостом, крестик — остаться игроком без тоста (пишет false: второй раз вопрос не появится ни на
+  каком устройстве). Своя карточка: раздел «Участие в играх» с переключателем «Слежу, не играю» (сохраняется сразу);
+  у болельщика в шапке карточки — пометка «Болельщик». Анонс (главная и экран вечера): у болельщика без ответа под
+  «Твой ответ» — «Ты болельщик — отвечать не обязательно…»; после «Иду» — тост «На этот вечер ты в игре» с кнопкой
+  «Стать игроком» (`set_my_spectator(false)`); сам флаг ответ не меняет. «Без ответа» главной (`groupRsvps(players,
+  rsvps, seated)`), кандидаты прогноза (`predictionCandidates(…, seated)`; уже названный болельщик остаётся с подписью
+  «болельщик · …»), «На кону» (`useEveningStakes` сам читает журнал вечера тем же запросом) — по `spectatesEvening`;
+  `seated` — `seatedIds` журнала, поэтому посаженный до старта болельщик сразу игрок. Шторка посадки: болельщиков можно
+  посадить — после игроков своей группы ответа и до гостей, с подписью «болельщик» (`seatSpectator`). После старта всё
+  считается по журналу (участники вечера), флаг ни на что не влияет; рейтинг и ачивки флаг не трогает (`excluded` — по-
+  прежнему только гости). «Вечер»: после сохранения вечера с уже ушедшим анонсом — `notifyEveningChanged`; отмена
   такого вечера, пока он впереди, — через подтверждение (пост не отзовёшь), причина — отдельное поле «Причина для
   группы» (`cancel_reason`), заметка анонса не меняется; возврат снимает причину, а пометка «Вечер отменён»
   заранее говорит, что бот напишет «всё-таки состоится». О прошедшем вечере сервер молчит — форма поста не
@@ -872,6 +1114,32 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   личные рекорды с пометкой «Рекорд клуба», доля вечеров в призах, среднее место) и ачивки с прогрессом
   (`progress.ts`: полученные / «На подходе» / сезон / остальные). Гости в ленте и моментах — как есть, ачивок, званий,
   рекордов игрока и прогресса у них нет.
+- **Истории клуба** (аудит 07.10.2026, без новых таблиц и миграций — всё из журналов и истории клуба доменом):
+  - «Олл-ины вечера» — `AllInList` кита (`src/shared/ui/AllInList.tsx`, стили `allins.css`): карточка на раздачу —
+    время, «Банк — Лёша» / «Делёж банка — …» / «Раздача без ривера», стол (пустые места пунктиром), таблица «Игрок ×
+    улицы до ривера» с долями банка (целые %, как на табло; доли — `useShowdownEquities`, до флопа — воркер), у
+    победителя — рука словами и «победа с 13 %», у проигравшего фаворита — «фаворит, 87 %» (`swingFromShares`),
+    проигравшие приглушены. Экран итога (`FinishedView`): раздел «Олл-ины вечера» после «Мест» (раздачи —
+    `allInsFromApplied` живого журнала). «История → Моменты» (`MomentsTab`, `momentEvenings`): вечера с моментами или
+    олл-инами в порядке истории, под моментами — кнопка «Олл-ины вечера: 3 раздачи»; раздачи (и их шансы) — только у
+    раскрытых, иначе вкладка пересчитывала бы олл-ины всей истории.
+  - Подсказки в шторке голосования (`VoteSheet`, «Рука» и «Бэд-бит»): `allInSuggestions(category, allIns, swings,
+    candidates)` (`pages/vote/lib.ts`) — «Рука»: победитель раздачи (делёж — нет), «Бэд-бит»: проигравший фаворит
+    «победы с N %»; только участники вечера и не я, сначала самые невероятные. Кнопка-раздача: карты номинанта, имя,
+    «05:08 · 7♣ 2♥ против A♠ A♦ — стол …», пометка; нажатие выбирает номинанта, а пустую подпись заполняет картами
+    (`allInCaption`, свою подпись не трогает). Раздачи — `eveningAllIns` журнала, который `VotePage` уже грузит.
+  - «Сюжет вечера» — экран итога (`useEveningStory` + `StoryFacts`, раздел под лучшим охотником, когда шансы и история
+    посчитаны: строки не перестраиваются на глазах): итог вечера сводится из журнала на экране и подменяет этот вечер
+    в истории клуба (история на чужом устройстве после правки админом может отставать); у тренировки — без истории.
+    Табло (`FinishedBoard`, `useBoardStory`): только строки журнала вечера (табло без входа не видит истории клуба,
+    поэтому месть, рекорды и лидер сезона — в приложении и посте), строками `m-h3` с полосой `accent` под «Игра шла»;
+    `useFitToScreen` пересчитывает масштаб по числу строк. `bestFit` теперь проверяет итог ещё раз и уменьшает масштаб
+    шагом поиска, пока не поместится: с полосой прокрутки раскладка уже, и масштаб, поместившийся после меньшего, после
+    большего не помещался (табло 1280×720 с сюжетом оставалось с прокруткой 30 px; тест в `fitToScreen.test.ts`).
+  - «На кону» — `useEveningStakes(evening, rsvps, players)` (`pages/evening/useEveningStakes.ts`, история —
+    `useClubHistory`; у тренировки нет) и `StakesList` (`EveningStakes.tsx`, свой лист `stakes.css`: главная не грузит
+    `evening.css`): до `STAKES_SHOWN` (4) шагов и строки сезона (с моим местом, если его не назвали). Экран
+    объявленного вечера — раздел «На кону» под прогнозом; главная — в карточке анонса под составом.
 - Кратность входа на пульте банкира (`pages/evening/StacksPicker.tsx`): «−» / «×k» / «+», ×1 по умолчанию,
   до ×10, под значением — сумма и фишки («1 000 ₽ · 1 000 фишек», `stacksAmountText`). В шторке «Кто пришёл» /
   «Опоздавший игрок» (`SeatSheet`) — одна кратность на всех, кого сажают этим нажатием, и на гостя (подсказка
@@ -977,12 +1245,88 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
     нажатие дошло до сервера, хотя ответа не было. Повторять не нужно…», кнопки «Записать ещё одну» (новое действие —
     новый ключ) и «Не записывать» (дошедшая запись — результат нажатия, шторка закрывается как после записи). Ключ
     забывается при любом ответе. «Добавить гостя» спрашивает так же (`SeatSheet`, намерение `guestRetryIntent`).
+  - Перерыв и ±1 мин (миграция 022). Пауза — одна шторка `PauseSheet` в обоих видах пульта («Пауза» на полосе часов
+    «Стола», «Поставить паузу» в «Подробно»): «Пауза без срока» (`timer_pause {}`, как все паузы до 022, тост «Пауза»)
+    и длительности `PAUSE_MINUTES_OPTIONS` («5 мин» … «30 мин», `timer_pause {minutes}`, тост «Перерыв 10 мин»); оба
+    тоста с «Отменить». Раньше пауза без срока была отдельной кнопкой в одно касание, а «Перерыв» — шторкой рядом
+    (решение пульта 08.10.2026: один вход «Пауза» с выбором — на полосе «Стола» нет места на две кнопки, а два касания
+    на паузу не мешают). Строка «Время уровня ±1 мин» — у часов: в «Подробно» в карточке часов, в «Столе» — в шторке
+    «Часы и уровень» (касание полосы часов). IconButton «Убавить/Прибавить
+    минуту уровня», `time_adjust {seconds: ∓60}`, тосты «Минута убавлена/прибавлена» с «Отменить» — пока
+    `timeAdjustable(state)` (`lib.ts`: уровень по времени, не последний, таймер запущен, вечер не завершён); кнопка
+    недоступна по `canApply` (не в минус, не длиннее уровня). Часы экрана вечера у всех: на перерыве бейдж «Перерыв»
+    и строка «Продолжаем через 07:12 · перерыв 10 мин» (`breakView(state, nowMs)` → `{minutes, leftMs, due,
+    countdown}`, `breakLine` — «продолжаем через 07:12» / «пора продолжать»), по истечении — «Пора продолжать»
+    цветом `critical`.
+  - Лента и правка на месте (миграция 022): `describeEvent(ev, nameOf, formatRub, format, ctx?)` — с контекстом
+    ленты `FeedContext` (`feedContext(events, replayLog)`: `effective` — исправленные записи с правкой в силе, `byId`,
+    `previous` — для каждой правки запись со значением, которое было в силе перед ней: «было» у повторной правки —
+    значение после прошлой принятой, а не исходное)
+    исправленная запись показана по правке с пометкой «исправлено» («Вылет: Лёша — выбивают Саша и Миша — нокаут
+    каждому · исправлено», «Вход: Женя — вход на 1 000 ₽ · исправлено»), сама правка — «Правка вылета: Лёша —
+    выбивают Саша и Миша… · было: Женя» / «Правка входа: Женя — ×2 — 1 000 ₽ · было: ×1»; `time_adjust` — «Время
+    уровня: +1 мин», пауза с длительностью — «Перерыв 10 мин». `EveningModel.feed` — этот контекст (`EventFeed
+    feed`, подтверждения отмены, «Последняя запись»). Иконки ленты: правка — `pencil`, поправка времени — `clock`.
+    `actions.check`/`send` для `amend` проверяют `canAmend` по журналу, а не `canApply` по состоянию. Отмена правки
+    — как любой записи («Исправленная запись вернётся к прежнему значению…»).
+  - **«Изменить запись»** (`AmendSheet`, помощники — чистый `amendView.ts`, `amendView.test.ts`): нажатие на вход, ребай
+    или вылет в ленте (у банкира и админа живого вечера, у админа — и в журнале завершённого: правка после `finish` —
+    только админ, как в SQL) открывает шторку, остальные записи — по-прежнему подтверждение отмены (`EventFeed
+    onSelect` + `canEdit`: у исправляемых строк шеврон, подпись под лентой «Вход, ребай и вылет можно исправить на
+    месте»). Вылет — «Кто выбил»: `amendKillerCandidates(format, events, eventId, current, nowMs)` — кто был в игре
+    прямо перед этой записью (журнал до неё и поправки к более ранним записям, даже записанные позже: replay применяет
+    их на месте исправляемой), без жертвы; отмеченные в записи, но тогда уже вне игры (запись «Не принято»), — следом
+    с подписью «тогда уже вне игры» (без рода), чтобы их снять; «Никто / не знаю». Вход и ребай — `StacksPicker`
+    («В записи сейчас ×2»). Значение при открытии — `currentAmendValue` (с правкой в силе; время — момент открытия:
+    от времени значение не зависит), «Сохранить правку» доступна, когда значение другое (`amendChanged`: набор
+    выбивших без порядка) и `actions.check('amend')` (= `canAmend`) молчит; отказ — Notice «Так исправить нельзя»;
+    правка, которая задела бы другие записи, — Notice «Правка заденет другие записи» с перечнем (`amendImpactText`:
+    какие записи журнал перестанет принимать и почему, какие вступят в силу, «Вечер перестанет быть завершённым», совет
+    отменить запись и записать заново). Непринятая запись — Notice «Запись не принята» (правка может её починить, если
+    не заденет записи после неё). Запись с оплатой при входе — строка «Оплата, записанная вместе с этой записью, не
+    меняется — расчёт сам покажет…»; закрытый расчёт — «правка откроет его»; завершённый вечер — «места и победитель не
+    изменятся» (это держит `canAmend`). Тост — `amendToast`: «Вылет исправлен: Лёша» /
+    «Выбивают Саша и Миша — нокаут каждому.», «Вход исправлен: Вова» / «×3 — 1 500 ₽.» («исправлен» согласуется с
+    записью: вход, ребай, вылет — мужского рода), с «Отменить». «Отменить запись» в шторке закрывает её и открывает
+    прежнее подтверждение отмены (окно поверх шторки «Материя» не допускает).
   - Пульт идущего вечера (`LiveView` у банкира и админа): удержание экрана (`useWakeLock(canControl)` →
     `keepScreenAwake`: запрос при показе, повтор при возврате на экран и на касании, отказ — статус `denied`) и
     `useClosingConfirmation` — Telegram переспрашивает при закрытии Mini App. Нет API или отказ — под пультом строка
     «Отключи автоблокировку на время игры: телефон не даёт приложению держать экран включённым.» (`wakeLockHint`).
     Табло берёт тот же хук. Работает ли Screen Wake Lock внутри WebView Telegram на Android и iOS, не проверено —
     для этого и подсказка.
+- **«Режим стола» на пульте** (аудит 07.10.2026, «Следующий шаг» 1; `TableView.tsx`, раскладка — чистый `table.ts`,
+  стили — `pult.css`, тесты — `table.test.ts`). У банкира и админа идущего вечера над экраном — Segmented «Стол /
+  Подробно» (`pultView.ts`: `usePultView` в `EveningScreen`, выбор — localStorage `poker-club:pult-view`, все
+  обращения в try/catch, мусор и недоступное хранилище — «Стол»; по умолчанию «Стол»). «Подробно» — прежний экран
+  (`DetailsView` в `LiveView`), игроки (не ведут пульт) видят его как раньше, переключателя у них нет. Действия,
+  общие для обоих видов (завершить вечер, «Уровень вперёд» с переспросами, «Отменить последнее»), — `usePult.ts`
+  (перенесены из `LiveView` без изменения поведения). В «Столе» шапка экрана — без подписи и заметки вечера,
+  отступы между группами `space-4` (`ev-page--table`), на 320–359 px заголовок кеглем `m-h3`:
+  - Полоса часов (`TableStrip`) прилипает к верху (`position: sticky`, `top: --pc-safe-top`): уровень, блайнды
+    (перенос только после «/»), время уровня, справа «Пауза» (шторка `PauseSheet`), на паузе — «Продолжить»
+    (`timer_resume`; главная кнопка, если нет финиша и вылета после ривера), до старта — «Запустить». Строка под ней
+    — «дальше 15/30 · ребаи ещё 2 ч 34 мин» (`rebuyShortText`), на уровнях по вылетам/раздачам — прогресс; на паузе
+    цифр нет, строка — `stripStatus(state, nowMs)`: «Пауза · стоим 3 мин · на часах 34:25» (от `timer.pause.at`, как
+    на табло), «Перерыв · продолжаем через 07:12 · …», по истечении — «пора продолжать» (`critical`, фон
+    `critical-soft`). Касание полосы — шторка `ClockSheet` «Уровень 3 из 8»: время, состояние, строка ребаев,
+    ±1 мин, «Уровень вручную» (переход переспрашивает — шторка закрывается перед вопросом). На 320–359 px у кнопки
+    полосы — только иконка (подпись в `aria-label`), цифры мельче.
+  - Места за столом (`seatTiles`): плитки сеткой (`minmax(76px, 1fr)` — три в ряд на 320–359 px, четыре на 360–430)
+    в порядке посадки `joinOrder` — **сетка не прыгает**: вылетевший остаётся на своём месте пунктиром с приглушённым
+    аватаром, после ребая плитка снова живая там же, опоздавший садится в конец. Живой — тап = шторка вылета
+    (`PlayerSheet`), вылетевший — ребай, пока можно докупиться (`canApply` домена), иначе карточка игрока; пока
+    открыта регистрация, последняя плитка — «Посадить» (шторка `SeatSheet` «Опоздавший игрок»).
+  - Ряд «Вылетели» (`bustedRow`): свежий вылет первым, известные места — по месту; подпись «ребай» (accent, иконка)
+    / «6-е место» / «вне игры», тап — как у плитки.
+  - Под местами: «Завершить вечер» (один живой; главная, когда ребаи закрыты), «Записать вылет: X» после ривера
+    (см. «Олл-ин»), «Раздача сыграна · 3 из 10» на уровнях по раздачам, «Отметить олл-ин» / «Продолжить олл-ин» и
+    рядом «Отменить последнее» иконкой (что отменится — в подписи кнопки и в вопросе `voidWithConfirm`), подсказка.
+    Ниже прокруткой — панель олл-ина (в «Столе» она под пультом), статы, «Открыть расчёт», лента.
+  - Проверено в headless Chrome на локальном стенде (6 игроков и гость, 2 вылета): 375×667 — всё до «Отметить
+    олл-ин» в первом экране (низ ряда — 563 px), 430×932 — тоже; 320×568 — сетка и «Вылетели» в экране, ряд
+    олл-ина — после прокрутки на ~100 px (полоса часов при этом остаётся сверху); горизонтальной прокрутки нет ни
+    на одной ширине; светлая и тёмная темы. В настоящем Telegram не проверено.
 - **Голос табло** (миграция 016; Silero TTS v5_5_ru, диктор xenia, CC BY-NC-SA 4.0 — клуб некоммерческий). Только
   голос, без звуковых сигналов. Silero работает только в Python, поэтому клипы озвучиваются заранее генератором
   (`scripts/voice/`, запускает `voice.yml` в `poker-club-ops` раз в сутки и вручную) и лежат в БД; табло их скачивает.
@@ -1034,11 +1378,17 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
     (useNow) и на каждый опрос, шаг идёт и при выключенном голосе; первый кадр — точка отсчёта (история при
     открытии и до включения голоса не зачитывается). Новые события (id, которого не было в прошлом
     кадре, `at` не старше 90 с) по порядку журнала: `timer_start` → старт, `timer_pause` → «Пауза.» (кроме
-    служебной паузы перед `finish` из `add_event`), `timer_resume` → «Продолжаем.», `bust` → нокаут, `finish` →
-    победитель. По состоянию replay: уровень вырос (таймер, `level_next`, вылеты/раздачи) → «Новый уровень»
+    служебной паузы перед `finish` из `add_event`; пауза с длительностью — «Перерыв N минут.», миграция 022),
+    `timer_resume` → «Продолжаем.», `bust` → нокаут, `finish` → победитель; `amend` и `time_adjust` не объявляются
+    (исправленная запись не новая — её id был в прошлом кадре). «Минута до конца перерыва.» — та же пауза в обоих
+    кадрах, `pauseLeftMs` пересёк 60 с в этом шаге и не ниже 45 с, один раз на паузу (`heard.breakMinute` — id её
+    `timer_pause`; табло, открытое на последней минуте, не догоняет); по истечении перерыва голос молчит. По состоянию replay: уровень вырос (таймер, `level_next`, вылеты/раздачи) → «Новый уровень»
     (на месте `level_next` в журнале, иначе после событий), ребаи закрылись не из-за finish → «Ребаи закрыты.»
     сразу за уровнем; «Минута до повышения» — уровень по времени, таймер идёт, следующий уровень есть, остаток
-    пересёк 60 с в этом шаге и не ниже 45 с. Окно ребаев (аудит 07.10.2026): «Последний уровень ребаев.» — сразу за
+    пересёк 60 с в этом шаге и не ниже 45 с. Поправка «−1 мин» (`time_adjust` среди свежих событий шага) — законный
+    скачок: перескочила порог — фраза сразу, пока до края больше 15 с; порог, пройденный на паузе (поправкой или
+    переходом уровня), — при «Продолжаем» (то же условие 15 с); «+1 мин», поднявшая остаток выше порога, снимает
+    отметку «сказано» — часы дойдут до порога снова (так же «Пять минут до закрытия ребаев»). Окно ребаев (аудит 07.10.2026): «Последний уровень ребаев.» — сразу за
     фразой уровня (или за «Поехали», если ребаи только на 1-м уровне), когда начался уровень номер `rebuyUntilLevel`
     (`lastRebuyLevelIndex` в `boardView.ts`: ребаи не на всю игру и не закрыты со старта) и ребаи открыты; «Пять минут
     до закрытия ребаев.» — игровое время до закрытия (`rebuyWindow`, как «ещё N мин» на экранах; уровни не по времени
@@ -1064,7 +1414,11 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   локальном стенде: обычный вечер (6 игроков, 2 выплаты, нокаут) на 1920×1080 — масштаб 1; телефонная раскладка
   (колонка) не меняется.
   - Часы (`boardClock`): пауза — на весь блок (подложка `accent-soft` тенью без размытия, раскладка не прыгает):
-    «Пауза», «стоим 6 мин» (`pausedForMs` — от последней принятой паузы, `pauseText`) и «На часах 12:34»; последний
+    «Пауза», «стоим 6 мин» (`pausedForMs` — от последней принятой паузы, `pauseText`) и «На часах 12:34»; перерыв на N
+    минут (миграция 022, `breakView` из `pages/evening/lib`) — «Перерыв» и «продолжаем через 07:12» (`m-h2`, `accent`),
+    по истечении — «пора продолжать» (`critical`, иконка часов) и блок часов медленно дышит `accent-soft` ↔
+    `accent-6` (`bd-clock--due`, 2 с туда и обратно, 0,25 Гц; при `prefers-reduced-motion` — неподвижная подсветка
+    `accent-5`); таймер сам не продолжает. Проверено в headless Chrome на локальном стенде (1920×1080); последний
     уровень — главным числом блайнды под «Последний уровень» вместо счёта вверх (`bigBlinds`: «1 000/2 000» одной
     строкой, кегль вписан в колонку через `100cqi / --bd-em` — ширину строки в em с запасом к замеру шрифта; анте —
     строкой «Анте 3 000» ниже; без единиц контейнера — перенос только после «/»); последняя минута уровня по времени
@@ -1090,6 +1444,53 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
     у номера и времени. Проверено на стенде (крупные блайнды 1 000/2 000 и 1 500/3 000 (3 000)): главное число — одной
     строкой на 1920×1080, 1280×720, 320 и 375 px; в таблице уровней на 320 px «(2 000)» уходит на вторую строку;
     горизонтальной прокрутки нет.
+- **Табло клуба** (аудит 07.10.2026, «Следующий шаг» 3; миграция 023). `/tv/:code` — `pages/board/ClubBoardPage.tsx`:
+  код проверяется на клиенте (`CLUB_BOARD_CODE_RE`, 12 hex, как check), `useClubBoardState` (`shared/api/board.ts`)
+  опрашивает `club_board_state` раз в 3 с, пока есть вечер, и раз в 30 с между вечерами. Вечер — тот же `Board`, что у
+  ссылки вечера (`BoardPage.tsx` экспортирует `Board` и `BoardMessage`; источник — `BoardSource` `{kind: 'evening',
+  token} | {kind: 'club', code}`, стабильным объектом): голос (`useBoardVoice` грузит клипы `fetchVoiceClips(source…)`
+  — по коду через `club_board_voice_clips`), олл-ин, раскрытие улиц. Смена вечера на табло (тренировка → настоящий) —
+  без перезагрузки: детектор голоса берёт новый вечер точкой отсчёта (`prevFrame.eveningId`). Между вечерами —
+  `IdleBoard`: «Следующая игра», день и время (`clubIdleView` в `boardView.ts`: `next_at`, иначе ближайший слот
+  расписания `nextGameAt`; за сутки — «через …»), «Табло само переключится на вечер в день игры». Код не тот — «Ссылка
+  табло устарела». Ссылка: `clubBoardUrl(code)` (`shared/lib/paths.ts`, маршрут `paths.clubBoard`).
+  «Вывести на ТВ» (`TvSheet`): главная — «Табло клуба» (QR `LinkQr` из `shared/ui`, «Скопировать ссылку», «Открыть
+  табло здесь»), запасная — «Ссылка только на этот вечер» (прежняя `/board/:token`); у тренировки — совет открыть
+  ссылку тренировки, если табло клуба занято настоящим вечером; без кода (фронт раньше миграции) — только ссылка
+  вечера. Кнопка видна у анонса, идущего вечера и 6 ч после финала. Админка «Клуб» → «Табло клуба»
+  (`ClubBoardSection`, вне формы настроек): QR, копирование, «Перевыпустить ссылку» через подтверждение
+  (`rotate_club_board_token`, `useRotateClubBoardToken`). Тренировка на табло — «Тренировка · 08.10 · 14:00» в шапке.
+- **«Табло на связи»** (023): `useBoardPing(source, eveningId, voiceOn)` — пока табло показывает вечер, `board_ping` сразу
+  и раз в `BOARD_PING_MS` (20 с), при смене вечера и включении/выключении голоса; сбой — молча. Банкир читает
+  `board_presence` (`useBoardPresence`, раз в 10 с).
+- **«Проверка перед игрой»** (аудит, «Следующий шаг» 6; `pages/evening/PregameCheck.tsx`, решения и тексты — чистый
+  `pregame.ts`, тесты — `pregame.test.ts`). У банкира и админа: на анонсе за 3 ч до начала — раздел под «Столом»
+  (`PregameSection`, все пункты сразу), раньше — строка (`PregameRow`, пункты в шторке); в игре — строка под статами в
+  обоих видах пульта. Пункты (`pregameChecks`): банкир назначен (админу — «Назначить банкира» в форму вечера);
+  связь — один `server_now` с пределом 5 с (`pingServer`, `shared/api/serverClock.ts`; дольше 1,5 с — «медленная»);
+  живое обновление — статус канала журнала (`useRealtimeStatus(eveningRealtimeTopic(id))`, `shared/api/realtime.ts`
+  считает состояние каналов: connecting / live / broken / none); экран — раздел за 3 ч до начала и строка в игре
+  держат экран сами (`useWakeLock`), статус и есть ответ; строка на анонсе раньше экран не держит
+  (`holdScreen: false`) — пункт ждёт («Проверим за 3 часа до начала…»), кроме «API нет»; табло — `board_presence`
+  вечера: до дня игры по Москве (`gameDay`; табло клуба берёт анонс только в день игры —
+  `private.club_board_evening_id`) без свежей отметки — пункт ждёт («Табло клуба покажет этот вечер в день игры…»), а
+  не красный; в день игры нет отметки — «Табло не открыто», старше 60 с — «не на
+  связи» с временем последней, свежая без голоса — «голос выключен», иначе ok («Вывести на ТВ» прямо из пункта);
+  имена — тех, кто сел, до старта и ответивших «иду» (`pregamePlayerIds`): `speakableName` null — «не прочитает»
+  (совет — «Имя на табло»), нет клипа — «не озвучено»; фразы — уровни формата и `FIXED_TEXTS`
+  (`pregameVoicePlan`, `voiceCheckFrom`; наличие — `voice_clips_present` по `clipHash`). Совет об озвучке админу —
+  запустить `voice.yml` вручную, банкиру — попросить админа. Итог строкой (`pregameSummary`), «Проверить снова».
+- **Тренировочный вечер** (аудит, «Следующий шаг» 6; миграция 023). Админка «Вечера» — «Тренировочный вечер» →
+  `/admin/evening/new?training=1`: сегодня, ближайшие 5 минут по Москве, банкир — админ (`trainingEveningDraft`),
+  занятых дней нет; «Создать тренировку» открывает экран вечера. В форме существующей тренировки вместо «Отмены» —
+  «Удалить тренировку» (подтверждение, `useDeleteTrainingEvening`, тост `trainingDeletedText`). Пометка везде, где
+  вечер показан: `TrainingBadge` рядом со статусом (админка), «Тренировка 8 октября» и Notice на экране вечера (в
+  «Столе» — только заголовок), строка «Тренировка» на главной (`pickTraining`: идущая или объявленная, не забытая;
+  ближайший вечер клуба — `pickUpcoming` без тренировок), шапка табло. У тренировки нет ответа «иду», прогноза и «Кто
+  идёт»; финиш — «Завершить тренировку?» без поста и голосования (notify не зовётся), на экране итога нет кнопки
+  «Перейти к голосованию» (`FinishedView`), экран голосования по прямой ссылке — «Это тренировка». Не попадает в историю, рейтинг, сезоны, ачивки, ленту, рекорды, моменты и долги: `fetchClubHistory`
+  берёт `withoutTraining` (`shared/api/types.ts`, фильтр на клиенте — фронт может выйти раньше миграции), список
+  «История» — тоже; функции — `loadHistory` и фильтры cron-tick. `takenDates` (форма вечера) тренировки не считает.
 - **Имя для озвучки** (`players.spoken_name`, 016). Карточка игрока: своя — «Сменить имя» и «Имя на табло»
   (`SpokenNameSheet`, RPC `set_my_spoken_name`), у админа на любой карточке — «Имя на табло» (upsert под RLS);
   если голос не может назвать тебя (латиница без имени для озвучки) — пометка «Табло не назовёт тебя по имени».
@@ -1114,13 +1515,42 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   «Закрыть раздачу» (иначе она — ghost-кнопкой). Каждая отправка — `showdown` с полным состоянием (`checkDraft`:
   «Отметь карты: …», «Отметь все три карты флопа», «Карты стола — по порядку…»), тост с «Отменить» (void).
   `showdownId` — `newClientId()` при открытии раздачи. Олл-ин на флопе/тёрне — руки и стол одной отправкой.
+- **«Записать вылет: X, выбивает Y» после ривера** (аудит 07.10.2026; чистый `pages/evening/riverBusts.ts`, тесты —
+  `riverBusts.test.ts`; хуки — `useRiverBusts.ts`, выбор в шторке — `RiverBustsChoice.tsx`). `riverOutcome(showdown)` —
+  на ривере (5 карт стола) оценка рук `evaluate` движка: лучшая рука (несколько — делёж) и проигравшие; до ривера и
+  при сломанных картах — null. `riverBustSuggestion(showdown, isAlive, applied)` — проигравшие, которые ещё в игре и
+  не вылетали в этой раздаче (`bustedInHand(applied, openedEventId)` — принятый вылет после открытия раздачи: вылет
+  раздачу не закрывает, ривер висит ещё 2 мин, и после «Ребай» из тоста игрок снова в игре — второй раз его не
+  предлагаем), и кто выбивает — победители в игре (делёж — нокаут каждому); null — делёж на всех или все проигравшие
+  уже вне игры или уже вылетали в этой раздаче.
+  Стеков пульт не знает: проигравший вылетает, только если фишек было не больше, — поэтому это предложение, решает
+  банкир. Один проигравший — кнопка «Записать вылет: Миша» на пульте (в «Столе» — под местами, в «Подробно» — под
+  панелью олл-ина) с вопросом `riverBustQuestion` («Миша — вылет, выбивает Женя. Фишек хватило и игрок остаётся за
+  столом — нажми «Не записывать».»), запись — обычный `bust`, тост с «Ребай», пока игрок может докупиться. Несколько
+  — «Записать вылеты: 2» открывает шторку олл-ина: там после ривера «Кто вылетел» (отмечены все проигравшие — снять,
+  кому фишек хватило) и «Места по фишкам» (`keepChipOrder`, `moveUp`: выше — у кого фишек перед раздачей было больше,
+  ему место выше), главная кнопка шторки — «Записать вылет(ы)», рядом «Закрыть раздачу»; в шторке вопроса нет
+  (отметки и порядок и есть подтверждение, окно поверх шторки «Материя» не допускает). Несколько вылетов — одно
+  действие `sendAll(riverBustDrafts(byChips, killers))`: записи от меньшего стека к большему, и последний записанный
+  (у кого фишек больше) получает место выше — места домен считает в порядке, обратном окончательным вылетам; одна
+  транзакция `add_events`, «Отменить» в тосте — всё действие. Тесты: итог раздачи (хедз-ап, делёж, три руки), места
+  по порядку фишек и обратный порядок, делёж банка — нокаут каждому, 100 случайных раздач: одно действие ≡ те же
+  вылеты по одной (replay совпадает), записи проходят `canApplySequence`, доигранный вечер — призовые = взносы.
+- **Раскрытие улиц на табло по очереди** (чистый `pages/board/streetReveal.ts`, тесты — `streetReveal.test.ts`; хук
+  `useStreetReveal` в `BoardPage` — память живёт в `Board`, а не в панели олл-ина, которая пропадает между
+  раздачами). Банкир внёс несколько улиц одной отправкой — табло показывает флоп, через `REVEAL_STEP_MS` (3 с, при
+  тике табло раз в секунду на экране 3–4 с) тёрн, потом ривер; шансы и ауты — по показанному столу. Первый кадр табло
+  (открыли посреди раздачи) показывает стол как есть; новая раздача — сразу первая пришедшая улица (до флопа — руки,
+  иначе флоп); каждая улица видна не меньше шага (поздний флоп после долгого префлопа — сразу); карт стало меньше
+  (отменили ривер) — сразу. Приложение (экран вечера, пульт) показывает стол как в журнале. Проверено в headless
+  Chrome на стенде (1920×1080): раздача с пятью картами одной записью — флоп, через 3 с тёрн, ещё через 3 с ривер.
 - **Показ** — `ShowdownView` кита (`src/shared/ui`, вариант `board` для табло и `compact` для экрана вечера) и
   `PlayingCard`/`SuitPip`: стол из пяти мест (пустые — пунктиром), руки (карты, рука словами — «Пара дам»,
   «Флеш до туза»), шансы — целые % и полоса (лидер по шансам — accent), «делёж N %» (частота дележа), «Впереди»
   у лучшей руки на текущем столе, ауты; на ривере — «Лучшая рука» / «Делёж банка», проигравшие приглушены.
   Табло (`pages/board/ShowdownBoard.tsx`) показывает панель вместо таймера и стола, пока `visibleShowdown`
-  (`BoardPage`), часы уровня — строкой в её шапке; экран вечера (`LiveView`) — первой карточкой, у банкира с
-  кнопкой. Масти — значками (SVG, не символами шрифта) и цветом: ♠ ink, ♥ critical, ♦ синий из категориальной
+  (`BoardPage`), часы уровня — строкой в её шапке; экран вечера (`LiveView`) — первой карточкой (у игроков и в
+  «Подробно»; в «Столе» — под пультом), у банкира с кнопкой «Отметить карты». Масти — значками (SVG, не символами шрифта) и цветом: ♠ ink, ♥ critical, ♦ синий из категориальной
   палитры регистра (Кобальт — chart-1, тёмный — chart-4, Янтарь — chart-5), ♣ positive (`showdown.css`).
   Проценты — `roundShares`: целые, сумма 100, равные доли — равные цифры (тогда сумма может быть 99). Руки, равные
   по шансам из-за равноправия мастей (AhKd и AdKh против 7c7s), и до флопа получают в точности равные доли — движок
@@ -1139,7 +1569,8 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   1024×768, 2560×1440 — без прокрутки и наложений, масштаб меньше 1 понадобился только девятерым на флопе при
   1366×768 и 1280×720 (0,99 и 0,975); худший случай (9 рук с длинными списками аутов, 1280×720, три строки
   подвала) — 0,84.
-- **Движок** (`src/shared/lib/poker`, перенос из курса `D:\personal\poker-course\js`: `cards.js`, `evaluator.js`,
+- **Движок** (`supabase/functions/_shared/domain/poker` — с историй клуба в домене, им считает и пост итогов; во
+  фронте `src/shared/lib/poker` реэкспортирует его; перенос из курса `D:\personal\poker-course\js`: `cards.js`, `evaluator.js`,
   `equity.js`, `pokermath.js` — только `nCk` и `outsEquity`; диапазоны и прочая математика курса не нужны).
   Карта — 0..51 (ранг·4 + масть), `evaluate` — счёт руки 5–7 карт. `computeEquity(hands, board)` по `planEquity`:
   точный перебор, если досок не больше `EXACT_BOARD_LIMIT` (250 000 — флоп, тёрн, ривер при любом числе игроков),
@@ -1217,8 +1648,37 @@ notify, bot-setup). supabase-js в функциях — `npm:@supabase/supabase-
   права только service_role, одна строка; `mark_cron_tick`: только service_role, ok — обе отметки, не ok и null —
   только `last_run_at`; `cron_last_tick`: anon, ровно три ключа, null без отметки; security definer и пустой
   `search_path`).
-- `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed с новым Telegram-профилем в транзакции
-  с rollback: replay, settlement, голоса и прогнозы каждого вечера после слияния совпадают с исходными
+- `supabase/tests/022_amend_pause_time_adjust.sql` — то же для 022 (`amend`: нормализация `by` и `stacks`, единица
+  хранится, исходная запись не меняется; ключ повтора сверяет запись, выбивших с порядком и кратность; отказы 22023 —
+  без значения, оба значения, лишний ключ, `eventId` строкой/0/дробью, чужой вечер, нет записи, не тот тип, кратность
+  у вылета, выбившие у входа, жертва в выбивших, повтор, не список, несуществующий игрок; отменённая запись — P0001;
+  посторонний — 42501; после завершения банкир — 42501, админ — можно, вечер остаётся завершённым; правка закрытого
+  расчёта его открывает; отмена правки — `void_event`. Пауза `{minutes}`: нормализация, `{}` как раньше, отказы,
+  ключ повтора; `time_adjust {seconds}` — то же; служебная пауза перед `finish` не пишется, если стоит пауза с минутами.
+  `board_state` отдаёт правки, поправки и минуты; check типов; слияние гостя из `by` правки; права служебных функций;
+  `add_event` — security definer с пустым `search_path`):
+  `docker exec -i supabase_db_poker-club psql -U postgres -v ON_ERROR_STOP=1 -q < supabase/tests/022_amend_pause_time_adjust.sql`.
+- `supabase/tests/023_club_board_pregame_training.sql` — то же для 023 (код табло клуба: форма, check, между вечерами
+  — board null, чужой/пустой код — null; выбор вечера по всем ступеням; ответ табло клуба = `board_state` по ссылке
+  вечера, `is_training` в ответе; `next_at` без тренировок; перевыпуск — только админ, старый код гаснет;
+  `club_board_voice_clips` между вечерами, старый код, предел 100; `voice_clips_present` — участник, без звука, предел
+  300, anon и не участник — отказ; `board_ping` по токену вечера и по коду, чужие токены — false, троттлинг 5 с,
+  `voice_at` без голоса не меняется, между вечерами — false; `board_presence` — RLS и права; тренировка: день клуба не
+  занимает, второй настоящий вечер в день — 23505, пометку не сменить в обе стороны, голосования нет, finish через
+  `add_event`; удаление — только админ, только тренировка, гости тренировки — удалены, гости настоящих вечеров —
+  нет; `voice_manifest_input` без тренировок в `last_played_at`; гранты и security definer). Не зависит от даты:
+  свои вечера ставятся от `now()`:
+  `docker exec -i supabase_db_poker-club psql -U postgres -v ON_ERROR_STOP=1 -q < supabase/tests/023_club_board_pregame_training.sql`.
+- `supabase/tests/024_spectator_merge_guests.sql` — то же для 024 (backfill и null у нового профиля; `set_my_spectator`
+  — свой флаг, null — 22023, отключённый и anon — 42501; прямой update своего и чужого флага и своего `is_admin` игроку
+  не даёт RLS, админу — даёт; `merge_guests`: права, все отказы аргументов, предпросмотр и счётчики, «оба в журнале» —
+  текст для дублей, P0001 и снятие препятствия отменой входа, разные ответы на анонс; перенос журнала, голосов и
+  прогнозов, статусы и закрытые расчёты вечеров не тронуты, флаги профиля, имя для озвучки, ответ на анонс с прежним
+  временем; гранты публичных и служебных функций):
+  `docker exec -i supabase_db_poker-club psql -U postgres -v ON_ERROR_STOP=1 -q < supabase/tests/024_spectator_merge_guests.sql`.
+- `node scripts/check-merge-replay.mjs` — слияние гостя «Вова» из seed в транзакции с rollback, оба вида: с новым
+  Telegram-профилем (`merge_players`) и с новым гостем без Telegram (`merge_guests`, 024; `--kind telegram|guest` —
+  один вид): replay, settlement, голоса, прогнозы и статус каждого вечера после слияния совпадают с исходными
   с подменой id.
 - `scripts/voice/test_generate.py` — генератор голоса без базы и модели: хеш совпадает с доменом, отказы манифеста,
   пароль вырезается из ошибок, обрезка тишины и громкость, MP3 моно 48 кГц 64 kbps (если найдётся ffmpeg):

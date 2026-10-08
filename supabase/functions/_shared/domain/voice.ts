@@ -10,7 +10,7 @@
 // кириллицей. Ударение ставит сам; вручную — «+» перед ударной гласной («Эрдн+и»).
 // Без зависимостей и без Date.now(): модуль исполняют браузер (Vite), Node 24 (манифест, .ts без
 // сборки — поэтому никакого TS-only синтаксиса) и vitest. Хеш — WebCrypto (crypto.subtle).
-import type { BlindLevel, PlayerId } from './types.ts';
+import { PAUSE_MINUTES_OPTIONS, type BlindLevel, type PlayerId } from './types.ts';
 
 /** Голос клипов: модель Silero v5_5_ru, диктор xenia (CC BY-NC-SA 4.0). Часть хеша клипа. */
 export const VOICE_ID = 'silero-v5_5-xenia';
@@ -230,6 +230,8 @@ export const PHRASES = {
   rebuysSoon: 'Пять минут до закрытия ребаев.',
   rebuysClosed: 'Ребаи закрыты.',
   pause: 'Пауза.',
+  /** До конца перерыва с длительностью (пауза на N минут, миграция 022) — минута. */
+  breakMinute: 'Минута до конца перерыва.',
   resume: 'Продолжаем.',
   /** Нокаут, когда ни жертву, ни выбивших голос назвать не может. */
   knockout: 'Нокаут!',
@@ -254,6 +256,25 @@ export function blindsWords(level: BlindLevel): string {
   const ante = level.ante ?? 0;
   const base = `${numberWords(level.sb)} — ${numberWords(level.bb)}`;
   return ante > 0 ? `${base}, анте ${numberWords(ante)}` : base;
+}
+
+/**
+ * Минуты словами с согласованием: «одна минута», «две минуты», «пять минут», «двадцать одна
+ * минута» (numberWords — мужской род, «минута» — женский). Целое 0..NUMBER_WORDS_MAX.
+ */
+export function minutesWords(n: number): string {
+  let words = numberWords(n);
+  const mod100 = n % 100;
+  if (mod100 < 10 || mod100 >= 20) {
+    if (n % 10 === 1) words = words.replace(/один$/u, 'одна');
+    else if (n % 10 === 2) words = words.replace(/два$/u, 'две');
+  }
+  return `${words} ${pluralForm(n, ['минута', 'минуты', 'минут'])}`;
+}
+
+/** Пауза на N минут (миграция 022): «Перерыв десять минут.» */
+export function breakPhrase(minutes: number): string {
+  return `Перерыв ${minutesWords(minutes)}.`;
 }
 
 /** Старт таймера: «Поехали! Блайнды пять — десять.» */
@@ -313,6 +334,8 @@ export type Announcement =
   | { kind: 'rebuys_soon' }
   | { kind: 'rebuys_closed' }
   | { kind: 'pause' }
+  | { kind: 'break'; minutes: number }
+  | { kind: 'break_minute' }
   | { kind: 'resume' }
   | { kind: 'knockout'; victim: PlayerId; by: PlayerId[] }
   | { kind: 'winner'; winner: PlayerId | null };
@@ -365,6 +388,15 @@ export function announcementVariants(a: Announcement, nameOf: SpokenNameOf): str
       return [[PHRASES.rebuysClosed]];
     case 'pause':
       return [[PHRASES.pause]];
+    case 'break': {
+      // Длительность не из пульта — фразы может не быть в озвучке: тогда коротко «Пауза.».
+      const text = safe(() => breakPhrase(a.minutes));
+      if (text) out.push([text]);
+      out.push([PHRASES.pause]);
+      return out;
+    }
+    case 'break_minute':
+      return [[PHRASES.breakMinute]];
     case 'resume':
       return [[PHRASES.resume]];
     case 'knockout': {
@@ -397,10 +429,14 @@ export function announcementVariants(a: Announcement, nameOf: SpokenNameOf): str
 
 // --- Какие фразы нужны ----------------------------------------------------------------------
 
+/** Фразы перерывов, которые предлагает пульт: «Перерыв пять минут.» … (миграция 022). */
+export const BREAK_TEXTS: readonly string[] = PAUSE_MINUTES_OPTIONS.map(breakPhrase);
+
 /** Фразы без имён и уровней: всегда в манифесте и в предзагрузке табло. */
 export const FIXED_TEXTS: readonly string[] = [
   ...Object.values(PHRASES),
   ...Object.values(SEGMENTS),
+  ...BREAK_TEXTS,
 ];
 
 /** Уровни из формата (jsonb — доверять типам нельзя): только с читаемыми целыми числами. */

@@ -5,16 +5,21 @@ import {
   computeAchievements,
   computeMoney,
   diffAchievements,
+  eveningAllIns,
   eveningClubNews,
+  eveningStakes,
+  eveningStory,
   hasClubNews,
   replay,
   scorePrediction,
   seasonKey,
+  spectatesEvening,
   summarize,
   voteResults,
   type Achievement,
   type EveningClubNews,
   type EveningEvent,
+  type EveningStakes,
   type EveningSummary,
   type EventPayload,
   type EventType,
@@ -23,6 +28,7 @@ import {
   type ScoringConfig,
   type SeasonBestN,
   type StarAward,
+  type StoryItem,
   type TournamentFormat,
   type Vote,
   type VoteCategory,
@@ -75,11 +81,16 @@ export interface EveningRow {
   cancel_reason: string | null;
   /** Снимок правил очков {koPoints, winBonus} — есть у finished/settled (миграция 013). */
   scoring: unknown;
+  /**
+   * Тренировочный вечер (миграция 023): не попадает в историю и ни в один пост бота — его не выбирают
+   * шаги cron-tick, не застолбит claimPost, notify отвечает 'training'.
+   */
+  is_training: boolean;
 }
 
 // Одной строкой-литералом: из конкатенации supabase-js не выводит тип строк select.
 export const EVENING_COLUMNS =
-  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, gameday_posted_at, results_posted_at, voting_posted_at, voting_reminder_posted_at, results_revision, announce_snapshot, cancel_reason, scoring';
+  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, gameday_posted_at, results_posted_at, voting_posted_at, voting_reminder_posted_at, results_revision, announce_snapshot, cancel_reason, scoring, is_training';
 
 interface PlayerRow {
   id: string;
@@ -181,6 +192,7 @@ export interface ClubHistory {
 /**
  * Все завершённые вечера с журналами и итогами. Вечер, чей журнал не завершён, пропускаем.
  * Очки вечера — по его снимку правил (evenings.scoring), cfg — только для вечеров без снимка.
+ * Тренировки (миграция 023) в историю не входят: ни в итоги, ни в ачивки, ни в «Жизнь клуба».
  */
 export async function loadHistory(db: Db, cfg: ScoringConfig): Promise<ClubHistory> {
   const eveningRows = await fetchAll<EveningRow>((from, to) =>
@@ -188,6 +200,7 @@ export async function loadHistory(db: Db, cfg: ScoringConfig): Promise<ClubHisto
       .from('evenings')
       .select(EVENING_COLUMNS)
       .in('status', ['finished', 'settled'])
+      .eq('is_training', false)
       .order('scheduled_at')
       .order('id')
       .range(from, to),
@@ -378,6 +391,7 @@ export async function buildResultsPost(
   const state = replay(evening.format, events, lastMs);
   const money = computeMoney(evening.format, state);
   const clubNews = clubNewsOf(history, evening.id, guests, settings.season_best_n);
+  const story = storyOf(history, evening, guests, settings.season_best_n);
 
   return resultsPost({
     eveningId: evening.id,
@@ -396,7 +410,106 @@ export async function buildResultsPost(
     botUsername: settings.bot_username,
     corrected: corrected || evening.results_revision > 0,
     clubNews,
+    story,
   });
+}
+
+/**
+ * «Сюжет вечера» для поста итогов (eveningStory с forPost: без рекордов и лидера сезона — они в
+ * «Жизни клуба» — и без «Камбэка», который уже в «Новых ачивках»). Олл-ины — из журнала вечера,
+ * шансы — движок домена: до флопа полный Монте-Карло только у раздач, где быстрая прикидка не
+ * исключает «победу с N %» (allInSwing), — лимит CPU функции не под угрозой. Как и «Жизнь клуба» —
+ * дополнение: подсчёт упал — пост уходит без блока (ошибка в лог).
+ */
+export function storyOf(
+  history: ClubHistory,
+  evening: Pick<EveningRow, 'id' | 'format'>,
+  guests: ReadonlySet<PlayerId>,
+  bestN: number,
+): StoryItem[] {
+  try {
+    const summary = history.summaries.find((s) => s.eveningId === evening.id);
+    if (!summary) return [];
+    return eveningStory({
+      summary,
+      allIns: eveningAllIns(evening.format, history.events.get(evening.id) ?? []),
+      excluded: guests,
+      club: {
+        summaries: history.summaries,
+        excluded: guests,
+        bestN,
+        bestNBySeason: history.bestNBySeason,
+      },
+      forPost: true,
+    });
+  } catch (error) {
+    console.error(`Сюжет вечера ${evening.id} не посчитан: ${describeError(error)}`);
+    return [];
+  }
+}
+
+/** Игрок для «На кону»: из справочника players. */
+export interface StakesPlayerRow {
+  id: string;
+  is_active: boolean;
+  is_guest: boolean;
+  /** Болельщик (миграция 024). */
+  is_spectator: boolean | null;
+}
+
+/**
+ * «На кону» объявленного вечера для поста дня игры: кто может прийти (постоянные игроки, кроме
+ * ответивших «не иду» и болельщиков на этот вечер; выключенный, но ответивший «иду» или «под
+ * вопросом», — тоже), шаги к ачивкам и рекордам и расклад сезона (eveningStakes). `seated` — кто уже
+ * за столом (seatedIds журнала): посаженный болельщик на этот вечер игрок. Дополнение: подсчёт упал —
+ * пост без этих строк.
+ */
+export function stakesOf(
+  history: ClubHistory,
+  evening: Pick<EveningRow, 'id' | 'scheduled_at' | 'format'>,
+  players: readonly StakesPlayerRow[],
+  rsvps: readonly { player_id: string; status: string }[],
+  bestN: number,
+  seated: ReadonlySet<string> = new Set(),
+): EveningStakes | null {
+  try {
+    const guests = new Set(players.filter((p) => p.is_guest).map((p) => p.id));
+    const rsvpOf = new Map(rsvps.map((r) => [r.player_id, r.status]));
+    const answer = (id: string): 'yes' | 'maybe' | 'no' | null => {
+      const status = rsvpOf.get(id);
+      return status === 'yes' || status === 'maybe' || status === 'no' ? status : null;
+    };
+    return eveningStakes(
+      {
+        summaries: history.summaries,
+        excluded: guests,
+        predictions: scoredPredictions(history, () => true),
+        bestN,
+        bestNBySeason: history.bestNBySeason,
+      },
+      {
+        eveningDate: evening.scheduled_at,
+        players: players
+          .filter((p) => {
+            const a = answer(p.id);
+            return !p.is_guest && (p.is_active || a === 'yes' || a === 'maybe');
+          })
+          .map((p) => ({
+            playerId: p.id,
+            rsvp: answer(p.id),
+            spectator: spectatesEvening({
+              spectator: p.is_spectator,
+              rsvp: answer(p.id),
+              seated: seated.has(p.id),
+            }),
+          })),
+        buyInRub: evening.format.buyInRub,
+      },
+    );
+  } catch (error) {
+    console.error(`«На кону» вечера ${evening.id} не посчитано: ${describeError(error)}`);
+    return null;
+  }
 }
 
 /**
@@ -463,10 +576,12 @@ export async function claimPost(
   extra: Record<string, unknown> = {},
   match: Record<string, string> = {},
 ): Promise<boolean> {
+  // Тренировку не застолбит ни один пост (миграция 023) — страховка к фильтрам шагов cron-tick.
   let query = db
     .from('evenings')
     .update({ ...extra, [column]: atIso })
     .eq('id', eveningId)
+    .eq('is_training', false)
     .is(column, null);
   if (statuses) query = query.in('status', [...statuses]);
   for (const [key, value] of Object.entries(match)) query = query.eq(key, value);
@@ -489,8 +604,12 @@ export async function releasePost(
   if (error) console.error(`release ${column} ${eveningId}: ${describeError(error)}`);
 }
 
-/** not_announced — анонс вечера в группу ещё не уходил: о правке писать не нужно (миграция 008). */
-export type PostOutcome = 'posted' | 'already_posted' | 'no_group' | 'no_changes' | 'not_announced';
+/**
+ * not_announced — анонс вечера в группу ещё не уходил: о правке писать не нужно (миграция 008).
+ * training — тренировочный вечер: в группу о нём ничего не пишем (миграция 023).
+ */
+export type PostOutcome =
+  'posted' | 'already_posted' | 'no_group' | 'no_changes' | 'not_announced' | 'training';
 
 /** Застолбить → отправить → при ошибке снять отметку и пробросить ошибку. */
 export async function publishOnce(
@@ -523,6 +642,7 @@ export async function postEveningResults(
   evening: EveningRow,
   nowMs: number,
 ): Promise<PostOutcome> {
+  if (evening.is_training) return 'training';
   if (evening.results_posted_at) return 'already_posted';
   const settings = await loadSettings(db);
   if (settings.group_chat_id === null || settings.group_chat_id === '') return 'no_group';
@@ -544,6 +664,7 @@ export async function postCorrectedResults(
   evening: EveningRow,
   nowMs: number,
 ): Promise<PostOutcome> {
+  if (evening.is_training) return 'training';
   const settings = await loadSettings(db);
   if (settings.group_chat_id === null || settings.group_chat_id === '') return 'no_group';
   // Итог ещё не публиковался — это обычный пост итогов, а не поправка.
@@ -567,6 +688,7 @@ export async function postCorrectedResults(
     .from('evenings')
     .update({ results_posted_at: atIso, results_revision: evening.results_revision + 1 })
     .eq('id', evening.id)
+    .eq('is_training', false)
     .eq('results_posted_at', since)
     .in('status', ['finished', 'settled'])
     .select('id');

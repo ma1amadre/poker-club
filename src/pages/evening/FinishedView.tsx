@@ -1,7 +1,11 @@
-// Итог вечера: победитель, места, очки, призы, нетто, лучший охотник; ссылки на расчёт и
-// голосование; «Твой вечер» игравшему или сделавшему прогноз (EveningRecap); «Прогнозы вечера» —
-// кто на кого ставил, кто угадал и сколько очков Оракула. Места ведут в карточки игроков. Админу —
-// правка закрытого вечера (отмена записей, возврат вечера в игру).
+// Итог вечера: победитель, места, очки, призы, нетто, лучший охотник; «Сюжет вечера» — 2–4 строки о
+// главном (доменный eveningStory); ссылки на расчёт и голосование; «Твой вечер» игравшему или
+// сделавшему прогноз (EveningRecap); «Олл-ины вечера» — все записанные раздачи с долями по улицам;
+// «Прогнозы вечера» — кто на кого ставил, кто угадал и сколько очков Оракула. Места ведут в карточки
+// игроков. Админу —
+// правка закрытого вечера (отмена записей, правка входа, ребая и вылета на месте — AmendSheet, возврат
+// вечера в игру).
+import { amendField } from '@domain/amend.ts';
 import { computeMoney } from '@domain/money.ts';
 import { eveningPoints, eveningScoring } from '@domain/scoring.ts';
 import { isShowdownEvent } from '@domain/showdown.ts';
@@ -9,10 +13,12 @@ import { useState } from 'react';
 import {
   notifyEveningFinished,
   errorMessage,
+  isTrainingEvening,
   scoringFromSettings,
   useClubHistory,
   usePredictions,
   useSettings,
+  type EveningEventRecord,
 } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import {
@@ -27,6 +33,7 @@ import {
   pluralWithNumber,
 } from '../../shared/lib';
 import {
+  AllInList,
   Amount,
   Avatar,
   Badge,
@@ -43,8 +50,11 @@ import {
   Stats,
   useToast,
 } from '../../shared/ui';
+import { AmendSheet } from './AmendSheet';
 import { EveningRecapList } from './EveningRecap';
+import { StoryFacts } from './EveningStory';
 import { useEveningRecap } from './useEveningRecap';
+import { useEveningStory } from './useEveningStory';
 import { bestHunters, orderedPlayers, ordinalPlace, reopenedNotice, totalRebuys } from './lib';
 import { EventFeed, PlayersList } from './parts';
 import {
@@ -77,6 +87,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
     player?.id,
     events,
   );
+  const story = useEveningStory(model, history, settings);
   const money = computeMoney(format, state);
   // Очки — по правилам, зафиксированным при завершении вечера (evenings.scoring), а не текущим.
   const points = eveningPoints(
@@ -89,6 +100,8 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
   const hunterKos = hunters[0] ? (state.players[hunters[0]]?.kos ?? 0) : 0;
   const rebuys = totalRebuys(state);
 
+  // У тренировки голосования нет (voting_closes_at всегда null, миграция 023) — и кнопки к нему.
+  const training = isTrainingEvening(evening);
   const votingOpen =
     evening.voting_closes_at !== null && Date.parse(evening.voting_closes_at) > nowMs;
   const iPlayed = Boolean(player && state.players[player.id]);
@@ -99,6 +112,12 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
   const reopened = reopenedNotice(evening, canControl, iPlayed);
   const toast = useToast();
   const [publishing, setPublishing] = useState(false);
+  // Журнал: вход, ребай и вылет — «Изменить запись» (там же отмена), остальное — подтверждение отмены.
+  const [amending, setAmending] = useState<EveningEventRecord | null>(null);
+  const selectEvent = (ev: EveningEventRecord) => {
+    if (amendField(ev) !== null && !ev.voided) setAmending(ev);
+    else void actions.voidWithConfirm(ev);
+  };
   // Журнал правили после поста итогов (платежи и олл-ин на итог не влияют) — пост в группе устарел.
   const postedAt = evening.results_posted_at ? Date.parse(evening.results_posted_at) : null;
   const resultsOutdated =
@@ -192,15 +211,24 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         </p>
       )}
 
+      {/* Сюжет — когда шансы олл-инов и история посчитаны: строки не перестраиваются на глазах. */}
+      {state.finished && !story.pending && story.items.length > 0 && (
+        <Section title="Сюжет вечера">
+          <StoryFacts items={story.items} nameOf={nameOf} meId={player?.id} />
+        </Section>
+      )}
+
       <div className="ev-actions">
-        <ButtonLink
-          to={paths.vote(evening.id)}
-          variant={voteIsMain ? 'primary' : 'secondary'}
-          block
-          icon="star"
-        >
-          Перейти к голосованию
-        </ButtonLink>
+        {!training && (
+          <ButtonLink
+            to={paths.vote(evening.id)}
+            variant={voteIsMain ? 'primary' : 'secondary'}
+            block
+            icon="star"
+          >
+            Перейти к голосованию
+          </ButtonLink>
+        )}
         <ButtonLink
           to={paths.settle(evening.id)}
           variant={settleIsMain ? 'primary' : 'secondary'}
@@ -288,16 +316,27 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         </Section>
       )}
 
+      {story.allIns.length > 0 && (
+        <Section
+          title="Олл-ины вечера"
+          aside={pluralWithNumber(story.allIns.length, ['раздача', 'раздачи', 'раздач'])}
+          footer="Доли банка — как на табло: на каждой улице, где раздачу показывали. «Победа с N %» — банк забрал тот, у кого шансов было меньше."
+        >
+          <AllInList allIns={story.allIns} nameOf={nameOf} meId={player?.id} />
+        </Section>
+      )}
+
       <EveningPredictions model={model} meId={player?.id ?? null} />
 
       {isAdmin && (
         <Section title="Правка закрытого вечера">
           <p className="m-small">
-            Отмена записи пересчитает места, очки и деньги — нажми на неё в журнале ниже. Чтобы
-            добавить вылет или ребай, верни вечер в игру: пульт откроется снова на паузе, закрытый
-            расчёт откроется, а завершить вечер нужно будет заново — в группу уйдут исправленные
-            итоги. Ребай после возврата можно записать, только если ребаи были открыты в момент
-            завершения.
+            Отмена записи пересчитает места, очки и деньги — нажми на неё в журнале ниже. У входа,
+            ребая и вылета там же можно исправить кратность или кто выбил: запись останется на своём
+            месте, места не изменятся. Чтобы добавить вылет или ребай, верни вечер в игру: пульт
+            откроется снова на паузе, закрытый расчёт откроется, а завершить вечер нужно будет
+            заново{training ? '' : ' — в группу уйдут исправленные итоги'}. Ребай после возврата
+            можно записать, только если ребаи были открыты в момент завершения.
           </p>
           {resultsOutdated && (
             <Notice
@@ -332,9 +371,19 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         nameOf={nameOf}
         format={format}
         errorsById={errorsById}
-        onVoid={isAdmin ? (ev) => void actions.voidWithConfirm(ev) : undefined}
+        feed={model.feed}
+        onSelect={isAdmin ? selectEvent : undefined}
+        canEdit={isAdmin ? (ev) => amendField(ev) !== null : undefined}
         limit={8}
       />
+      {isAdmin && (
+        <AmendSheet
+          event={amending}
+          onClose={() => setAmending(null)}
+          model={model}
+          actions={actions}
+        />
+      )}
     </>
   );
 }

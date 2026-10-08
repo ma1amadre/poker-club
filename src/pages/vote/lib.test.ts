@@ -1,6 +1,9 @@
+import type { AllIn, AllInSwing } from '@domain/allins.ts';
 import type { EveningEvent, EventPayload, EventType } from '@domain/types.ts';
+import type { VoteCategory } from '@domain/votes.ts';
 import { describe, expect, it } from 'vitest';
 import {
+  allInSuggestions,
   CAPTION_MAX,
   categoryResults,
   formatCountdown,
@@ -165,5 +168,73 @@ describe('formatCountdown', () => {
     expect(formatCountdown(3600_000)).toBe('1 ч');
     expect(formatCountdown(14 * 60_000 + 31_500)).toBe('14:32');
     expect(formatCountdown(-5000)).toBe('00:00');
+  });
+});
+
+describe('подсказки из олл-инов вечера', () => {
+  const SD1 = '11111111-1111-4111-8111-111111111111';
+  const SD2 = '22222222-2222-4222-8222-222222222222';
+  const SD3 = '33333333-3333-4333-8333-333333333333';
+  const allIn = (showdownId: string, winners: string[] | null): AllIn => ({
+    showdownId,
+    openedEventId: 1,
+    openedAt: '2026-10-08T18:00:00.000Z',
+    updatedAt: '2026-10-08T18:01:00.000Z',
+    hands: [
+      { playerId: 'a', cards: ['As', 'Ad'] },
+      { playerId: 'b', cards: ['7c', '2h'] },
+      { playerId: 'c', cards: ['Kc', 'Kd'] },
+    ],
+    board: winners ? ['7d', '2s', 'Kh', '9h', '3d'] : [],
+    boardSizes: winners ? [0, 5] : [0],
+    winners,
+  });
+  const swing = (
+    showdownId: string,
+    winnerId: string,
+    pct: number,
+    favoriteIds: string[],
+  ): AllInSwing => ({
+    showdownId,
+    winnerId,
+    pct,
+    boardSize: 0,
+    street: 'preflop',
+    favoriteIds,
+    favoritePct: 60,
+  });
+  // SD1: победа c с 20 %, фаворит — a; SD2: победа b с 9 %, фавориты a и c; SD3 — без ривера.
+  const allIns = [
+    allIn(SD1, ['c']),
+    allIn(SD2, ['b']),
+    allIn(SD3, null),
+    allIn('split', ['a', 'b']),
+  ];
+  const swings = new Map([
+    [SD1, swing(SD1, 'c', 20, ['a'])],
+    [SD2, swing(SD2, 'b', 9, ['a', 'c'])],
+  ]);
+  const pick = (cat: VoteCategory, candidates = ['a', 'b', 'c']) =>
+    allInSuggestions(cat, allIns, swings, candidates).map((s) => [s.allIn.showdownId, s.nomineeId]);
+
+  it('«Рука» — победители раздач, самые невероятные первыми; делёж и раздача без ривера — нет', () => {
+    expect(pick('hand')).toEqual([
+      [SD2, 'b'],
+      [SD1, 'c'],
+    ]);
+  });
+
+  it('«Бэд-бит» — проигравшие фавориты «победы с N %»', () => {
+    expect(pick('badbeat')).toEqual([
+      [SD2, 'a'],
+      [SD2, 'c'],
+      [SD1, 'a'],
+    ]);
+  });
+
+  it('за себя и за не участника вечера — подсказок нет; у «Блефа» — никогда', () => {
+    expect(pick('badbeat', ['b', 'c'])).toEqual([[SD2, 'c']]);
+    expect(pick('hand', ['a'])).toEqual([]);
+    expect(pick('bluff')).toEqual([]);
   });
 });

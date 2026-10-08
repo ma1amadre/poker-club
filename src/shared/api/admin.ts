@@ -111,6 +111,29 @@ export function useUpsertPlayer() {
   });
 }
 
+/**
+ * Удалить тренировочный вечер целиком (миграция 023, только админ; обычный вечер сервер не даст):
+ * журнал, ответы, прогнозы и гостей, которых завели на нём. Возвращает, сколько гостей удалено.
+ */
+export async function deleteTrainingEvening(eveningId: string): Promise<{ guestsDeleted: number }> {
+  const { data, error } = await supabase.rpc('delete_training_evening', { p_evening: eveningId });
+  if (error) throw toError(error);
+  const guests = (data as { guestsDeleted?: unknown } | null)?.guestsDeleted;
+  return { guestsDeleted: typeof guests === 'number' ? guests : 0 };
+}
+
+export function useDeleteTrainingEvening() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: deleteTrainingEvening,
+    onSuccess: (_result, eveningId) => {
+      queryClient.removeQueries({ queryKey: queryKeys.evening(eveningId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningsAll });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.players });
+    },
+  });
+}
+
 export function useUpsertEvening() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -5,7 +5,8 @@
 //   хранилище недоступно — голос выключен. Нажатие самой кнопки голоса будит звук в press, а не в
 //   общем обработчике: иначе к click звук уже играл бы, и press принял бы нажатие за «выключить».
 // - Клипы: всё, что табло может сказать на этом вечере (eveningVoiceTexts: формат вечера и имена
-//   игроков из board_state), хешируется и подгружается RPC board_voice_clips пачками, пока голос
+//   игроков из board_state), хешируется и подгружается RPC board_voice_clips (табло клуба —
+//   club_board_voice_clips, миграция 023) пачками, пока голос
 //   включён (ClipLoader). Новые игроки — дозагрузка; не озвученные ещё фразы перепроверяются раз в
 //   5 минут (генератор могли запустить вручную), упавший запрос — не раньше чем через 30 с.
 // - Объявления — voiceStep по кадрам раз в секунду; первый кадр — точка отсчёта, так что история
@@ -29,7 +30,12 @@ import {
 } from '@domain/voice.ts';
 import type { EveningEvent, EveningState } from '@domain/types.ts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchVoiceClips, VOICE_CLIPS_CHUNK, type BoardState } from '../../shared/api';
+import {
+  fetchVoiceClips,
+  VOICE_CLIPS_CHUNK,
+  type BoardSource,
+  type BoardState,
+} from '../../shared/api';
 import { voiceFrame, voiceStep, type VoiceFrame } from './announcer';
 import { NO_VOICE_GAPS, type VoiceGaps } from './boardView';
 import { ClipLoader } from './clipLoader';
@@ -69,14 +75,15 @@ export interface BoardVoice {
 }
 
 interface Args {
-  token: string;
+  /** Ссылка вечера или табло клуба — клипы просят по ней же. Стабильный объект (useMemo). */
+  source: BoardSource;
   data: BoardState;
   state: EveningState;
   applied: readonly EveningEvent[];
   nowMs: number;
 }
 
-export function useBoardVoice({ token, data, state, applied, nowMs }: Args): BoardVoice {
+export function useBoardVoice({ source, data, state, applied, nowMs }: Args): BoardVoice {
   const [supported] = useState(voiceSupported);
   const [enabled, setEnabled] = useState(() => supported && readPref());
   // Играет ли AudioContext (жест получен) — VoicePlayer сообщает о смене состояния.
@@ -169,7 +176,7 @@ export function useBoardVoice({ token, data, state, applied, nowMs }: Args): Boa
     const due = loader.due(hashes(), Date.now());
     if (due.length === 0) return;
     void loader
-      .load(due, (chunk) => fetchVoiceClips(token, VOICE_ID, chunk), VOICE_CLIPS_CHUNK, Date.now)
+      .load(due, (chunk) => fetchVoiceClips(source, VOICE_ID, chunk), VOICE_CLIPS_CHUNK, Date.now)
       .then(() => {
         const isMissing = (text: string) => {
           const h = hashOf.current.get(normalizeSpeech(text));
@@ -187,7 +194,7 @@ export function useBoardVoice({ token, data, state, applied, nowMs }: Args): Boa
         };
         setGaps((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
       });
-  }, [enabled, token, textsKey, hashVersion, loadTick, getPlayer, players, names, format]);
+  }, [enabled, source, textsKey, hashVersion, loadTick, getPlayer, players, names, format]);
 
   // --- Объявления -----------------------------------------------------------------------------
   // Проверка звука: голос заработал — ждём клип «Голос включён.» (см. шапку).

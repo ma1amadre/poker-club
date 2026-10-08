@@ -7,10 +7,13 @@ import {
   formatBlinds,
   formatDuration,
   formatNumber,
+  formatTime,
+  formatWeekdayDate,
   NBSP,
   pluralWithNumber,
 } from '../../shared/lib/format';
-import { joinNames } from '../../shared/lib/text';
+import { nextGameAt } from '../../shared/lib/clubTime';
+import { capitalize, joinNames } from '../../shared/lib/text';
 import {
   averageStackBb,
   formatBb,
@@ -297,4 +300,54 @@ export function voiceGapNotes(gaps: VoiceGaps): string[] {
     );
   if (out.length > 0) out.push(`Новые фразы и${NBSP}имена озвучиваются раз в${NBSP}сутки.`);
   return out;
+}
+
+// --- Табло клуба между вечерами (миграция 023) ----------------------------------------------------
+
+/** Что знает табло клуба, когда вечера нет: ближайший анонс и расписание (club_board_state). */
+export interface ClubIdleInput {
+  next_at: string | null;
+  schedule?: { weekday: number; time: string } | null;
+}
+
+/** Экран «Следующая игра» табло клуба. */
+export interface ClubIdleView {
+  eyebrow: string;
+  headline: string;
+  /** «в 15:00», за сутки до игры — «в 15:00 · через 5 ч 12 мин»; null — время не известно. */
+  when: string | null;
+  note: string;
+}
+
+const DAY_MS = 24 * 60 * MINUTE_MS;
+
+/**
+ * Между вечерами табло клуба показывает следующую игру: объявленный настоящий вечер (next_at —
+ * перенос и отмена в нём уже учтены), иначе ближайший день по расписанию клуба (вечер бот создаст
+ * сам за announce_hours_before). Время прошло или не задано — без даты.
+ */
+export function clubIdleView(input: ClubIdleInput, nowMs: number): ClubIdleView {
+  const announced = input.next_at ? Date.parse(input.next_at) : Number.NaN;
+  const fromSchedule = !(Number.isFinite(announced) && announced > nowMs);
+  const nextMs = !fromSchedule
+    ? announced
+    : input.schedule
+      ? nextGameAt(nowMs, input.schedule.weekday, input.schedule.time)
+      : null;
+  const note = `Табло само переключится на вечер в${NBSP}день игры — нажимать ничего не нужно.`;
+  if (nextMs === null)
+    return {
+      eyebrow: 'Табло клуба',
+      headline: 'Следующая игра',
+      when: null,
+      note: 'Вечер появится здесь сам, как только его объявят.',
+    };
+  const left = nextMs - nowMs;
+  const soon = left <= DAY_MS ? startsInText(nextMs, nowMs) : null;
+  return {
+    eyebrow: fromSchedule ? 'Следующая игра по расписанию' : 'Следующая игра',
+    headline: capitalize(formatWeekdayDate(nextMs)),
+    when: soon ? `в ${formatTime(nextMs)}${NBSP}· ${soon}` : `в ${formatTime(nextMs)}`,
+    note,
+  };
 }

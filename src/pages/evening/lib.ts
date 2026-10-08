@@ -8,8 +8,18 @@ import {
   type Payment,
   type SettlementRow,
 } from '@domain/money.ts';
-import { readStacks, replayLog, type EventDraft } from '@domain/replay.ts';
+import {
+  pauseLeftMs,
+  readAmend,
+  readPause,
+  readStacks,
+  readTimeAdjust,
+  replayLog,
+  type EventDraft,
+  type ReplayLog,
+} from '@domain/replay.ts';
 import { readShowdown, streetOf } from '@domain/showdown.ts';
+import { spectatesEvening } from '@domain/spectators.ts';
 import type {
   BlindLevel,
   EveningEvent,
@@ -30,7 +40,7 @@ import {
   pluralWithNumber,
 } from '../../shared/lib/format';
 import { cardLabel } from '../../shared/lib/poker/cards';
-import { joinNames, NAME_MAX, normalizeName } from '../../shared/lib/text';
+import { joinNames, NAME_MAX, nameMatchKey, normalizeName } from '../../shared/lib/text';
 import { RSVP_ORDER } from '../../shared/api/types';
 
 export type NameOf = (id: PlayerId) => string;
@@ -64,41 +74,157 @@ export interface EventLine {
 }
 
 /**
+ * Как журнал применил записи (правка на месте, миграция 022): лента показывает исправленную запись
+ * с поправкой в силе, а саму поправку — со ссылкой на исправляемую.
+ */
+export interface FeedContext {
+  /** id исправленной записи → она же с поправкой в силе (replayLog.applied). */
+  effective: ReadonlyMap<number, EveningEvent>;
+  /** id → запись журнала: для поправки — исправляемая запись. */
+  byId: ReadonlyMap<number, EveningEvent>;
+  /**
+   * id поправки → исправляемая запись со значением, которое было в силе перед этой поправкой:
+   * последняя принятая поправка той же записи раньше неё, иначе исходное (подпись «было»).
+   */
+  previous: ReadonlyMap<number, EveningEvent>;
+}
+
+export function feedContext(
+  events: readonly EveningEvent[],
+  log: Pick<ReplayLog, 'applied' | 'amended'>,
+): FeedContext {
+  const effective = new Map<number, EveningEvent>();
+  for (const e of log.applied) if (log.amended.has(e.id)) effective.set(e.id, e);
+  const byId = new Map(events.map((e) => [e.id, e]));
+  const accepted = new Set(log.applied.filter((e) => e.type === 'amend').map((e) => e.id));
+  const inForce = new Map<number, EveningEvent>();
+  const previous = new Map<number, EveningEvent>();
+  for (const ev of [...events].sort((a, b) => a.id - b.id)) {
+    if (ev.type !== 'amend') continue;
+    const patch = readAmend(ev.payload);
+    const target = patch ? byId.get(patch.eventId) : undefined;
+    if (!patch || !target) continue;
+    previous.set(ev.id, inForce.get(target.id) ?? target);
+    if (accepted.has(ev.id)) {
+      const base = target.payload as Record<string, unknown>;
+      const payload =
+        'by' in patch ? { ...base, by: [...patch.by] } : { ...base, stacks: patch.stacks };
+      inForce.set(target.id, { ...target, payload: payload as EveningEvent['payload'] });
+    }
+  }
+  return { effective, byId, previous };
+}
+
+/** «выбивает Саша», «выбивают Саша и Дима — нокаут каждому», «кто выбил — не указано». */
+function killersText(names: readonly string[]): string {
+  if (names.length === 0) return 'кто выбил — не указано';
+  if (names.length === 1) return `выбивает ${names[0]}`;
+  return `выбивают ${joinNames(names)} — нокаут каждому`;
+}
+
+/** «1 мин», «30 с», «1 мин 30 с» — поправка времени уровня. */
+function shiftText(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const sec = seconds % 60;
+  if (m === 0) return `${sec}${NBSP}с`;
+  return sec === 0 ? `${m}${NBSP}мин` : `${m}${NBSP}мин ${sec}${NBSP}с`;
+}
+
+/**
  * Подпись события для ленты. Глаголы в настоящем времени («выбивает») — у них нет рода,
  * а имена игроков бывают и мужские, и женские. Вход и ребай кратно стандартному — с суммой
- * («вход на 1 000 ₽»); стандартный — без подробностей, как раньше.
+ * («вход на 1 000 ₽»); стандартный — без подробностей, как раньше. С контекстом ленты (`ctx`)
+ * исправленная запись показана с поправкой в силе и пометкой «исправлено».
  */
 export function describeEvent(
   ev: EveningEvent,
   nameOf: NameOf,
   formatRub: (n: number) => string,
   format: TournamentFormat,
+  ctx?: FeedContext,
 ): EventLine {
+  const shown = ctx?.effective.get(ev.id) ?? ev;
+  const amended = shown !== ev;
+  const withMark = (detail: string | null): string | null =>
+    amended ? [detail, 'исправлено'].filter(Boolean).join(' · ') : detail;
   const who = () => {
     const id = playerOf(ev);
     return id ? nameOf(id) : 'игрок';
   };
   const entrySum = (word: string): string | null => {
-    const k = readStacks(ev.payload);
-    return k !== null && k > 1 ? `${word} на ${formatRub(entryAmounts(format, k).rub)}` : null;
+    const k = readStacks(shown.payload);
+    // Исправленный стандартный вход — тоже с суммой: видно, на что его поправили.
+    return k !== null && (k > 1 || amended)
+      ? `${word} на ${formatRub(entryAmounts(format, k).rub)}`
+      : null;
   };
   switch (ev.type) {
     case 'join':
-      return { kind: 'entry', title: `Вход: ${who()}`, detail: entrySum('вход') };
+      return { kind: 'entry', title: `Вход: ${who()}`, detail: withMark(entrySum('вход')) };
     case 'rebuy':
-      return { kind: 'entry', title: `Ребай: ${who()}`, detail: entrySum('ребай') };
-    case 'bust': {
-      const by = byOf(ev).map(nameOf);
-      let detail: string;
-      if (by.length === 0) detail = 'кто выбил — не указано';
-      else if (by.length === 1) detail = `выбивает ${by[0]}`;
-      else detail = `выбивают ${joinNames(by)} — нокаут каждому`;
-      return { kind: 'bust', title: `Вылет: ${who()}`, detail };
+      return { kind: 'entry', title: `Ребай: ${who()}`, detail: withMark(entrySum('ребай')) };
+    case 'bust':
+      return {
+        kind: 'bust',
+        title: `Вылет: ${who()}`,
+        detail: withMark(killersText(byOf(shown).map(nameOf))),
+      };
+    case 'amend': {
+      const patch = readAmend(ev.payload);
+      const target = patch ? ctx?.byId.get(patch.eventId) : undefined;
+      // «Было» — значение в силе перед этой правкой (после прошлых правок той же записи).
+      const before = ctx?.previous.get(ev.id) ?? target;
+      const targetWho = target ? playerOf(target) : null;
+      const name = targetWho ? `: ${nameOf(targetWho)}` : '';
+      if (patch && 'by' in patch) {
+        const was = before ? byOf(before).map(nameOf) : null;
+        return {
+          kind: 'bust',
+          title: `Правка вылета${name}`,
+          detail: [
+            killersText(patch.by.map(nameOf)),
+            was ? `было: ${was.length > 0 ? joinNames(was) : 'не указано'}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        };
+      }
+      if (patch && 'stacks' in patch) {
+        const was = before ? readStacks(before.payload) : null;
+        return {
+          kind: 'entry',
+          title: `Правка ${target?.type === 'rebuy' ? 'ребая' : 'входа'}${name}`,
+          detail: [
+            `×${patch.stacks} — ${formatRub(entryAmounts(format, patch.stacks).rub)}`,
+            was !== null ? `было: ×${was}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        };
+      }
+      return { kind: 'entry', title: 'Правка записи', detail: null };
+    }
+    case 'time_adjust': {
+      const seconds = readTimeAdjust(ev.payload);
+      return {
+        kind: 'clock',
+        title:
+          seconds === null
+            ? 'Время уровня'
+            : `Время уровня: ${seconds > 0 ? '+' : '−'}${shiftText(Math.abs(seconds))}`,
+        detail: null,
+      };
     }
     case 'timer_start':
       return { kind: 'clock', title: 'Старт турнира', detail: null };
-    case 'timer_pause':
-      return { kind: 'clock', title: 'Пауза', detail: null };
+    case 'timer_pause': {
+      const minutes = readPause(ev.payload)?.minutes ?? null;
+      return {
+        kind: 'clock',
+        title: minutes === null ? 'Пауза' : `Перерыв ${minutes}${NBSP}мин`,
+        detail: null,
+      };
+    }
     case 'timer_resume':
       return { kind: 'clock', title: 'Игра продолжается', detail: null };
     case 'level_next':
@@ -561,6 +687,43 @@ export interface ClockView {
   note: string | null;
 }
 
+/** Перерыв с длительностью (пауза на N минут, миграция 022): отсчёт до конца или «пора продолжать». */
+export interface BreakView {
+  minutes: number;
+  /** До конца перерыва, мс (0 — срок вышел). */
+  leftMs: number;
+  /** Срок вышел: пора продолжать (таймер сам не продолжает — только банкир). */
+  due: boolean;
+  /** «07:12» — обратный отсчёт до конца перерыва. */
+  countdown: string;
+}
+
+/** Перерыв на N минут сейчас (nowMs — серверное время) или null: не пауза или пауза без срока. */
+export function breakView(state: EveningState, nowMs: number): BreakView | null {
+  const left = pauseLeftMs(state, nowMs);
+  const minutes = state.timer.pause?.minutes ?? null;
+  if (left === null || minutes === null) return null;
+  return { minutes, leftMs: Math.max(0, left), due: left <= 0, countdown: formatClock(left) };
+}
+
+/** «продолжаем через 07:12» / «пора продолжать» — строка перерыва на часах (с маленькой буквы). */
+export function breakLine(view: BreakView): string {
+  return view.due ? 'пора продолжать' : `продолжаем через ${view.countdown}`;
+}
+
+/**
+ * Нужны ли на пульте кнопки ±1 мин: уровень по времени, не последний, таймер запущен, вечер не
+ * завершён. Граница (не в минус, не длиннее уровня) — canApply домена: кнопка недоступна.
+ */
+export function timeAdjustable(state: EveningState): boolean {
+  return (
+    !state.finished &&
+    state.timer.status !== 'not_started' &&
+    state.currentLevel.trigger.type === 'time' &&
+    state.nextLevel !== null
+  );
+}
+
 /**
  * Что показывать на часах пульта и табло. На последнем уровне обратного отсчёта нет: уровень сам
  * не кончается (блайнды остаются последними), поэтому «00:00» сбивало бы с толку — показываем,
@@ -772,6 +935,9 @@ export function linkedPayment<T extends EveningEvent & { createdBy?: string | nu
 // --- Записано, но не принято журналом ------------------------------------------------------
 
 const REJECTED_TITLE: Partial<Record<EventType, string>> = {
+  amend: 'Правка не принята',
+  time_adjust: 'Поправка времени не принята',
+  timer_pause: 'Пауза не принята',
   join: 'Вход не принят',
   rebuy: 'Ребай не принят',
   bust: 'Вылет не принят',
@@ -987,25 +1153,39 @@ export interface SeatCandidate<P> {
 
 /**
  * Кого можно посадить за стол: активные игроки клуба, ещё не вошедшие в турнир. Сначала ответившие
- * «иду», затем «под вопросом», молчавшие и «не иду»; постоянные игроки раньше гостей; дальше по имени.
+ * «иду», затем «под вопросом», молчавшие и «не иду»; постоянные игроки раньше болельщиков (миграция
+ * 024: их тоже можно посадить — тогда на этот вечер они игроки), болельщики раньше гостей; дальше
+ * по имени.
  */
 export function seatCandidates<
-  P extends { id: string; display_name: string; is_active: boolean; is_guest: boolean },
+  P extends {
+    id: string;
+    display_name: string;
+    is_active: boolean;
+    is_guest: boolean;
+    is_spectator?: boolean | null;
+  },
 >(
   players: readonly P[],
   state: EveningState,
   rsvps: readonly { player_id: string; status: RsvpAnswer }[],
 ): SeatCandidate<P>[] {
   const answer = new Map(rsvps.map((r) => [r.player_id, r.status]));
+  const rank = (c: SeatCandidate<P>) => (c.player.is_guest ? 2 : seatSpectator(c) ? 1 : 0);
   return players
     .filter((p) => p.is_active && !state.players[p.id])
     .map((player) => ({ player, rsvp: answer.get(player.id) ?? null }))
     .sort(
       (a, b) =>
         RSVP_ORDER[a.rsvp ?? 'none'] - RSVP_ORDER[b.rsvp ?? 'none'] ||
-        Number(a.player.is_guest) - Number(b.player.is_guest) ||
+        rank(a) - rank(b) ||
         a.player.display_name.localeCompare(b.player.display_name, 'ru'),
     );
+}
+
+/** Кандидат на посадку — болельщик на этот вечер (ещё не за столом): подпись «болельщик» в шторке. */
+export function seatSpectator(c: SeatCandidate<{ is_spectator?: boolean | null }>): boolean {
+  return spectatesEvening({ spectator: c.player.is_spectator, rsvp: c.rsvp });
 }
 
 /** Имя гостя так же, как его сохранит сервер: пробелы схлопнуты; null — пусто или длиннее 40. */
@@ -1014,16 +1194,8 @@ export function normalizeGuestName(text: string): string | null {
   return name.length >= 1 && Array.from(name).length <= NAME_MAX ? name : null;
 }
 
-/**
- * Имя для сравнения: регистр, «ё»/«е», лишние пробелы и пометка в скобках в конце («Вова (гость)»)
- * не важны. Пусто — сравнивать не с чем.
- */
-export function nameMatchKey(name: string): string {
-  return normalizeName(name)
-    .replace(/\s*\([^()]*\)$/, '')
-    .toLowerCase()
-    .replace(/ё/g, 'е');
-}
+/** Имя для сравнения — общий помощник (shared/lib/text): им же админка ищет дубли гостей. */
+export { nameMatchKey };
 
 export interface NameMatches<P> {
   /** Активные игроки клуба с таким именем, ещё не вошедшие в турнир: их можно посадить. */

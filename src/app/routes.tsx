@@ -15,6 +15,7 @@ const EveningPage = lazy(() => import('../pages/evening/EveningPage'));
 const SettlePage = lazy(() => import('../pages/evening/SettlePage'));
 const VotePage = lazy(() => import('../pages/vote/VotePage'));
 const BoardPage = lazy(() => import('../pages/board/BoardPage'));
+const ClubBoardPage = lazy(() => import('../pages/board/ClubBoardPage'));
 const RatingPage = lazy(() => import('../pages/rating/RatingPage'));
 const PlayerPage = lazy(() => import('../pages/player/PlayerPage'));
 const HistoryPage = lazy(() => import('../pages/history/HistoryPage'));
@@ -41,8 +42,8 @@ function Standalone({ children }: { children: ReactNode }) {
 }
 
 /**
- * Маршруты из контракта (ARCHITECTURE.md → «Фронт»). Табло /board/:token — публичное, вне
- * AuthProvider: на ТВ нет Telegram, и попытка входа там не нужна. Регистр табло — Янтарь
+ * Маршруты из контракта (ARCHITECTURE.md → «Фронт»). Табло /board/:token и табло клуба /tv/:code —
+ * публичные, вне AuthProvider: на ТВ нет Telegram, и попытка входа там не нужна. Регистр табло — Янтарь
  * (ThemeScope), при уходе с табло регистр возвращается к Кобальту. Остальное — под AuthGate.
  */
 export function AppRoutes() {
@@ -54,6 +55,16 @@ export function AppRoutes() {
           <ThemeScope theme="yantar">
             <Standalone>
               <BoardPage />
+            </Standalone>
+          </ThemeScope>
+        }
+      />
+      <Route
+        path="/tv/:code"
+        element={
+          <ThemeScope theme="yantar">
+            <Standalone>
+              <ClubBoardPage />
             </Standalone>
           </ThemeScope>
         }

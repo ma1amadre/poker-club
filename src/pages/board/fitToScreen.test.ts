@@ -35,4 +35,22 @@ describe('bestFit — масштаб панели олл-ина на ТВ', () =
     expect(bestFit(l.fits)).toBe(FIT_MIN);
     expect(l.calls.at(-1)).toBe(FIT_MIN);
   });
+
+  it('полоса прокрутки: масштаб, поместившийся после меньшего, после большего — нет; итог помещается', () => {
+    // Как на табло 1280×720 с сюжетом вечера: 0,9 помещается без полосы прокрутки, но после 0,95
+    // полоса уже есть и при 0,9 строки переносятся иначе — не помещается, пока полоса не уйдёт.
+    let scrollbar = false;
+    const calls: [number, boolean][] = [];
+    const fits = (scale: number) => {
+      const limit = scrollbar ? 0.86 : 0.9;
+      const ok = scale <= limit;
+      scrollbar = !ok;
+      calls.push([scale, ok]);
+      return ok;
+    };
+    const scale = bestFit(fits);
+    expect(calls.at(-1)).toEqual([scale, true]);
+    expect(scale).toBeLessThanOrEqual(0.9);
+    expect(0.9 - scale).toBeLessThan(0.06);
+  });
 });

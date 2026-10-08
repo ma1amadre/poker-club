@@ -1,5 +1,8 @@
 // Шторка голоса в одной номинации: номинант (участник вечера, не я), подпись до 200 символов,
 // фото (сжатие и загрузка — uploadVotePhoto). Сохранение — cast_vote (upsert), отзыв — delete_vote.
+// В «Руке» и «Бэд-бите» сверху — подсказки из «Олл-инов вечера» (allInSuggestions): нажатие
+// выбирает номинанта и, если подпись пустая, подставляет карты раздачи.
+import type { AllIn } from '@domain/allins.ts';
 import { VOTE_CATEGORY_META, type VoteCategory } from '@domain/votes.ts';
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
@@ -11,17 +14,26 @@ import {
   type Player,
   type VoteRow,
 } from '../../shared/api';
+import { allInCaption, formatTime, swingPill, favoritePill } from '../../shared/lib';
+import { useAllInSwings } from '../../shared/lib/poker';
 import { haptic } from '../../shared/telegram';
 import {
   Button,
   Field,
   FieldGroup,
   PlayerPicker,
+  PlayingCard,
   Sheet,
   Skeleton,
   useToast,
 } from '../../shared/ui';
-import { CAPTION_MAX, photoPlan, voteDraftError } from './lib';
+import {
+  allInSuggestions,
+  CAPTION_MAX,
+  photoPlan,
+  voteDraftError,
+  type AllInSuggestion,
+} from './lib';
 
 /** Чем поясняем номинацию в шторке. */
 const CATEGORY_PROMPT: Record<VoteCategory, string> = {
@@ -70,6 +82,8 @@ export interface VoteSheetProps {
   participants: readonly Player[];
   /** Мой голос в этой номинации; null — ещё не голосовал. */
   current: VoteRow | null;
+  /** Олл-ины вечера (eveningAllIns) — подсказки в «Руке» и «Бэд-бите». */
+  allIns?: readonly AllIn[];
   onClose: () => void;
   /**
    * Отозвать голос. Подтверждение — у родителя: шторка сначала закрывается («Материя» не
@@ -84,6 +98,7 @@ export function VoteSheet({
   me,
   participants,
   current,
+  allIns = NO_ALL_INS,
   onClose,
   onWithdraw,
 }: VoteSheetProps) {
@@ -102,6 +117,27 @@ export function VoteSheet({
 
   const title = VOTE_CATEGORY_META[category].title;
   const candidates = participants.filter((p) => p.id !== me.id);
+  const nameOf = (id: string) =>
+    participants.find((p) => p.id === id)?.display_name ?? 'Игрок без имени';
+  const { swings } = useAllInSwings(allIns);
+  const suggestions = allInSuggestions(
+    category,
+    allIns,
+    swings,
+    candidates.map((p) => p.id),
+  );
+  const [pickedKey, setPickedKey] = useState<string | null>(null);
+  const suggestionKey = (s: AllInSuggestion) => `${s.allIn.showdownId}:${s.nomineeId}`;
+  const pickSuggestion = (s: AllInSuggestion) => {
+    setPickedKey(suggestionKey(s));
+    setNomineeId(s.nomineeId);
+    setNomineeError(null);
+    // Своя подпись остаётся; пустая — карты раздачи.
+    if (caption.trim() === '') {
+      setCaption(allInCaption(s.allIn).slice(0, CAPTION_MAX));
+      setCaptionError(null);
+    }
+  };
   const existingPath = current?.photo_path ?? null;
   const preview = picked?.url ?? null;
   const showExisting = !file && !removeExisting && Boolean(existingPath);
@@ -218,6 +254,27 @@ export function VoteSheet({
           <p className="m-small">Голосовать не за кого: кроме тебя, в этот вечер никто не играл.</p>
         ) : (
           <>
+            {suggestions.length > 0 && (
+              <FieldGroup
+                label="Олл-ины вечера"
+                hint="Нажми на раздачу — номинант выберется, а пустая подпись заполнится картами."
+              >
+                <ul className="vote-allins">
+                  {suggestions.map((s) => (
+                    <li key={suggestionKey(s)}>
+                      <SuggestionButton
+                        suggestion={s}
+                        category={category}
+                        nameOf={nameOf}
+                        selected={pickedKey === suggestionKey(s) && nomineeId === s.nomineeId}
+                        onPick={() => pickSuggestion(s)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </FieldGroup>
+            )}
+
             <FieldGroup label="Номинант" error={nomineeError}>
               <PlayerPicker
                 players={candidates}
@@ -296,5 +353,48 @@ export function VoteSheet({
         )}
       </Sheet>
     </>
+  );
+}
+
+const NO_ALL_INS: readonly AllIn[] = [];
+
+/** Подсказка-раздача: карты номинанта, кто и с чем, пометка «победа с N %» или «фаворит, N %». */
+function SuggestionButton({
+  suggestion,
+  category,
+  nameOf,
+  selected,
+  onPick,
+}: {
+  suggestion: AllInSuggestion;
+  category: VoteCategory;
+  nameOf: (id: string) => string;
+  selected: boolean;
+  onPick: () => void;
+}) {
+  const { allIn, nomineeId, swing } = suggestion;
+  const hand = allIn.hands.find((h) => h.playerId === nomineeId);
+  const pill =
+    swing && category === 'hand' && swing.winnerId === nomineeId
+      ? swingPill(swing)
+      : swing && category === 'badbeat'
+        ? favoritePill(swing)
+        : null;
+  return (
+    <button type="button" className="vote-allin" aria-pressed={selected} onClick={onPick}>
+      {hand && (
+        <span className="vote-allin__cards" aria-hidden="true">
+          <PlayingCard code={hand.cards[0]} size="sm" />
+          <PlayingCard code={hand.cards[1]} size="sm" />
+        </span>
+      )}
+      <span className="vote-allin__text">
+        <span className="vote-allin__name">{nameOf(nomineeId)}</span>
+        <span className="m-small">
+          {formatTime(allIn.openedAt)} · {allInCaption(allIn)}
+        </span>
+        {pill && <span className="vote-allin__pill">{pill}</span>}
+      </span>
+    </button>
   );
 }

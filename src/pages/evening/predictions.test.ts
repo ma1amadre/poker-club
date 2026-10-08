@@ -85,6 +85,36 @@ describe('кандидаты в прогноз', () => {
     const list = predictionCandidates(players, rsvps, ['old', null]);
     expect(list.map((c) => c.player.id)).toContain('old');
   });
+
+  it('болельщик (миграция 024): без «иду» / «под вопросом» и места за столом — не кандидат', () => {
+    const fans = [
+      ...players,
+      player('f1', 'Аня', { is_spectator: true }),
+      player('f2', 'Оля', { is_spectator: true }),
+      player('f3', 'Таня', { is_spectator: true }),
+      player('f4', 'Юля', { is_spectator: false }),
+    ];
+    const answers = [
+      ...rsvps,
+      { player_id: 'f2', status: 'maybe' as const },
+      { player_id: 'f3', status: 'no' as const },
+    ];
+    const ids = (seated?: Set<string>, keep: string[] = []) =>
+      predictionCandidates(fans, answers, keep, seated).map((c) => c.player.id);
+    expect(ids()).toEqual(['j', 's', 'd', 'f2', 'k', 'f4', 'm', 'g1', 'g2']);
+    // Посадили за стол — кандидат, как все, и без подписи «болельщик».
+    expect(ids(new Set(['f1']))).toContain('f1');
+    const seatedF1 = predictionCandidates(fans, answers, [], new Set(['f1'])).find(
+      (c) => c.player.id === 'f1',
+    );
+    expect(seatedF1 && candidateHint(seatedF1)).toBe('без ответа');
+    // Уже названный в прогнозе — остаётся с подписью «болельщик».
+    const kept = predictionCandidates(fans, answers, ['f3']);
+    const f3 = kept.find((c) => c.player.id === 'f3');
+    expect(f3 && candidateHint(f3)).toBe('болельщик · не идёт');
+    const f2 = kept.find((c) => c.player.id === 'f2');
+    expect(f2 && candidateHint(f2)).toBe('под вопросом');
+  });
 });
 
 describe('прогнозы вечера после финала', () => {

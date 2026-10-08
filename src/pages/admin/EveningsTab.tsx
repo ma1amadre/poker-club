@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { useEvenings, usePlayersById, useSettings, type Evening } from '../../shared/api';
+import {
+  isTrainingEvening,
+  useEvenings,
+  usePlayersById,
+  useSettings,
+  type Evening,
+} from '../../shared/api';
 import { formatDateTime, paths, pluralWithNumber, useNow } from '../../shared/lib';
 import {
   Button,
@@ -10,6 +16,7 @@ import {
   List,
   ListItem,
   Section,
+  TrainingBadge,
 } from '../../shared/ui';
 import { splitEvenings } from './lib';
 import { ListSkeleton } from './parts';
@@ -17,7 +24,10 @@ import { ListSkeleton } from './parts';
 const EVENINGS = ['вечер', 'вечера', 'вечеров'] as const;
 const PAST_PAGE = 10;
 
-/** Вкладка «Вечера»: ближайшие сверху со статусами, прошедшие ниже, «Создать вечер». */
+/**
+ * Вкладка «Вечера»: ближайшие сверху со статусами, прошедшие ниже, «Создать вечер» и «Тренировочный
+ * вечер» (миграция 023: прогон пульта, табло и голоса без следа в истории; удаляется целиком).
+ */
 export function EveningsTab() {
   const evenings = useEvenings();
   const players = usePlayersById();
@@ -39,18 +49,29 @@ export function EveningsTab() {
   const hours = settings.data?.announce_hours_before;
 
   const create = (
-    <ButtonLink to={paths.adminEveningNew} variant="primary" icon="plus" block>
-      Создать вечер
-    </ButtonLink>
+    <div className="adm-actions">
+      <ButtonLink to={paths.adminEveningNew} variant="primary" icon="plus" block>
+        Создать вечер
+      </ButtonLink>
+      <ButtonLink to={`${paths.adminEveningNew}?training=1`} variant="ghost" icon="play" block>
+        Тренировочный вечер
+      </ButtonLink>
+      <p className="m-small adm-muted">
+        Тренировка — прогнать пульт, табло и голос до игры или обучить банкира: в историю, рейтинг и
+        посты бота она не попадает.
+      </p>
+    </div>
   );
 
   const row = (e: Evening, isUpcoming: boolean) => {
     const banker = e.banker_id ? players.get(e.banker_id)?.display_name : null;
     const stale = e.status === 'announced' && Date.parse(e.scheduled_at) < now;
+    const training = isTrainingEvening(e);
     const subtitle = [
       e.location,
       banker ? `банкир ${banker}` : isUpcoming ? 'банкир не назначен' : null,
       stale ? 'дата прошла' : null,
+      training ? 'удали после прогона' : null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -62,6 +83,7 @@ export function EveningsTab() {
           <span className="adm-title-badge">
             {formatDateTime(e.scheduled_at, now)}
             <EveningStatusBadge status={e.status} />
+            {isTrainingEvening(e) && <TrainingBadge />}
           </span>
         }
         subtitle={subtitle || undefined}

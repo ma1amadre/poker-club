@@ -88,6 +88,24 @@ export function newEveningDraft(
   };
 }
 
+/** Шаг времени тренировки: ближайшие 5 минут по Москве (поле времени — с шагом 300 с). */
+const TRAINING_STEP_MS = 5 * 60_000;
+
+/**
+ * Тренировочный вечер (миграция 023): сегодня, ближайшие 5 минут, банкир — кто создаёт (прогоняет
+ * пульт сам или потом назначит другого), место и формат — как у нового вечера.
+ */
+export function trainingEveningDraft(
+  nowMs: number,
+  settings: ScheduleDefaults | null,
+  formats: readonly Pick<FormatOption, 'id' | 'is_archived'>[],
+  bankerId: string | null,
+): EveningDraft {
+  const base = newEveningDraft(nowMs, settings, formats, new Set());
+  const { date, time } = isoToMoscow(Math.ceil(nowMs / TRAINING_STEP_MS) * TRAINING_STEP_MS);
+  return { ...base, date, time, bankerId };
+}
+
 export type EveningField = 'date' | 'time' | 'format';
 
 export interface EveningCheck {

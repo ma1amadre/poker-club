@@ -136,6 +136,29 @@
   gap: var(--space-2);
 }
 
+/* Вопрос «Играешь или следишь?» (миграция 024): заголовок с крестиком, строка, два ответа. */
+.home-role {
+  display: grid;
+  gap: var(--space-3);
+}
+.home-role__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.home-role__head .m-h3 {
+  margin: 0;
+  padding-top: var(--space-1);
+}
+.home-role .m-small {
+  margin: 0;
+}
+/* Два ответа делят ряд поровну, на узком экране — по одному в ряд во всю ширину. */
+.home-role .home-actions > * {
+  flex: 1 1 auto;
+}
+
 .home-season-empty {
   display: grid;
   gap: var(--space-1);

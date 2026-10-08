@@ -2,6 +2,7 @@
 // вечера бот пишет в группу, кто идёт, кто под вопросом, кто не идёт и кто ещё не ответил.
 // Чистые функции без БД — их проверяет vitest (gameday.test.ts), применяет cron-tick, текст поста —
 // gamedayPost в messages.ts.
+import { spectatesEvening } from './domain/spectators.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -74,6 +75,8 @@ export interface GamedayPlayerRow {
   tg_id: number | string | null;
   is_active: boolean;
   is_guest: boolean;
+  /** Болельщик (миграция 024): true — «слежу, не играю»; null — ещё не выбирал (игрок). */
+  is_spectator: boolean | null;
 }
 
 export interface GamedayRsvpRow {
@@ -96,7 +99,7 @@ export interface GamedayRoster {
   yes: GamedayPlayer[];
   maybe: GamedayPlayer[];
   no: GamedayPlayer[];
-  /** Активные постоянные игроки без ответа на этот вечер — их пост упоминает. */
+  /** Активные постоянные игроки без ответа на этот вечер, кроме болельщиков, — их пост упоминает. */
   pending: GamedayPlayer[];
 }
 
@@ -130,11 +133,14 @@ function byName(a: GamedayPlayer, b: GamedayPlayer): number {
  * расходились в том, кто идёт. Ответившие — все, у кого есть строка в rsvps, в порядке ответа (кто
  * раньше, тот выше), в том числе игрок, которого админ выключил уже после ответа. «Ещё не
  * ответили» — активные постоянные игроки (не гости: гость войти не может и на анонс не отвечает)
- * без строки в rsvps на этот вечер, по имени.
+ * без строки в rsvps на этот вечер, по имени; болельщика (миграция 024) там нет, если только его не
+ * посадили за стол (`seated` — seatedIds журнала вечера): тогда на этот вечер он игрок
+ * (spectatesEvening домена). Ответивший болельщик стоит в своей группе, как все.
  */
 export function gamedayRoster(
   players: readonly GamedayPlayerRow[],
   rsvps: readonly GamedayRsvpRow[],
+  seated: ReadonlySet<string> = new Set(),
 ): GamedayRoster {
   const byId = new Map(players.map((p) => [p.id, p]));
   const answered = new Set(rsvps.map((r) => r.player_id));
@@ -154,7 +160,13 @@ export function gamedayRoster(
   }
 
   roster.pending = players
-    .filter((p) => p.is_active && !p.is_guest && !answered.has(p.id))
+    .filter(
+      (p) =>
+        p.is_active &&
+        !p.is_guest &&
+        !answered.has(p.id) &&
+        !spectatesEvening({ spectator: p.is_spectator, seated: seated.has(p.id) }),
+    )
     .map(toGamedayPlayer)
     .sort(byName);
   return roster;

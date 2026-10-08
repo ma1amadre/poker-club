@@ -1,17 +1,31 @@
 // Табло /board/:token для ТВ и ноутбука — регистр Янтарь (data-theme ставит ThemeScope в
 // routes.tsx). Публичное и вне AuthProvider: данные только через useBoardState (RPC board_state
 // для anon, опрос раз в 3 с), время — useNow + replay на клиенте, как у всех экранов вечера.
+// Табло клуба /tv/:code (ClubBoardPage) показывает тот же Board для вечера, который сейчас важен.
+// Табло раз в 20 с отмечается «на связи» (useBoardPing) — это видит проверка перед игрой у банкира.
+// Тренировочный вечер (миграция 023) помечен в шапке: «Тренировка · 08.10 · 14:00».
 // Денег из платежей здесь нет (board_state их не отдаёт) — только фонд и выплаты по местам.
 // Голос (useBoardVoice) объявляет события вечера клипами Silero — включается кнопкой.
 // На ТВ (от 1024 px в горизонтали) — своя шкала шрифтов от размера экрана (board.css, --bd-px):
 // всё, что читают с дивана, крупно; что не влезло — уменьшает useFitToScreen (--bd-fit).
+import { eveningAllIns } from '@domain/allins.ts';
 import { computeMoney, payouts } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
+import { DEFAULT_SCORING } from '@domain/scoring.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
+import { eveningStory } from '@domain/story.ts';
+import { summarize } from '@domain/summary.ts';
 import { VOICE_CREDIT } from '@domain/voice.ts';
-import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import type { ShowdownState } from '@domain/types.ts';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { errorMessage, useBoardState, type BoardState } from '../../shared/api';
+import {
+  errorMessage,
+  isTrainingEvening,
+  useBoardState,
+  type BoardSource,
+  type BoardState,
+} from '../../shared/api';
 import {
   clockOffsetMs,
   cn,
@@ -26,12 +40,16 @@ import {
   moscowDateKey,
   NBSP,
   pluralWithNumber,
+  storyLine,
   useNow,
   useWakeLock,
 } from '../../shared/lib';
+import { useAllInSwings } from '../../shared/lib/poker';
 import { Badge, Button, Icon, List, ListItem, PageSkeleton, Stat, Stats } from '../../shared/ui';
 import {
   bestHunters,
+  breakLine,
+  breakView,
   clockView,
   describeTrigger,
   formatBbValue,
@@ -60,6 +78,8 @@ import {
 } from './boardView';
 import { useFitToScreen } from './fitToScreen';
 import { ShowdownBoard } from './ShowdownBoard';
+import { revealedSize, revealStart, revealStep, type RevealTarget } from './streetReveal';
+import { useBoardPing } from './useBoardPing';
 import { useFullscreen } from './useScreenControls';
 import { useBoardVoice, type BoardVoice } from './useBoardVoice';
 
@@ -75,6 +95,7 @@ export default function BoardPage() {
   // Обрезанная или испорченная ссылка — сразу «погасло», без запроса (RPC ждёт uuid).
   const valid = Boolean(token && UUID_RE.test(token));
   const query = useBoardState(valid ? token : undefined);
+  const source = useMemo<BoardSource>(() => ({ kind: 'evening', token: token ?? '' }), [token]);
 
   useEffect(() => {
     document.title = 'Табло · Покерный клуб';
@@ -98,13 +119,13 @@ export default function BoardPage() {
     return (
       <BoardMessage
         title="Табло погасло"
-        text="Вечер по этой ссылке не найден или закончился больше шести часов назад. Открой свежую ссылку: экран вечера в приложении клуба → «Вывести на ТВ»."
+        text="Вечер по этой ссылке не найден или закончился больше шести часов назад. Постоянная ссылка не гаснет — «Табло клуба»: экран вечера в приложении клуба → «Вывести на ТВ»."
       />
     );
   }
   return (
     <Board
-      token={token ?? ''}
+      source={source}
       data={query.data}
       failing={query.isError || query.fetchStatus === 'paused'}
       updatedAt={query.dataUpdatedAt}
@@ -126,7 +147,7 @@ function BlindsText({ text }: { text: string }) {
   );
 }
 
-function BoardMessage({
+export function BoardMessage({
   title,
   text,
   action,
@@ -148,13 +169,14 @@ function BoardMessage({
 /** Данные старше — «нет связи», даже если запрос просто завис (опрос раз в 3 с). */
 const STALE_AFTER_MS = 10_000;
 
-function Board({
-  token,
+export function Board({
+  source,
   data,
   failing,
   updatedAt,
 }: {
-  token: string;
+  /** Чем открыто табло (стабильный объект: от него зависят загрузка клипов и отметка «на связи»). */
+  source: BoardSource;
   data: BoardState;
   failing: boolean;
   updatedAt: number;
@@ -172,18 +194,22 @@ function Board({
   );
   const nameOf: NameOf = (id) => names.get(id) ?? 'Игрок';
   const { state, applied } = replayLog(format, data.events, nowMs);
-  const voice = useBoardVoice({ token, data, state, applied, nowMs });
+  const voice = useBoardVoice({ source, data, state, applied, nowMs });
+  useBoardPing(source, evening.id, voice.status === 'on');
 
+  const training = isTrainingEvening(evening);
   const when = `${formatDateNumeric(evening.scheduled_at).slice(0, 5)} · ${formatTime(evening.scheduled_at)}`;
   const place = evening.location ? ` · ${evening.location}` : '';
   const finished = state.finished || evening.status === 'finished' || evening.status === 'settled';
   // Олл-ин закрывает таймер и стол, пока банкир его не закроет (или табло не спрячет его само).
-  const showdown = visibleShowdown(state.showdown, nowMs);
+  // Улицы, внесённые разом, табло раскрывает по очереди (streetReveal.ts).
+  const showdown = useStreetReveal(visibleShowdown(state.showdown, nowMs), nowMs);
 
   return (
     <main className={showdown && !finished ? 'bd bd--showdown' : 'bd'}>
       <header className="bd-head">
         <p className="m-eyebrow">
+          {training && `Тренировка${NBSP}· `}
           {when}
           {place}
         </p>
@@ -203,7 +229,7 @@ function Board({
       </header>
 
       {finished ? (
-        <FinishedBoard format={format} state={state} nameOf={nameOf} />
+        <FinishedBoard data={data} state={state} nameOf={nameOf} />
       ) : showdown ? (
         <ShowdownBoard showdown={showdown} state={state} format={format} nameOf={nameOf} />
       ) : state.timer.status === 'not_started' ? (
@@ -230,6 +256,27 @@ function Board({
       </footer>
     </main>
   );
+}
+
+/**
+ * Олл-ин с раскрытием улиц по очереди: банкир внёс флоп, тёрн и ривер одной отправкой — табло
+ * показывает флоп, через 3–4 с тёрн, потом ривер (шансы и ауты — по показанному столу). Память
+ * живёт в Board, а не в панели олл-ина: панель пропадает между раздачами, а новая раздача должна
+ * раскрываться, а не считаться «первым кадром».
+ */
+function useStreetReveal(showdown: ShowdownState | null, nowMs: number): ShowdownState | null {
+  const target: RevealTarget | null = showdown
+    ? { showdownId: showdown.showdownId, size: showdown.board.length }
+    : null;
+  const [reveal, setReveal] = useState(() => revealStart(target, nowMs));
+  const next = revealStep(reveal, target, nowMs);
+  // Производное состояние прямо в рендере (шаблон React «состояние из прошлых рендеров»).
+  if (next !== reveal) setReveal(next);
+  if (!showdown || !target) return null;
+  const size = revealedSize(next, target);
+  return size === showdown.board.length
+    ? showdown
+    : { ...showdown, board: showdown.board.slice(0, size) };
 }
 
 /**
@@ -274,6 +321,9 @@ function LiveBoard({
   const clock = clockView(state);
   const signal = boardClock(state);
   const pausedMs = pausedForMs(state, applied, nowMs);
+  // Перерыв на N минут (022): отсчёт «продолжаем через», по истечении — «пора продолжать» и
+  // подсветка блока часов. Таймер сам не продолжает — только банкир.
+  const brk = breakView(state, nowMs);
   const trig = state.currentLevel.trigger;
   const trigNote =
     trig.type === 'hands'
@@ -293,7 +343,7 @@ function LiveBoard({
   const screenRef = useRef<HTMLDivElement>(null);
   useFitToScreen(
     screenRef,
-    [alive.length, prizes.length, ko?.by, signal.paused, signal.lastLevel].join('|'),
+    [alive.length, prizes.length, ko?.by, signal.paused, signal.lastLevel, brk?.due].join('|'),
     BOARD_FIT_VAR,
   );
 
@@ -303,6 +353,7 @@ function LiveBoard({
         className={cn(
           'bd-clock',
           signal.paused && 'bd-clock--paused',
+          brk?.due && 'bd-clock--due',
           signal.finalMinute && 'bd-clock--final',
           signal.fresh && 'bd-clock--fresh',
         )}
@@ -310,14 +361,28 @@ function LiveBoard({
       >
         <p className="m-eyebrow">{levelLabel(format, state)}</p>
         {signal.paused ? (
-          // Пауза — на весь блок часов: слово вместо цифр и сколько уже стоим.
+          // Пауза — на весь блок часов: слово вместо цифр и сколько уже стоим; перерыв на N минут —
+          // сколько осталось до конца или «пора продолжать».
           <>
             <div className="bd-glow">
-              <p className="m-display bd-big" role="timer" aria-label={`Пауза. ${clock.aria}`}>
-                Пауза
+              <p
+                className="m-display bd-big"
+                role="timer"
+                aria-label={`${brk ? `Перерыв, ${breakLine(brk)}` : 'Пауза'}. ${clock.aria}`}
+              >
+                {brk ? 'Перерыв' : 'Пауза'}
               </p>
             </div>
-            <p className="m-h2 bd-hot">{pausedMs === null ? 'часы стоят' : pauseText(pausedMs)}</p>
+            {brk ? (
+              <p className={brk.due ? 'm-h2 bd-due' : 'm-h2 bd-hot'}>
+                {brk.due && <Icon name="clock" size={20} />}
+                <span>{breakLine(brk)}</span>
+              </p>
+            ) : (
+              <p className="m-h2 bd-hot">
+                {pausedMs === null ? 'часы стоят' : pauseText(pausedMs)}
+              </p>
+            )}
             <p className="m-body bd-muted">
               {signal.lastLevel ? `Последний уровень · ${blinds}` : `На часах ${clock.text}`}
             </p>
@@ -549,14 +614,15 @@ function WaitingBoard({
 }
 
 function FinishedBoard({
-  format,
+  data,
   state,
   nameOf,
 }: {
-  format: BoardState['format'];
+  data: BoardState;
   state: Replayed['state'];
   nameOf: NameOf;
 }) {
+  const { format } = data;
   // Призы — доменная раскладка фонда по местам (computeMoney), как в итоге вечера в приложении.
   const money = computeMoney(format, state);
   const winner = state.places[0];
@@ -565,9 +631,10 @@ function FinishedBoard({
   const hunters = bestHunters(state);
   const hunterKos = hunters[0] ? (state.players[hunters[0]]?.kos ?? 0) : 0;
   const played = state.timer.totalElapsedMs;
+  const story = useBoardStory(data);
 
   const screenRef = useRef<HTMLDivElement>(null);
-  useFitToScreen(screenRef, `${rest.length}|${winner ?? ''}`, BOARD_FIT_VAR);
+  useFitToScreen(screenRef, `${rest.length}|${winner ?? ''}|${story.length}`, BOARD_FIT_VAR);
 
   return (
     <div ref={screenRef} className="bd-wait bd-screen" aria-label="Итог вечера">
@@ -589,6 +656,15 @@ function FinishedBoard({
           </p>
         )}
         {played > 0 && <p className="m-h3 bd-muted">Игра шла {formatGameTime(played)}</p>}
+        {story.length > 0 && (
+          <ul className="bd-story" aria-label="Сюжет вечера">
+            {story.map((item, i) => (
+              <li key={`${item.kind}:${i}`} className="m-h3">
+                {storyLine(item, nameOf)}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {rest.length > 0 && (
@@ -621,4 +697,26 @@ function FinishedBoard({
       )}
     </div>
   );
+}
+
+/**
+ * «Сюжет вечера» на табло: только то, что видно из журнала самого вечера («победа с N %» в олл-ине,
+ * «феникс», победа после ребаев) — табло без входа не видит истории клуба, поэтому месть Немезиде,
+ * рекорды и лидер сезона есть только в приложении и в посте итогов. Шансы — воркер (useAllInSwings);
+ * пока считаются, строк нет: сюжет не перестраивается на экране.
+ */
+function useBoardStory(data: BoardState) {
+  const { evening, format, events } = data;
+  const allIns = useMemo(() => eveningAllIns(format, events), [format, events]);
+  const { swings, pending } = useAllInSwings(allIns);
+  return useMemo(() => {
+    if (pending) return [];
+    try {
+      // Очки сюжету не нужны: правила подсчёта — любые.
+      const summary = summarize(evening.id, evening.scheduled_at, format, events, DEFAULT_SCORING);
+      return eveningStory({ summary, allIns, swings, excluded: new Set() });
+    } catch {
+      return [];
+    }
+  }, [evening.id, evening.scheduled_at, format, events, allIns, swings, pending]);
 }

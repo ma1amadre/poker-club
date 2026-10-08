@@ -684,3 +684,30 @@
     animation-name: m-fade;
   }
 }
+
+/* ---------- QR ссылки (LinkQr): табло вечера и табло клуба ----------
+   Всегда тёмный код на светлом поле (токены светлого Кобальта) — так его читает любая камера. */
+
+.ui-qr {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-3);
+}
+
+.ui-qr__image {
+  display: block;
+  width: min(240px, 100%);
+  aspect-ratio: 1;
+  border-radius: var(--m-r-control);
+  border: 1px solid var(--line);
+  image-rendering: pixelated;
+}
+
+.ui-qr__link {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--m-r-control);
+  background: var(--surface-sunken);
+  font-size: var(--m-small-size);
+  overflow-wrap: anywhere;
+}

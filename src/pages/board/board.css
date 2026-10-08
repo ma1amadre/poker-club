@@ -86,6 +86,36 @@
   box-shadow: 0 0 0 var(--bd-halo) var(--accent-soft);
 }
 
+/*
+ * Перерыв на N минут вышел (миграция 022): таймер сам не продолжает — блок часов медленно дышит
+ * (4 с на волну, 0,25 Гц — далеко от опасных частот мигания), строка «пора продолжать» — critical.
+ */
+.bd-clock--due {
+  animation: bd-break-due 2000ms var(--ease-exit) infinite alternate;
+}
+
+@keyframes bd-break-due {
+  0% {
+    background-color: var(--accent-soft);
+    box-shadow: 0 0 0 var(--bd-halo) var(--accent-soft);
+  }
+  100% {
+    background-color: var(--accent-6);
+    box-shadow: 0 0 0 var(--bd-halo) var(--accent-6);
+  }
+}
+
+.bd-due {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--critical);
+}
+
+.bd-due .m-icon {
+  flex: none;
+}
+
 /* Смена уровня — вспышка блока часов (две волны, ~0,7 Гц — далеко от опасных частот мигания). */
 .bd-clock--fresh {
   animation: bd-level-flash 1500ms var(--ease-exit) 2;
@@ -421,13 +451,15 @@
 
   /* Иконки строк растут с текстом. */
   .bd-screen .bd-rebuy .m-icon,
-  .bd-screen .bd-final .m-icon {
+  .bd-screen .bd-final .m-icon,
+  .bd-screen .bd-due .m-icon {
     width: 0.9em;
     height: 0.9em;
     margin-top: 0.2em;
   }
 
-  .bd-final .m-icon {
+  .bd-final .m-icon,
+  .bd-due .m-icon {
     margin-top: 0;
   }
 
@@ -458,6 +490,11 @@
     gap: var(--space-9);
   }
 
+  /* Табло клуба между вечерами (ClubBoardPage): одна колонка — следующая игра на весь экран. */
+  .bd-wait.bd-wait--single {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   /* Выплаты и стартовый стек — рядом, под структурой уровней. */
   .bd-wait__facts {
     grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
@@ -471,10 +508,33 @@
     transition: none;
   }
 
+  /* Без анимации: перерыв вышел — неподвижная подсветка блока. */
+  .bd-clock--due {
+    animation: none;
+    background-color: var(--accent-5);
+    box-shadow: 0 0 0 var(--bd-halo) var(--accent-5);
+  }
+
   /* Без анимации: вспышка — неподвижная подсветка блока на те же секунды. */
   .bd-clock--fresh {
     animation: none;
     background-color: var(--accent-4);
     box-shadow: 0 0 0 var(--bd-halo) var(--accent-4);
   }
+}
+
+/* «Сюжет вечера» на экране итога: строки о главном из журнала вечера. */
+.bd-story {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink);
+}
+
+.bd-story > li {
+  margin: 0;
+  padding-inline-start: var(--space-4);
+  border-inline-start: 3px solid var(--accent);
 }

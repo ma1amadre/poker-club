@@ -262,7 +262,9 @@ export type NotifyOutcome =
   | 'no_group'
   | 'no_changes'
   /** Анонс вечера в группу ещё не уходил — о правке писать не нужно (evening_changed). */
-  | 'not_announced';
+  | 'not_announced'
+  /** Тренировочный вечер (миграция 023): в группу о нём бот не пишет. */
+  | 'training';
 
 export type NotifyKind = 'evening_finished' | 'evening_corrected';
 
@@ -346,7 +348,13 @@ export async function notifyEveningChanged(
   return { outcome: data.outcome, change: data.change ?? null, move: data.move ?? null };
 }
 
-/** Отчёт merge_players / merge_players_preview (миграция 008). */
+/**
+ * Вид слияния: `telegram` — гость → Telegram-профиль (merge_players, миграция 008), `guest` — дубль
+ * гостя → другой профиль без Telegram (merge_guests, миграция 024).
+ */
+export type MergeKind = 'telegram' | 'guest';
+
+/** Отчёт merge_players / merge_guests и их предпросмотров (миграции 008, 024). */
 export interface MergeReport {
   guest: { id: string; name: string };
   target: { id: string; name: string };
@@ -365,6 +373,10 @@ export interface MergeReport {
   photosKept: number;
   /** Что мешает слиянию; пусто — можно сливать. */
   blockers: string[];
+  /** Только merge_guests: профиль станет постоянным (дубль был постоянным игроком). */
+  becomesPermanent?: boolean;
+  /** Только merge_guests: профиль включится (дубль был включён). */
+  becomesActive?: boolean;
 }
 
 function toMergeReport(data: unknown): MergeReport {
@@ -385,6 +397,26 @@ export async function mergePlayersPreview(guestId: string, targetId: string): Pr
 /** Перенести всё гостя на Telegram-профиль и удалить гостя. Только админ; атомарно. */
 export async function mergePlayers(guestId: string, targetId: string): Promise<MergeReport> {
   const { data, error } = await supabase.rpc('merge_players', {
+    p_guest: guestId,
+    p_target: targetId,
+  });
+  if (error) throw toError(error);
+  return toMergeReport(data);
+}
+
+/** Что перенесёт слияние дубля гостя с другим профилем без Telegram и что ему мешает. Только админ. */
+export async function mergeGuestsPreview(guestId: string, targetId: string): Promise<MergeReport> {
+  const { data, error } = await supabase.rpc('merge_guests_preview', {
+    p_guest: guestId,
+    p_target: targetId,
+  });
+  if (error) throw toError(error);
+  return toMergeReport(data);
+}
+
+/** Перенести всё дубля на профиль без Telegram и удалить дубль (миграция 024). Только админ; атомарно. */
+export async function mergeGuests(guestId: string, targetId: string): Promise<MergeReport> {
+  const { data, error } = await supabase.rpc('merge_guests', {
     p_guest: guestId,
     p_target: targetId,
   });
@@ -446,6 +478,13 @@ export async function setMySpokenName(name: string): Promise<string | null> {
   const { data, error } = await supabase.rpc('set_my_spoken_name', { p_name: name });
   if (error) throw toError(error);
   return typeof data === 'string' && data !== '' ? data : null;
+}
+
+/** Свой режим (миграция 024): true — болельщик («слежу, не играю»), false — играю. */
+export async function setMySpectator(spectator: boolean): Promise<boolean> {
+  const { data, error } = await supabase.rpc('set_my_spectator', { p_spectator: spectator });
+  if (error) throw toError(error);
+  return data === true;
 }
 
 // --- Хуки-мутации ----------------------------------------------------------------------------
@@ -686,10 +725,17 @@ export function useNotifyEveningFinished(eveningId: string, kind: NotifyKind = '
 }
 
 /** Предпросмотр слияния для выбранной пары; всегда свежий — данные клуба могли измениться. */
-export function useMergePreview(guestId: string, targetId: string | null) {
+export function useMergePreview(
+  guestId: string,
+  targetId: string | null,
+  kind: MergeKind = 'telegram',
+) {
   return useQuery({
-    queryKey: queryKeys.mergePreview(guestId, targetId ?? ''),
-    queryFn: () => mergePlayersPreview(guestId, targetId ?? ''),
+    queryKey: queryKeys.mergePreview(guestId, targetId ?? '', kind),
+    queryFn: () =>
+      kind === 'guest'
+        ? mergeGuestsPreview(guestId, targetId ?? '')
+        : mergePlayersPreview(guestId, targetId ?? ''),
     enabled: targetId !== null,
     staleTime: 0,
     gcTime: 0,
@@ -697,14 +743,15 @@ export function useMergePreview(guestId: string, targetId: string | null) {
 }
 
 /**
- * Слияние гостя с Telegram-профилем: id гостя пропадает из журналов, голосов и прогнозов —
- * перечитываем всё (вечера, история клуба, справочник игроков).
+ * Слияние гостя с Telegram-профилем или дубля гостя с другим профилем без Telegram: id гостя
+ * пропадает из журналов, голосов и прогнозов — перечитываем всё (вечера, история клуба, справочник
+ * игроков).
  */
-export function useMergePlayers() {
+export function useMergePlayers(kind: MergeKind = 'telegram') {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ guestId, targetId }: { guestId: string; targetId: string }) =>
-      mergePlayers(guestId, targetId),
+      kind === 'guest' ? mergeGuests(guestId, targetId) : mergePlayers(guestId, targetId),
     meta: { silent: true }, // причину отказа показывает шторка привязки
     onSuccess: () => {
       // Предпросмотр слитой пары устарел навсегда (гостя нет) — убрать, а не перезапрашивать.
@@ -725,6 +772,23 @@ export function useSetMySpokenName() {
     meta: { silent: true }, // ошибку шторка показывает под полем
     onSuccess: (saved) => {
       updatePlayer({ spoken_name: saved });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.players });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
+    },
+  });
+}
+
+/**
+ * Свой режим «болельщик» (миграция 024); обновляет список игроков и игрока в контексте входа (вопрос
+ * на главной, своя карточка, «Без ответа» у остальных).
+ */
+export function useSetMySpectator() {
+  const queryClient = useQueryClient();
+  const { updatePlayer } = useAuth();
+  return useMutation({
+    mutationFn: (spectator: boolean) => setMySpectator(spectator),
+    onSuccess: (saved) => {
+      updatePlayer({ is_spectator: saved });
       void queryClient.invalidateQueries({ queryKey: queryKeys.players });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
     },

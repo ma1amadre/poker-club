@@ -26,6 +26,7 @@ import {
   type PredictionRow,
   type Settings,
   type VoteRow,
+  withoutTraining,
 } from './types';
 
 export interface ClubHistory {
@@ -106,12 +107,15 @@ async function fetchSeasonBestN(): Promise<SeasonBestN> {
 }
 
 export async function fetchClubHistory(nowMs: number = serverNow()): Promise<ClubHistory> {
-  const [evenings, players, settings, bestNBySeason] = await Promise.all([
+  const [allEvenings, players, settings, bestNBySeason] = await Promise.all([
     fetchEvenings({ status: ['finished', 'settled'] }),
     fetchPlayers(),
     fetchSettings(),
     fetchSeasonBestN(),
   ]);
+  // Тренировки (миграция 023) — не история клуба: ни итогов, ни очков, ни ачивок, ни ленты. Фильтр
+  // на клиенте: фронт мог выйти раньше миграции, и колонки ещё нет.
+  const evenings = withoutTraining(allEvenings);
   const ids = evenings.map((e) => e.id);
 
   const [eventRows, predictionRows, voteRows] = await Promise.all([

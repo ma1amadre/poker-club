@@ -47,6 +47,32 @@ export type Database = {
         };
         Relationships: [];
       };
+      board_presence: {
+        Row: {
+          evening_id: string;
+          seen_at: string;
+          voice_at: string | null;
+        };
+        Insert: {
+          evening_id: string;
+          seen_at: string;
+          voice_at?: string | null;
+        };
+        Update: {
+          evening_id?: string;
+          seen_at?: string;
+          voice_at?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'board_presence_evening_id_fkey';
+            columns: ['evening_id'];
+            isOneToOne: true;
+            referencedRelation: 'evenings';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       cron_heartbeat: {
         Row: {
           id: number;
@@ -139,6 +165,7 @@ export type Database = {
           format: NonNullable<Json>;
           gameday_posted_at: string | null;
           id: string;
+          is_training: boolean;
           location: string | null;
           note: string | null;
           results_posted_at: string | null;
@@ -166,6 +193,7 @@ export type Database = {
           format: NonNullable<Json>;
           gameday_posted_at?: string | null;
           id?: string;
+          is_training?: boolean;
           location?: string | null;
           note?: string | null;
           results_posted_at?: string | null;
@@ -193,6 +221,7 @@ export type Database = {
           format?: NonNullable<Json>;
           gameday_posted_at?: string | null;
           id?: string;
+          is_training?: boolean;
           location?: string | null;
           note?: string | null;
           results_posted_at?: string | null;
@@ -258,6 +287,7 @@ export type Database = {
           is_active: boolean;
           is_admin: boolean;
           is_guest: boolean;
+          is_spectator: boolean | null;
           photo_url: string | null;
           spoken_name: string | null;
           tg_id: number | null;
@@ -271,6 +301,7 @@ export type Database = {
           is_active?: boolean;
           is_admin?: boolean;
           is_guest?: boolean;
+          is_spectator?: boolean | null;
           photo_url?: string | null;
           spoken_name?: string | null;
           tg_id?: number | null;
@@ -284,6 +315,7 @@ export type Database = {
           is_active?: boolean;
           is_admin?: boolean;
           is_guest?: boolean;
+          is_spectator?: boolean | null;
           photo_url?: string | null;
           spoken_name?: string | null;
           tg_id?: number | null;
@@ -402,6 +434,7 @@ export type Database = {
         Row: {
           announce_hours_before: number;
           bot_username: string | null;
+          club_board_token: string;
           default_format_id: string | null;
           default_location: string | null;
           game_time: string;
@@ -417,6 +450,7 @@ export type Database = {
         Insert: {
           announce_hours_before?: number;
           bot_username?: string | null;
+          club_board_token?: string;
           default_format_id?: string | null;
           default_location?: string | null;
           game_time?: string;
@@ -432,6 +466,7 @@ export type Database = {
         Update: {
           announce_hours_before?: number;
           bot_username?: string | null;
+          club_board_token?: string;
           default_format_id?: string | null;
           default_location?: string | null;
           game_time?: string;
@@ -591,6 +626,7 @@ export type Database = {
         };
         Returns: string;
       };
+      board_ping: { Args: { p_token: string; p_voice?: boolean }; Returns: boolean };
       board_state: { Args: { p_token: string }; Returns: Json };
       board_voice_clips: {
         Args: { p_hashes: string[]; p_token: string; p_voice: string };
@@ -607,8 +643,14 @@ export type Database = {
         };
         Returns: undefined;
       };
+      club_board_state: { Args: { p_code: string }; Returns: Json };
+      club_board_voice_clips: {
+        Args: { p_code: string; p_hashes: string[]; p_voice: string };
+        Returns: Json;
+      };
       cron_last_tick: { Args: Record<PropertyKey, never>; Returns: Json };
       current_player_id: { Args: Record<PropertyKey, never>; Returns: string };
+      delete_training_evening: { Args: { p_evening: string }; Returns: Json };
       delete_vote: {
         Args: { p_category: string; p_evening: string; p_voter: string };
         Returns: undefined;
@@ -621,10 +663,14 @@ export type Database = {
         Args: { p_evening: string; p_last_event_id: number; p_voided_count: number };
         Returns: undefined;
       };
+      merge_guests: { Args: { p_guest: string; p_target: string }; Returns: Json };
+      merge_guests_preview: { Args: { p_guest: string; p_target: string }; Returns: Json };
       merge_players: { Args: { p_guest: string; p_target: string }; Returns: Json };
       merge_players_preview: { Args: { p_guest: string; p_target: string }; Returns: Json };
+      rotate_club_board_token: { Args: Record<PropertyKey, never>; Returns: string };
       server_now: { Args: Record<PropertyKey, never>; Returns: string };
       set_my_name: { Args: { p_name: string }; Returns: undefined };
+      set_my_spectator: { Args: { p_spectator: boolean }; Returns: boolean };
       set_my_spoken_name: { Args: { p_name: string }; Returns: string };
       set_payout: { Args: { p_evening: string; p_pct: number[] }; Returns: undefined };
       set_prediction: {
@@ -634,6 +680,7 @@ export type Database = {
       set_rsvp: { Args: { p_evening: string; p_status: string }; Returns: undefined };
       unmark_settled: { Args: { p_evening: string }; Returns: undefined };
       verify_cron_secret: { Args: { p_secret: string }; Returns: boolean };
+      voice_clips_present: { Args: { p_hashes: string[]; p_voice: string }; Returns: string[] };
       void_event: { Args: { p_event: number }; Returns: undefined };
       void_events: { Args: { p_events: number[] }; Returns: undefined };
     };

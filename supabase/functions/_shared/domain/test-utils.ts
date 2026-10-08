@@ -38,6 +38,12 @@ export interface Journal {
   /** Олл-ин: полное состояние раздачи — руки [игрок, карта, карта] и стол. */
   showdown(showdownId: string, hands: [PlayerId, CardCode, CardCode][], board?: CardCode[]): number;
   closeShowdown(showdownId: string): number;
+  /** Правка записи на месте (022): новая кратность входа/ребая или новые выбившие вылета. */
+  amend(eventId: number, value: { stacks: number } | { by: PlayerId[] }): number;
+  /** Пауза на minutes минут (022). */
+  pauseFor(minutes: number): number;
+  /** Поправка остатка уровня на seconds секунд (022), минус — убавить. */
+  adjust(seconds: number): number;
   voidEvent(eventId: number): void;
 }
 
@@ -80,6 +86,9 @@ export function journal(startIso = '2026-10-08T16:00:00.000Z'): Journal {
         board,
       }),
     closeShowdown: (showdownId) => j.add('showdown_close', { showdownId }),
+    amend: (eventId, value) => j.add('amend', { eventId, ...value }),
+    pauseFor: (minutes) => j.add('timer_pause', { minutes }),
+    adjust: (seconds) => j.add('time_adjust', { seconds }),
     voidEvent(eventId) {
       const ev = events.find((e) => e.id === eventId);
       if (!ev) throw new Error(`нет события ${eventId}`);

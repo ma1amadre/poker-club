@@ -105,3 +105,15 @@
   gap: var(--space-2);
   color: var(--ink-muted);
 }
+
+/* «Олл-ины вечера» под моментами: кнопка раскрытия и карточки раздач (AllInList кита). */
+.hs-allins {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.hs-allins > .ui-allins {
+  justify-self: stretch;
+}

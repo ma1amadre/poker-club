@@ -1,5 +1,6 @@
+import { eveningAllIns, type AllIn } from '@domain/allins.ts';
 import { VOTE_CATEGORY_META } from '@domain/votes.ts';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useVotePhotoUrl, type ClubHistory, type Evening, type Player } from '../../shared/api';
 import {
@@ -10,8 +11,19 @@ import {
   paths,
   pluralWithNumber,
 } from '../../shared/lib';
-import { Avatar, ButtonLink, Empty, Icon, List, Notice, Section, Skeleton } from '../../shared/ui';
-import { groupMoments, type DatedMoment } from './moments';
+import {
+  AllInList,
+  Avatar,
+  Button,
+  ButtonLink,
+  Empty,
+  Icon,
+  List,
+  Notice,
+  Section,
+  Skeleton,
+} from '../../shared/ui';
+import { groupMoments, momentEvenings, type DatedMoment } from './moments';
 
 const VOTES_FORMS = ['голос', 'голоса', 'голосов'] as const;
 
@@ -25,12 +37,26 @@ export interface MomentsTabProps {
 }
 
 /**
- * «Моменты»: победители номинаций всех вечеров с закрытым голосованием, новые сверху, по вечерам.
- * Строка ведёт на голосование вечера — там все голоса и фото целиком.
+ * «Моменты»: победители номинаций всех вечеров с закрытым голосованием и «Олл-ины вечера» —
+ * записанные раздачи с долями по улицам. Новые вечера сверху. Строка момента ведёт на голосование
+ * вечера — там все голоса и фото целиком; олл-ины раскрываются по кнопке (шансы считаются только
+ * у раскрытых — иначе вкладка пересчитывала бы раздачи всей истории клуба).
  */
 export function MomentsTab({ history, moments, open, playersById }: MomentsTabProps) {
-  const groups = groupMoments(moments, (id) => history.summaryById.get(id)?.date);
   const nameOf = (id: string) => playersById.get(id)?.display_name ?? 'Игрок не найден';
+  const allInsByEvening = useMemo(() => {
+    const out = new Map<string, AllIn[]>();
+    for (const e of history.evenings) {
+      const list = eveningAllIns(e.format, history.eventsByEvening.get(e.id) ?? []);
+      if (list.length > 0) out.set(e.id, list);
+    }
+    return out;
+  }, [history.evenings, history.eventsByEvening]);
+  const groups = momentEvenings(
+    groupMoments(moments, (id) => history.summaryById.get(id)?.date),
+    history.evenings,
+    allInsByEvening,
+  );
 
   return (
     <div className="hs-panel">
@@ -54,27 +80,57 @@ export function MomentsTab({ history, moments, open, playersById }: MomentsTabPr
         <Empty
           icon="inbox"
           title="Моментов пока нет"
-          description="После каждого вечера сутки идёт голосование: рука, блеф и бэд-бит вечера. Победители номинаций с фото и подписями собираются здесь."
+          description="После каждого вечера сутки идёт голосование: рука, блеф и бэд-бит вечера. Победители номинаций с фото и подписями собираются здесь, рядом — олл-ины вечера, которые банкир отметил на пульте."
         />
       ) : (
         groups.map((group) => {
           const title = group.date ? capitalize(formatWeekdayDate(group.date)) : 'Вечер';
           return (
             <Section key={group.eveningId} title={title}>
-              <List aria-label={`Моменты вечера: ${title}`}>
-                {group.moments.map((m) => (
-                  <MomentRow
-                    key={`${m.category}:${m.nomineeId}`}
-                    moment={m}
-                    nominee={playersById.get(m.nomineeId)}
-                    nameOf={nameOf}
-                  />
-                ))}
-              </List>
+              {group.moments.length > 0 && (
+                <List aria-label={`Моменты вечера: ${title}`}>
+                  {group.moments.map((m) => (
+                    <MomentRow
+                      key={`${m.category}:${m.nomineeId}`}
+                      moment={m}
+                      nominee={playersById.get(m.nomineeId)}
+                      nameOf={nameOf}
+                    />
+                  ))}
+                </List>
+              )}
+              {group.allIns.length > 0 && <EveningAllIns allIns={group.allIns} nameOf={nameOf} />}
             </Section>
           );
         })
       )}
+    </div>
+  );
+}
+
+/** Олл-ины вечера под кнопкой: раскрыть — посчитать шансы и показать раздачи. */
+function EveningAllIns({
+  allIns,
+  nameOf,
+}: {
+  allIns: readonly AllIn[];
+  nameOf: (id: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="hs-allins">
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={open ? 'chevron-up' : 'chevron-down'}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open
+          ? 'Свернуть олл-ины'
+          : `Олл-ины вечера: ${pluralWithNumber(allIns.length, ['раздача', 'раздачи', 'раздач'])}`}
+      </Button>
+      {open && <AllInList allIns={allIns} nameOf={nameOf} />}
     </div>
   );
 }

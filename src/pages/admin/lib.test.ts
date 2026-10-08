@@ -11,6 +11,9 @@ import {
   decimalToInput,
   type EveningLike,
   groupPlayers,
+  guestMergeFlagNotes,
+  guestMergeHint,
+  guestMergeTargets,
   intToInput,
   mergeSummary,
   mergeTargets,
@@ -21,6 +24,7 @@ import {
   type PlayerLike,
   splitEvenings,
   takenDates,
+  trainingDeletedText,
   vacatedSlot,
 } from './lib';
 import { normalizeName } from '../../shared/lib/text';
@@ -234,6 +238,42 @@ describe('привязка к Telegram', () => {
   });
 });
 
+describe('объединение дублей гостя (миграция 024)', () => {
+  const list = [
+    player('g', 'Вова (гость)', { is_guest: true, tg_id: null }),
+    player('d', 'вова', { is_guest: true, tg_id: null, is_active: false }),
+    player('p', 'Петя', { tg_id: null }),
+    player('a', 'Аня (гость)', { is_guest: true, tg_id: null }),
+    player('v', 'Вова', { tg_id: 1007 }),
+  ];
+  const guest = list[0]!;
+
+  it('цели — другие профили без Telegram: то же имя сверху, затем включённые, по имени', () => {
+    expect(guestMergeTargets(list, guest).map((p) => p.id)).toEqual(['d', 'a', 'p']);
+    // Без совпадения имени — включённые сверху.
+    expect(guestMergeTargets(list, list[2]!).map((p) => p.id)).toEqual(['a', 'g', 'd']);
+  });
+
+  it('подпись: то же имя, гость или постоянный, отключён, сыгранные вечера', () => {
+    const nb = (s: string) => s.replace(/ /g, ' ');
+    expect(nb(guestMergeHint(list[1]!, guest, 3))).toBe('то же имя · гость · отключён · 3 вечера');
+    expect(guestMergeHint(list[2]!, guest, undefined)).toBe('постоянный');
+    expect(guestMergeHint(list[3]!, guest, 0)).toBe('гость');
+  });
+
+  it('что станет с флагами профиля', () => {
+    expect(guestMergeFlagNotes({ becomesPermanent: false, becomesActive: false }, 'Вова')).toEqual(
+      [],
+    );
+    expect(guestMergeFlagNotes({ becomesPermanent: true, becomesActive: true }, 'Вова')).toEqual([
+      'Профиль «Вова» станет постоянным: дубль — постоянный игрок, его вечера войдут в рейтинг.',
+      'Профиль «Вова» включится: дубль включён.',
+    ]);
+    // Отчёт merge_players этих полей не несёт.
+    expect(guestMergeFlagNotes({}, 'Вова')).toEqual([]);
+  });
+});
+
 describe('announceChangeText', () => {
   it('что бот написал в группу после правки вечера', () => {
     expect(announceChangeText('moved')).toBe('Бот написал в группу о переносе.');
@@ -316,5 +356,23 @@ describe('vacatedSlot: перенос на другой день освобож�
     expect(vacatedSlot(thursdaySlot, '2026-10-09', null, NOW)).toBeNull();
     expect(vacatedSlot({ slot_date: null }, '2026-10-09', 4, NOW)).toBeNull();
     expect(vacatedSlot({ slot_date: '2026-10-01' }, '2026-10-09', 4, NOW)).toBeNull();
+  });
+});
+
+describe('тренировочный вечер (миграция 023)', () => {
+  it('тренировка день клуба не занимает', () => {
+    const taken = takenDates([
+      { id: 't', status: 'announced', scheduled_at: '2026-10-09T09:00:00Z', is_training: true },
+      { id: 'r', status: 'announced', scheduled_at: '2026-10-16T12:00:00Z', is_training: false },
+    ]);
+    expect(taken.has('2026-10-09')).toBe(false);
+    expect(taken.has('2026-10-16')).toBe(true);
+  });
+
+  it('тост после удаления называет число гостей', () => {
+    const sp = (t: string) => t.replace(/\u00a0/g, ' ');
+    expect(trainingDeletedText(0)).toBe('Тренировка удалена');
+    expect(sp(trainingDeletedText(1))).toBe('Тренировка удалена вместе с 1 гостем');
+    expect(sp(trainingDeletedText(2))).toBe('Тренировка удалена вместе с 2 гостями');
   });
 });

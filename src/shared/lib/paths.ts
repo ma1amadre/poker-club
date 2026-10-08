@@ -6,6 +6,8 @@ export const paths = {
   settle: (id: string) => `/evening/${id}/settle`,
   vote: (id: string) => `/evening/${id}/vote`,
   board: (token: string) => `/board/${token}`,
+  /** Табло клуба — постоянная ссылка для ТВ (миграция 023). */
+  clubBoard: (code: string) => `/tv/${code}`,
   rating: '/rating',
   /** Вкладки рейтинга (useRatingParams): рекорды клуба и зал славы. */
   ratingRecords: '/rating?tab=records',
@@ -23,7 +25,19 @@ export const paths = {
  * Берём текущий origin + pathname — так ссылка верна и локально, и на GitHub Pages (/poker-club/).
  */
 export function boardUrl(token: string): string {
-  return `${window.location.origin}${window.location.pathname}#${paths.board(token)}`;
+  return appUrl(paths.board(token));
+}
+
+/** Код табло клуба: как check settings.club_board_token (миграция 023) — 12 знаков hex. */
+export const CLUB_BOARD_CODE_RE = /^[0-9a-f]{12}$/;
+
+/** Абсолютная ссылка на табло клуба: её открывают на ТВ один раз и сохраняют в закладки. */
+export function clubBoardUrl(code: string): string {
+  return appUrl(paths.clubBoard(code));
+}
+
+function appUrl(route: string): string {
+  return `${window.location.origin}${window.location.pathname}#${route}`;
 }
 
 /** Прямая ссылка на Mini App с параметром запуска: t.me/<bot>?startapp=e_<id>. */

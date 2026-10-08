@@ -6,12 +6,19 @@
 //   открытии: первый кадр — точка отсчёта), и только свежие — `at` не старше FRESH_EVENT_MS
 //   (табло, потерявшее связь на полчаса, не вываливает всё накопленное разом);
 // - события — в порядке журнала: старт таймера, пауза (кроме служебной паузы перед finish — её
-//   пишет add_event), продолжение, нокаут (bust; voided board_state не отдаёт), победитель (finish);
+//   пишет add_event; пауза на N минут — «Перерыв N минут», миграция 022), продолжение, нокаут
+//   (bust; voided board_state не отдаёт), победитель (finish); правка записи на месте (amend) и
+//   поправка времени (time_adjust) не объявляются;
+// - «Минута до конца перерыва» — пауза с длительностью, до конца перерыва (pauseLeftMs) пересекло
+//   60 с в этом шаге и не ушло ниже 45 с; один раз на паузу (heard.breakMinute);
 // - новый уровень и закрытие ребаев — по состоянию replay: уровень вырос (таймер, level_next,
 //   триггер по вылетам или раздачам), ребаи были открыты и закрылись (не из-за finish); фраза
 //   уровня встаёт на место level_next в журнале, иначе — после событий; ребаи — сразу за ней;
 // - «Минута до повышения» — уровень по времени, таймер идёт, следующий уровень есть, остаток
-//   пересёк 60 с в этом шаге и не ушёл ниже 45 с (шаг не запоздал);
+//   пересёк 60 с в этом шаге и не ушёл ниже 45 с (шаг не запоздал). Поправка «−1 мин» (time_adjust)
+//   — законный скачок: перескочила порог — говорим, пока до края больше 15 с; порог, пройденный на
+//   паузе, — при «Продолжаем». «+1 мин», поднявшая остаток выше порога, снимает отметку «сказано»
+//   (так же и «Пять минут до закрытия ребаев»);
 // - окно ребаев (аудит 07.10.2026): «Последний уровень ребаев» — сразу за фразой уровня (или за
 //   «Поехали»), если начался уровень номер rebuyUntilLevel, в конце которого ребаи закроются (ребаи
 //   не на всю игру); «Пять минут до закрытия ребаев» — игровое время до закрытия (rebuyWindow, как
@@ -23,6 +30,7 @@
 //   перевести уровень через границу, а запоздавшая пауза откатывает его обратно — после
 //   «Продолжаем» граница пересекается снова, но второй раз не объявляется. Память сбрасывается к
 //   текущему состоянию только настоящим откатом: новый level_prev, timer_start или отмена (void).
+import { pauseLeftMs, readPause } from '@domain/replay.ts';
 import type { EveningEvent, EveningState, TournamentFormat } from '@domain/types.ts';
 import type { Announcement } from '@domain/voice.ts';
 import { rebuyWindow } from '../evening/lib';
@@ -38,6 +46,8 @@ export interface VoiceHeard {
   rebuysSoon: boolean;
   /** «Ребаи закрыты» уже сказано (или ребаи были закрыты при открытии). */
   rebuysClosed: boolean;
+  /** Пауза (id её timer_pause), о минуте до конца которой уже сказано; −1 — ни о какой. */
+  breakMinute: number;
 }
 
 export interface VoiceFrame {
@@ -65,11 +75,13 @@ function rebuysLeftMs(format: TournamentFormat, state: EveningState): number | n
 }
 
 /** Память «как будто табло только что открыли»: всё, что уже на экране, — сказано. */
-function heardNow(format: TournamentFormat, state: EveningState): VoiceHeard {
+function heardNow(format: TournamentFormat, state: EveningState, nowMs: number): VoiceHeard {
   const t = state.timer;
   const started = t.status !== 'not_started';
   const rebuysLeft = rebuysLeftMs(format, state);
+  const breakLeft = pauseLeftMs(state, nowMs);
   return {
+    breakMinute: breakLeft !== null && breakLeft <= MINUTE_MS ? (t.pause?.eventId ?? -1) : -1,
     level: t.levelIndex,
     minute:
       started && t.levelRemainingMs !== null && t.levelRemainingMs <= MINUTE_MS ? t.levelIndex : -1,
@@ -90,7 +102,7 @@ export function voiceFrame(
     eventIds: new Set(events.filter((e) => !e.voided).map((e) => e.id)),
     applied: replayed.applied,
     state: replayed.state,
-    heard: heardNow(format, replayed.state),
+    heard: heardNow(format, replayed.state, nowMs),
   };
 }
 
@@ -152,10 +164,13 @@ export function voiceStep(
           out.push({ kind: 'rebuys_last_level' });
         return;
       }
-      case 'timer_pause':
+      case 'timer_pause': {
         // add_event пишет паузу перед finish идущего вечера — объявим только победителя.
-        if (!fresh.slice(i + 1).some((e) => e.type === 'finish')) out.push({ kind: 'pause' });
+        if (fresh.slice(i + 1).some((e) => e.type === 'finish')) return;
+        const minutes = readPause(event.payload)?.minutes ?? null;
+        out.push(minutes === null ? { kind: 'pause' } : { kind: 'break', minutes });
         return;
+      }
       case 'timer_resume':
         out.push({ kind: 'resume' });
         return;
@@ -201,6 +216,19 @@ export function voiceStep(
     else out.push(...derived);
   }
 
+  // Поправка остатка уровня (time_adjust, ±1 мин) — законный скачок часов: порог, через который
+  // она перескочила, считается пройденным сейчас, а не «запоздавшим». Порог, пройденный на паузе
+  // (поправкой или переходом уровня), объявляется, когда часы пошли.
+  const adjusted = fresh.some((e) => e.type === 'time_adjust');
+  const resumed = t0.status === 'paused' && t1.status === 'running';
+  const crossed = (left0: number | null, left1: number | null, edge: number): boolean => {
+    if (left0 === null || left1 === null || left1 > edge) return false;
+    // Часы дошли до порога сами — шаг не запоздал.
+    if (left0 > edge) return left1 > edge - MINUTE_LATE_MS || (adjusted && left1 > MINUTE_LATE_MS);
+    // Порог пройден на паузе, часы пошли: пока до края больше 15 с, сказать ещё не поздно.
+    return resumed && left1 > MINUTE_LATE_MS;
+  };
+
   const left0 = t0.levelRemainingMs;
   const left1 = t1.levelRemainingMs;
   const minute =
@@ -212,11 +240,7 @@ export function voiceStep(
     t1.levelIndex !== heard.minute &&
     next.state.currentLevel.trigger.type === 'time' &&
     next.state.nextLevel !== null &&
-    left0 !== null &&
-    left1 !== null &&
-    left0 > MINUTE_MS &&
-    left1 <= MINUTE_MS &&
-    left1 > MINUTE_MS - MINUTE_LATE_MS;
+    crossed(left0, left1, MINUTE_MS);
   if (minute) out.push({ kind: 'minute' });
 
   // Пять минут до закрытия ребаев: игровое время до закрытия пересекло порог в этом шаге (часы
@@ -229,23 +253,46 @@ export function voiceStep(
     running &&
     t1.status === 'running' &&
     t0.status !== 'not_started' &&
-    soonLeft0 !== null &&
-    soonLeft1 !== null &&
-    soonLeft0 > REBUYS_SOON_MS &&
-    soonLeft1 <= REBUYS_SOON_MS &&
-    soonLeft1 > REBUYS_SOON_MS - MINUTE_LATE_MS;
+    crossed(soonLeft0, soonLeft1, REBUYS_SOON_MS);
   if (soon) out.push({ kind: 'rebuys_soon' });
 
-  const base = reset ? heardNow(format, next.state) : heard;
+  // «+1 мин» подняла остаток выше порога, о котором уже сказано, — предупреждение снова в силе:
+  // часы дойдут до порога ещё раз, и сказанное тогда будет правдой.
+  const rearmMinute = adjusted && left1 !== null && left1 > MINUTE_MS;
+  const rearmSoon = adjusted && soonLeft1 !== null && soonLeft1 > REBUYS_SOON_MS;
+
+  // Минута до конца перерыва: та же пауза в обоих кадрах, остаток пересёк 60 с, шаг не запоздал.
+  // Перерыв сам не кончается (продолжает банкир) — по истечении голос молчит, табло подсвечивает.
+  const pauseId = t1.pause?.eventId ?? -1;
+  const breakLeft0 = pauseLeftMs(prev.state, prev.nowMs);
+  const breakLeft1 = pauseLeftMs(next.state, next.nowMs);
+  const breakMinute =
+    !reset &&
+    pauseId >= 0 &&
+    pauseId !== heard.breakMinute &&
+    t0.pause?.eventId === pauseId &&
+    breakLeft0 !== null &&
+    breakLeft1 !== null &&
+    breakLeft0 > MINUTE_MS &&
+    breakLeft1 <= MINUTE_MS &&
+    breakLeft1 > MINUTE_MS - MINUTE_LATE_MS;
+  if (breakMinute) out.push({ kind: 'break_minute' });
+
+  const base = reset ? heardNow(format, next.state, next.nowMs) : heard;
   return {
     say: out,
     frame: {
       ...next,
       heard: {
         level: Math.max(base.level, t1.levelIndex),
-        minute: minute ? t1.levelIndex : base.minute,
-        rebuysSoon: base.rebuysSoon || soon,
+        minute: minute
+          ? t1.levelIndex
+          : rearmMinute && base.minute === t1.levelIndex
+            ? -1
+            : base.minute,
+        rebuysSoon: soon || (base.rebuysSoon && !rearmSoon),
         rebuysClosed: base.rebuysClosed || rebuysClosed,
+        breakMinute: breakMinute ? pauseId : base.breakMinute,
       },
     },
   };

@@ -1,8 +1,12 @@
 // Вечер в анонсе: формат, кто идёт, свой ответ и прогноз; у банкира и админа — сбор стола и старт.
 // Сюда ведут кнопки анонса и поста в день игры: анонс зовёт ответить и сделать прогноз, поэтому
 // блок прогноза (тот же, что на главной) стоит сразу под ответом «иду».
+// У банкира и админа под «Столом» — «Проверка перед игрой» (PregameCheck): за 3 ч до начала разделом
+// со всеми пунктами, раньше — строкой. Тренировка (миграция 023): без ответа, прогноза и «Кто идёт».
+// «На кону» (EveningStakes) — под прогнозом: кто в шаге от ачивки или рекорда, расклад сезона.
 import { useState } from 'react';
 import {
+  isTrainingEvening,
   type Rsvp,
   RSVP_CHOICES,
   RSVP_ORDER,
@@ -10,10 +14,11 @@ import {
   type RsvpStatus,
   usePlayers,
   useRsvps,
+  useSetMySpectator,
   useSetRsvp,
 } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
-import { pluralWithNumber } from '../../shared/lib';
+import { pluralWithNumber, SPECTATOR_RSVP_HINT, SPECTATOR_YES_TOAST } from '../../shared/lib';
 import {
   Avatar,
   Badge,
@@ -27,11 +32,15 @@ import {
   type SegmentedOption,
   Skeleton,
   type Tone,
+  useToast,
 } from '../../shared/ui';
+import { StakesList } from './EveningStakes';
+import { hasStakes, useEveningStakes } from './useEveningStakes';
 import { eventPlayerId, rsvpSegmentValue } from './lib';
 import { FormatSummary, PlayersList } from './parts';
 import { PayoutSheet } from './PayoutSheet';
 import { PredictionSection } from './PredictionSection';
+import { PregameRow, PregameSection } from './PregameCheck';
 import { SeatSheet } from './SeatSheet';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -41,9 +50,14 @@ const RSVP_TONE: Record<RsvpStatus, Tone> = { yes: 'positive', maybe: 'caution',
 export interface AnnouncedViewProps {
   model: EveningModel;
   actions: EveningActions;
+  /** Открыть «Вывести на ТВ» (из проверки перед игрой: табло не открыто). */
+  onTv: () => void;
 }
 
-export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
+/** За сколько до начала проверка перед игрой раскрыта разделом, а не строкой. */
+const PREGAME_OPEN_MS = 3 * 60 * 60 * 1000;
+
+export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
   const { evening, state, nameOf, playersById, canControl } = model;
   const { player: me } = useAuth();
   const players = usePlayers().data ?? [];
@@ -53,6 +67,9 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
   const [starting, setStarting] = useState(false);
   const [payoutOpen, setPayoutOpen] = useState(false);
   const goingCount = rsvps.filter((r) => r.status === 'yes').length;
+  const stakes = useEveningStakes(evening, rsvps, players);
+  const training = isTrainingEvening(evening);
+  const pregameOpen = Date.parse(evening.scheduled_at) - model.nowMs <= PREGAME_OPEN_MS;
 
   const seated = state.joinOrder.length;
   const startProblem =
@@ -61,7 +78,9 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
   const start = async () => {
     const ok = await actions.confirm({
       title: 'Начать вечер?',
-      message: `За столом ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}. Запустится таймер первого уровня, ответы на анонс и прогнозы закроются. Опоздавших можно посадить, пока открыта регистрация.`,
+      message: training
+        ? `За столом ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}. Запустится таймер первого уровня — табло и голос начнут вечер. Опоздавших можно посадить, пока открыта регистрация.`
+        : `За столом ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}. Запустится таймер первого уровня, ответы на анонс и прогнозы закроются. Опоздавших можно посадить, пока открыта регистрация.`,
       confirmText: 'Начать вечер',
       cancelText: 'Подождать',
     });
@@ -104,7 +123,9 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
             />
           ) : (
             <p className="m-small">
-              Перед стартом отметь, кто пришёл: ответившие «иду» будут уже выбраны.
+              {training
+                ? 'Отметь, кто садится за стол: на тренировке можно посадить любых игроков и гостей.'
+                : 'Перед стартом отметь, кто пришёл: ответившие «иду» будут уже выбраны.'}
             </p>
           )}
           <div className="ev-actions">
@@ -150,9 +171,16 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
         </Section>
       )}
 
-      <MyRsvp eveningId={evening.id} rsvps={rsvps} loaded={rsvpsQuery.isSuccess} />
+      {canControl &&
+        (pregameOpen ? (
+          <PregameSection model={model} rsvps={rsvps} onTv={onTv} />
+        ) : (
+          <PregameRow model={model} rsvps={rsvps} onTv={onTv} holdScreen={false} />
+        ))}
 
-      {me && !me.is_guest && (
+      {!training && <MyRsvp eveningId={evening.id} rsvps={rsvps} loaded={rsvpsQuery.isSuccess} />}
+
+      {me && !me.is_guest && !training && (
         <PredictionSection
           evening={evening}
           me={me}
@@ -162,67 +190,75 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
         />
       )}
 
-      <Section
-        title="Кто идёт"
-        aside={
-          rsvpsQuery.isSuccess
-            ? goingCount > 0
-              ? pluralWithNumber(goingCount, ['идёт', 'идут', 'идут'])
-              : 'никто не идёт'
-            : undefined
-        }
-      >
-        {rsvpsQuery.isPending ? (
-          <div aria-busy="true" className="stack">
-            <Skeleton height={48} />
-            <Skeleton height={48} />
-          </div>
-        ) : rsvpsQuery.isError ? (
-          <Notice
-            tone="critical"
-            title="Ответы на анонс не загрузились"
-            action={
-              <Button size="sm" onClick={() => void rsvpsQuery.refetch()}>
-                Повторить
-              </Button>
-            }
-          >
-            Проверь интернет — список обновится сам, когда связь вернётся.
-          </Notice>
-        ) : rsvps.length === 0 ? (
-          <Empty
-            title="Пока никто не ответил"
-            description="Ответы «иду», «не иду» и «под вопросом» появятся здесь, как только игроки нажмут кнопку в анонсе."
-          />
-        ) : (
-          <List aria-label="Ответы на анонс">
-            {[...rsvps]
-              .sort(
-                (a, b) =>
-                  RSVP_ORDER[a.status] - RSVP_ORDER[b.status] ||
-                  nameOf(a.player_id).localeCompare(nameOf(b.player_id), 'ru'),
-              )
-              .map((r) => (
-                <ListItem
-                  key={r.player_id}
-                  before={
-                    <Avatar
-                      name={nameOf(r.player_id)}
-                      photoUrl={playersById.get(r.player_id)?.photo_url}
-                      size="lg"
-                    />
-                  }
-                  title={nameOf(r.player_id)}
-                  after={
-                    <Badge tone={RSVP_TONE[r.status]} dot={r.status === 'yes'}>
-                      {RSVP_STATUS_META[r.status].other}
-                    </Badge>
-                  }
-                />
-              ))}
-          </List>
-        )}
-      </Section>
+      {stakes && hasStakes(stakes, me?.id) && (
+        <Section title="На кону">
+          <StakesList stakes={stakes} nameOf={nameOf} meId={me?.id} />
+        </Section>
+      )}
+
+      {!training && (
+        <Section
+          title="Кто идёт"
+          aside={
+            rsvpsQuery.isSuccess
+              ? goingCount > 0
+                ? pluralWithNumber(goingCount, ['идёт', 'идут', 'идут'])
+                : 'никто не идёт'
+              : undefined
+          }
+        >
+          {rsvpsQuery.isPending ? (
+            <div aria-busy="true" className="stack">
+              <Skeleton height={48} />
+              <Skeleton height={48} />
+            </div>
+          ) : rsvpsQuery.isError ? (
+            <Notice
+              tone="critical"
+              title="Ответы на анонс не загрузились"
+              action={
+                <Button size="sm" onClick={() => void rsvpsQuery.refetch()}>
+                  Повторить
+                </Button>
+              }
+            >
+              Проверь интернет — список обновится сам, когда связь вернётся.
+            </Notice>
+          ) : rsvps.length === 0 ? (
+            <Empty
+              title="Пока никто не ответил"
+              description="Ответы «иду», «не иду» и «под вопросом» появятся здесь, как только игроки нажмут кнопку в анонсе."
+            />
+          ) : (
+            <List aria-label="Ответы на анонс">
+              {[...rsvps]
+                .sort(
+                  (a, b) =>
+                    RSVP_ORDER[a.status] - RSVP_ORDER[b.status] ||
+                    nameOf(a.player_id).localeCompare(nameOf(b.player_id), 'ru'),
+                )
+                .map((r) => (
+                  <ListItem
+                    key={r.player_id}
+                    before={
+                      <Avatar
+                        name={nameOf(r.player_id)}
+                        photoUrl={playersById.get(r.player_id)?.photo_url}
+                        size="lg"
+                      />
+                    }
+                    title={nameOf(r.player_id)}
+                    after={
+                      <Badge tone={RSVP_TONE[r.status]} dot={r.status === 'yes'}>
+                        {RSVP_STATUS_META[r.status].other}
+                      </Badge>
+                    }
+                  />
+                ))}
+            </List>
+          )}
+        </Section>
+      )}
 
       <FormatSummary format={evening.format} />
       {canControl && (
@@ -277,9 +313,12 @@ function MyRsvp({
 }) {
   const { player } = useAuth();
   const setRsvp = useSetRsvp(eveningId);
+  const setSpectator = useSetMySpectator();
+  const toast = useToast();
   if (!player || player.is_guest) return null;
   const mine = loaded ? (rsvps.find((r) => r.player_id === player.id)?.status ?? null) : undefined;
   const value = rsvpSegmentValue(mine, setRsvp.isPending ? setRsvp.variables : null);
+  const spectator = player.is_spectator === true;
   return (
     <Section title="Твой ответ">
       <Segmented<RsvpStatus | ''>
@@ -288,11 +327,28 @@ function MyRsvp({
         value={value}
         options={RSVP_OPTIONS}
         onChange={(status) => {
-          if (status) setRsvp.mutate(status);
+          if (!status) return;
+          setRsvp.mutate(status, {
+            onSuccess: () => {
+              // Болельщик сказал «Иду» — на этот вечер он игрок (миграция 024); играть постоянно —
+              // одной кнопкой.
+              if (status !== 'yes' || !spectator) return;
+              toast.show(SPECTATOR_YES_TOAST.title, {
+                tone: 'positive',
+                detail: SPECTATOR_YES_TOAST.detail,
+                action: {
+                  label: SPECTATOR_YES_TOAST.action,
+                  onClick: () => setSpectator.mutate(false),
+                },
+              });
+            },
+          });
         }}
       />
       {loaded && value === '' && (
-        <p className="m-small">Ответ нужен банкиру, чтобы собрать список игроков.</p>
+        <p className="m-small">
+          {spectator ? SPECTATOR_RSVP_HINT : 'Ответ нужен банкиру, чтобы собрать список игроков.'}
+        </p>
       )}
     </Section>
   );

@@ -51,6 +51,7 @@ async function swapSnapshot(
     .from('evenings')
     .update({ announce_snapshot: next })
     .eq('id', eveningId)
+    .eq('is_training', false)
     .not('announce_posted_at', 'is', null)
     .in('status', [...CHANGE_STATUSES]);
   // jsonb = jsonb сравнивается по содержимому (порядок ключей не важен): передаём ровно прочитанное.
@@ -73,6 +74,8 @@ export async function postAnnounceChange(
   nowMs: number,
   settings?: SettingsRow,
 ): Promise<ChangeResult> {
+  // Тренировку группа не видела и не увидит (миграция 023).
+  if (evening.is_training) return { outcome: 'training' };
   if (!evening.announce_posted_at) return { outcome: 'not_announced' };
   if (!CHANGE_STATUSES.includes(evening.status)) return { outcome: 'no_changes' };
 

@@ -7,6 +7,7 @@ import {
   bigBlinds,
   blindsParts,
   boardClock,
+  clubIdleView,
   entriesText,
   formatGameTime,
   lastKnockout,
@@ -324,5 +325,46 @@ describe('блайнды крупно: перенос только после «
     // «1 000/2 000» в Sofia Sans Condensed 800 — 4,62 em: оценка не меньше, число влезает в колонку.
     const measured = 8 * 0.504 + 2 * 0.132 + 0.241;
     expect(bigBlinds({ sb: 1000, bb: 2000 }).em).toBeGreaterThan(measured);
+  });
+});
+
+describe('clubIdleView — табло клуба между вечерами', () => {
+  const NOW_MS = Date.parse('2026-10-06T12:00:00Z'); // вторник, 15:00 МСК
+  const FRIDAY = { weekday: 5, time: '15:00' };
+
+  it('объявленный вечер впереди — его дата и время, без «по расписанию»', () => {
+    const view = sp(clubIdleView({ next_at: '2026-10-09T12:00:00Z', schedule: FRIDAY }, NOW_MS));
+    expect(view).toEqual({
+      eyebrow: 'Следующая игра',
+      headline: 'Пятница, 9 октября',
+      when: 'в 15:00',
+      note: 'Табло само переключится на вечер в день игры — нажимать ничего не нужно.',
+    });
+  });
+
+  it('анонса нет — ближайший день по расписанию клуба', () => {
+    const view = sp(
+      clubIdleView({ next_at: null, schedule: { weekday: 4, time: '19:00' } }, NOW_MS),
+    );
+    expect(view.eyebrow).toBe('Следующая игра по расписанию');
+    expect(view.headline).toBe('Четверг, 8 октября');
+    expect(view.when).toBe('в 19:00');
+  });
+
+  it('до игры меньше суток — «через …»', () => {
+    const view = sp(clubIdleView({ next_at: '2026-10-06T16:00:00Z', schedule: FRIDAY }, NOW_MS));
+    expect(view.when).toBe('в 19:00 · через 4 ч');
+  });
+
+  it('анонс в прошлом (забытый) не берём — берём расписание', () => {
+    const view = clubIdleView({ next_at: '2026-10-01T12:00:00Z', schedule: FRIDAY }, NOW_MS);
+    expect(view.eyebrow).toBe('Следующая игра по расписанию');
+    expect(view.headline).toBe('Пятница, 9 октября');
+  });
+
+  it('ни анонса, ни годного расписания — без даты', () => {
+    const view = clubIdleView({ next_at: null, schedule: { weekday: 9, time: 'утром' } }, NOW_MS);
+    expect(view.when).toBeNull();
+    expect(view.note).toBe('Вечер появится здесь сам, как только его объявят.');
   });
 });

@@ -25,3 +25,8 @@ export function EveningStatusBadge({ status }: EveningStatusBadgeProps) {
     </Badge>
   );
 }
+
+/** Пометка тренировочного вечера (миграция 023) — рядом со статусом везде, где вечер показан. */
+export function TrainingBadge() {
+  return <Badge tone="accent">Тренировка</Badge>;
+}

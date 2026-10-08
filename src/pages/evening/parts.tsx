@@ -32,6 +32,7 @@ import {
   feedEvents,
   orderedPlayers,
   playerLine,
+  type FeedContext,
   type MySeat,
   type NameOf,
 } from './lib';
@@ -258,6 +259,8 @@ const EVENT_ICON: Record<EventType, IconName> = {
   finish: 'flag',
   showdown: 'eye',
   showdown_close: 'eye',
+  amend: 'pencil',
+  time_adjust: 'clock',
 };
 
 export function EventIcon({ type }: { type: EventType }) {
@@ -275,13 +278,28 @@ export interface EventRowProps {
   format: TournamentFormat;
   /** Текст ошибки replay: событие записано, но не принято (например, ребай после закрытия). */
   error?: string;
-  /** Отменить запись (строка становится кнопкой; у отменённых — нет). */
-  onVoid?: (event: EveningEventRecord) => void;
+  /**
+   * Нажатие на запись (строка становится кнопкой; у отменённых — нет): у входа, ребая и вылета —
+   * шторка «Изменить запись» (правка на месте, 022), у остальных — подтверждение отмены.
+   */
+  onSelect?: (event: EveningEventRecord) => void;
+  /** Запись можно исправить (шеврон у строки: откроется шторка, а не вопрос). */
+  editable?: boolean;
+  /** Как журнал применил записи: исправленная запись — с правкой в силе (миграция 022). */
+  feed?: FeedContext;
 }
 
 /** Строка журнала: что случилось, кто, когда; отменённые — зачёркнуты и с пометкой. */
-export function EventRow({ event, nameOf, format, error, onVoid }: EventRowProps) {
-  const line = describeEvent(event, nameOf, formatRub, format);
+export function EventRow({
+  event,
+  nameOf,
+  format,
+  error,
+  onSelect,
+  editable = false,
+  feed,
+}: EventRowProps) {
+  const line = describeEvent(event, nameOf, formatRub, format, feed);
   const subtitle = [line.detail, error ? `не принято: ${error}` : null].filter(Boolean).join(' · ');
   return (
     <ListItem
@@ -298,8 +316,8 @@ export function EventRow({ event, nameOf, format, error, onVoid }: EventRowProps
           ) : null}
         </span>
       }
-      onClick={onVoid && !event.voided ? () => onVoid(event) : undefined}
-      chevron={false}
+      onClick={onSelect && !event.voided ? () => onSelect(event) : undefined}
+      chevron={Boolean(onSelect) && editable && !event.voided}
     />
   );
 }
@@ -309,7 +327,12 @@ export interface EventFeedProps {
   nameOf: NameOf;
   format: TournamentFormat;
   errorsById: Map<number, string>;
-  onVoid?: (event: EveningEventRecord) => void;
+  /** Нажатие на запись: правка (вход, ребай, вылет) или отмена — решает экран. */
+  onSelect?: (event: EveningEventRecord) => void;
+  /** Можно ли исправить запись на месте (шеврон и подпись под лентой). */
+  canEdit?: (event: EveningEventRecord) => boolean;
+  /** Контекст ленты (feedContext): исправленные записи и правки (миграция 022). */
+  feed?: FeedContext;
   title?: string;
   /** Сколько строк показать до «Показать всю ленту». */
   limit?: number;
@@ -321,7 +344,9 @@ export function EventFeed({
   nameOf,
   format,
   errorsById,
-  onVoid,
+  onSelect,
+  canEdit,
+  feed: context,
   title = 'Лента',
   limit = 12,
 }: EventFeedProps) {
@@ -333,7 +358,13 @@ export function EventFeed({
     <Section
       title={title}
       aside={pluralWithNumber(feed.length, ['запись', 'записи', 'записей'])}
-      footer={onVoid ? 'Чтобы отменить запись, нажми на неё.' : undefined}
+      footer={
+        onSelect
+          ? canEdit
+            ? 'Нажми на запись, чтобы отменить её. Вход, ребай и вылет можно исправить на месте.'
+            : 'Чтобы отменить запись, нажми на неё.'
+          : undefined
+      }
     >
       <List aria-label={title}>
         {shown.map((event) => (
@@ -343,7 +374,9 @@ export function EventFeed({
             nameOf={nameOf}
             format={format}
             error={errorsById.get(event.id)}
-            onVoid={onVoid}
+            onSelect={onSelect}
+            editable={canEdit?.(event) ?? false}
+            feed={context}
           />
         ))}
       </List>

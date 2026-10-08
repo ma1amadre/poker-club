@@ -3,6 +3,8 @@
 // касания переходит к следующему пустому. Занятые карты в сетке недоступны. Каждая отправка пишет
 // в журнал полное состояние раздачи ('showdown'); ошибку правят следующей отправкой или «Отменить»
 // в тосте — вечер она не ломает (на игру и деньги раздача не влияет).
+// После ривера — «Записать вылет: X, выбивает Y» (useRiverBusts.ts): проигравшие раздачу отмечены,
+// банкир снимает отметку с того, кому фишек хватило; несколько вылетевших — с порядком по фишкам.
 import { CARD_RANKS, CARD_SUITS, streetOf, visibleShowdown } from '@domain/showdown.ts';
 import { useState } from 'react';
 import { newClientId } from '../../shared/api';
@@ -10,6 +12,9 @@ import { cardLabel, cardName, rankLabel, type SuitCode } from '../../shared/lib/
 import { STREET_LABEL } from '../../shared/lib/poker/display';
 import { haptic } from '../../shared/telegram';
 import { Button, PlayerPicker, PlayingCard, Sheet, SuitPip } from '../../shared/ui';
+import { RiverBustsChoice } from './RiverBustsChoice';
+import { useRiverBusts, useRiverChoice } from './useRiverBusts';
+import { riverBustLabel } from './riverBusts';
 import {
   cardIn,
   checkDraft,
@@ -37,6 +42,8 @@ export interface ShowdownSheetProps {
   onClose: () => void;
   model: EveningModel;
   actions: EveningActions;
+  /** «Ребай» в тосте после вылета, записанного после ривера. */
+  onRebuy?: (playerId: string) => void;
 }
 
 export function ShowdownSheet(props: ShowdownSheetProps) {
@@ -49,7 +56,7 @@ const GRID_RANKS = [...CARD_RANKS].reverse();
 const GRID_SUITS = [...CARD_SUITS] as SuitCode[];
 const BOARD_LABELS = ['Флоп', 'Флоп', 'Флоп', 'Тёрн', 'Ривер'];
 
-function ShowdownSheetInner({ onClose, model, actions }: ShowdownSheetProps) {
+function ShowdownSheetInner({ onClose, model, actions, onRebuy }: ShowdownSheetProps) {
   const { state, nameOf, playersById, nowMs } = model;
   const onBoard = visibleShowdown(state.showdown, nowMs);
   const [draft, setDraft] = useState<ShowdownDraft>(() =>
@@ -71,6 +78,10 @@ function ShowdownSheetInner({ onClose, model, actions }: ShowdownSheetProps) {
   const used = usedCards(draft);
   const current = active ? cardIn(draft, active) : null;
   const busy = sending || actions.busy;
+  // После ривера: кто проиграл раздачу и ещё в игре — предложение записать вылет.
+  const river = useRiverBusts(model, actions, onRebuy);
+  const suggestion = riverDone ? river.suggestion : null;
+  const choice = useRiverChoice(suggestion);
 
   // Кого можно отметить: кто в игре, и те, кто уже в раздаче на табло или в черновике
   // (вылетевшего участника можно поправить и вернуть, если галочку с него сняли по ошибке).
@@ -116,6 +127,12 @@ function ShowdownSheetInner({ onClose, model, actions }: ShowdownSheetProps) {
     }
   };
 
+  const recordBusts = async () => {
+    setSending(true);
+    await river.record(choice.byChips, false);
+    setSending(false);
+  };
+
   const closeShowdown = async () => {
     if (!published) {
       onClose();
@@ -137,9 +154,11 @@ function ShowdownSheetInner({ onClose, model, actions }: ShowdownSheetProps) {
       : check.reason
     : domainProblem
       ? domainProblem
-      : riverDone
-        ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
-        : null;
+      : riverDone && suggestion
+        ? null
+        : riverDone
+          ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
+          : null;
 
   const description = published
     ? `На табло — ${STREET_LABEL[streetOf(published.board.length)]}. Отмечай карты стола по мере выкладки.`
@@ -155,7 +174,23 @@ function ShowdownSheetInner({ onClose, model, actions }: ShowdownSheetProps) {
       actions={
         <>
           {hint && <p className="m-small ev-sd-hint">{hint}</p>}
-          {riverDone ? (
+          {riverDone && suggestion ? (
+            <>
+              <Button
+                variant="primary"
+                block
+                icon="user-x"
+                loading={sending}
+                disabled={busy || choice.byChips.length === 0}
+                onClick={() => void recordBusts()}
+              >
+                {riverBustLabel(choice.byChips.map(nameOf))}
+              </Button>
+              <Button variant="ghost" block disabled={busy} onClick={() => void closeShowdown()}>
+                Закрыть раздачу
+              </Button>
+            </>
+          ) : riverDone ? (
             <Button
               variant="primary"
               block
@@ -189,6 +224,9 @@ function ShowdownSheetInner({ onClose, model, actions }: ShowdownSheetProps) {
       }
     >
       <div className="ev-sd">
+        {suggestion && (
+          <RiverBustsChoice model={model} suggestion={suggestion} choice={choice} disabled={busy} />
+        )}
         {editPlayers ? (
           <PlayerPicker
             label="Кто вскрывается"

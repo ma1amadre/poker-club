@@ -4,7 +4,7 @@ import { recordsTable, type RecordKind } from '@domain/records.ts';
 import { allTimeStandings, hallOfFame, seasonStandings } from '@domain/season.ts';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { useClubHistory, type ClubHistory, type Player } from '../../shared/api';
+import { useClubHistory, useSetMySpectator, type ClubHistory, type Player } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import {
   cn,
@@ -21,6 +21,8 @@ import {
   paths,
   placeLabel,
   plural,
+  SPECTATOR_EVENING_NOTE_SELF,
+  SPECTATOR_NOTE,
 } from '../../shared/lib';
 import {
   Amount,
@@ -38,6 +40,8 @@ import {
   Section,
   Stat,
   Stats,
+  Switch,
+  useToast,
 } from '../../shared/ui';
 import { reigningChampions, standingPlaces } from '../rating/stats';
 import { Achievements } from './Achievements';
@@ -199,8 +203,11 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
   const isGuest = player.is_guest;
   const isChampion = Boolean(reigning?.champions.includes(player.id));
   const badges: ReactNode[] = [];
+  // Режим своей карточки — из контекста входа: он меняется здесь же, раньше, чем история клуба.
+  const spectator = (isMe && me ? me.is_spectator : player.is_spectator) === true;
   if (isGuest) badges.push(<Badge key="guest">Гость</Badge>);
   if (!player.is_active) badges.push(<Badge key="off">Отключён</Badge>);
+  if (spectator && !isGuest) badges.push(<Badge key="fan">Болельщик</Badge>);
   if (isChampion && reigning)
     badges.push(
       <Badge key="champion" tone="accent">
@@ -246,6 +253,8 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
           при нокауте и победе.
         </Notice>
       )}
+
+      {isMe && !isGuest && <SpectatorSwitch spectator={spectator} />}
 
       {isGuest && (
         <Notice title="Гость не входит в рейтинг">
@@ -375,5 +384,31 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
         />
       )}
     </Page>
+  );
+}
+
+/**
+ * Свой режим «болельщик» (миграция 024): переключатель сохраняется сразу (set_my_spectator). Админ
+ * меняет чужой режим во вкладке «Игроки».
+ */
+function SpectatorSwitch({ spectator }: { spectator: boolean }) {
+  const save = useSetMySpectator();
+  const toast = useToast();
+  const shown = save.isPending && save.variables !== undefined ? save.variables : spectator;
+  return (
+    <Section title="Участие в играх">
+      <Switch
+        label="Слежу, не играю"
+        description={`${SPECTATOR_NOTE} ${SPECTATOR_EVENING_NOTE_SELF}`}
+        checked={shown}
+        disabled={save.isPending}
+        onChange={(value) =>
+          save.mutate(value, {
+            onSuccess: (saved) =>
+              toast.success(saved ? 'Ты болельщик клуба' : 'Ты в составе игроков'),
+          })
+        }
+      />
+    </Section>
   );
 }

@@ -13,7 +13,7 @@ import {
 } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import { useNow } from '../../shared/lib';
-import type { NameOf } from './lib';
+import { feedContext, type FeedContext, type NameOf } from './lib';
 
 export interface EveningModel {
   evening: Evening;
@@ -23,6 +23,8 @@ export interface EveningModel {
   applied: EveningEvent[];
   /** id события → текст ошибки, если replay его не принял. */
   errorsById: Map<number, string>;
+  /** Лента: исправленные записи с правкой в силе и правки со ссылкой на запись (миграция 022). */
+  feed: FeedContext;
   playersById: Map<string, Player>;
   nameOf: NameOf;
   nowMs: number;
@@ -71,6 +73,11 @@ export function useEveningModel(id: string | undefined): EveningModelResult {
     [replayed],
   );
 
+  const feed = useMemo(
+    () => feedContext(events ?? [], replayed ?? { applied: [], amended: new Map() }),
+    [events, replayed],
+  );
+
   const retry = () => {
     void eveningQuery.refetch();
     void eventsQuery.refetch();
@@ -96,6 +103,7 @@ export function useEveningModel(id: string | undefined): EveningModelResult {
       state: replayed.state,
       applied: replayed.applied,
       errorsById,
+      feed,
       playersById,
       nameOf,
       nowMs,

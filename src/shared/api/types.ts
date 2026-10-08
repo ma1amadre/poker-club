@@ -42,13 +42,43 @@ export interface BoardState {
   evening: Pick<
     Evening,
     'id' | 'scheduled_at' | 'location' | 'status' | 'started_at' | 'finished_at'
-  >;
+  > & {
+    /** Тренировочный вечер (миграция 023; до неё поля нет). */
+    is_training?: boolean;
+  };
   format: TournamentFormat;
   events: EveningEvent[];
   /** Только упомянутые в событиях; spoken_name — имя для озвучки (миграция 016; до неё поля нет). */
   players: { id: string; display_name: string; spoken_name?: string | null }[];
   /** Время сервера на момент ответа (миграция 007) — для сверки часов табло. */
   server_now?: string;
+}
+
+/**
+ * Ответ club_board_state (табло клуба, миграция 023): вечер, который сейчас важен (как board_state),
+ * или null — между вечерами; тогда next_at (ближайший анонс настоящего вечера) и расписание клуба.
+ */
+export interface ClubBoardState {
+  board: BoardState | null;
+  next_at: string | null;
+  /** День недели (1 = пн … 7 = вс) и время начала по Москве «HH:MM» — как в settings. */
+  schedule: { weekday: number; time: string };
+  server_now?: string;
+}
+
+/**
+ * Тренировочный вечер (миграция 023): не попадает в историю, рейтинг, сезоны, ачивки, ленту, рекорды
+ * и посты бота. Без колонки (фронт выложен раньше миграции) — обычный вечер.
+ */
+export function isTrainingEvening(evening: { is_training?: boolean | null }): boolean {
+  return evening.is_training === true;
+}
+
+/** Только настоящие вечера — для истории, рейтинга и всего, что считает клуб. */
+export function withoutTraining<T extends { is_training?: boolean | null }>(
+  evenings: readonly T[],
+): T[] {
+  return evenings.filter((e) => !isTrainingEvening(e));
 }
 
 export const EVENING_STATUS_META: Record<EveningStatus, { title: string }> = {

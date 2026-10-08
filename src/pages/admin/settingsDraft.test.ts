@@ -24,6 +24,7 @@ const SAVED: Settings = {
   ko_points: 0.5,
   win_bonus: 1,
   updated_at: '2026-10-06T12:00:00Z',
+  club_board_token: '0123456789ab',
 };
 
 const draft = (patch: Partial<SettingsDraft> = {}): SettingsDraft => ({

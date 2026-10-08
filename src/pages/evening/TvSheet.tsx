@@ -1,84 +1,63 @@
-// «Вывести на ТВ»: QR и ссылка на публичное табло вечера (/board/:token). Табло открывается без
-// входа на любом экране — ноутбуке у телевизора, планшете, телефоне.
-import QRCode from 'qrcode';
-import { useEffect, useState } from 'react';
-import { boardUrl } from '../../shared/lib';
+// «Вывести на ТВ»: QR и ссылка на табло. Главная — постоянная ссылка «Табло клуба» (/tv/<код>,
+// миграция 023): её открывают на ТВ один раз, дальше табло само показывает идущий вечер, сегодняшний
+// анонс или итог в пределах 6 ч. Ссылка только на этот вечер (/board/:token) — запасная: например,
+// когда табло клуба занято другим вечером. Табло открывается без входа на любом экране.
+import { useState } from 'react';
+import { boardUrl, clubBoardUrl, copyText } from '../../shared/lib';
 import { openLink } from '../../shared/telegram';
-import { Button, Sheet, Skeleton, useToast } from '../../shared/ui';
-
-/**
- * Цвета кода — токены светлого Кобальта (ink на surface): тёмный код на светлом поле читает любая
- * камера, а инвертированный QR из тёмной темы — далеко не каждая. Токены берём из CSS, а не пишем hex.
- */
-function lightTokens(): { dark: string; light: string } {
-  const probe = document.createElement('div');
-  probe.setAttribute('data-theme', 'kobalt');
-  probe.hidden = true;
-  document.body.append(probe);
-  const style = getComputedStyle(probe);
-  const dark = style.getPropertyValue('--ink').trim();
-  const light = style.getPropertyValue('--surface').trim();
-  probe.remove();
-  const hex = /^#[0-9a-f]{6}$/i;
-  return {
-    dark: hex.test(dark) ? dark : '#000000',
-    light: hex.test(light) ? light : '#ffffff',
-  };
-}
+import { Button, LinkQr, Sheet, useToast } from '../../shared/ui';
 
 export interface TvSheetProps {
   open: boolean;
   onClose: () => void;
+  /** Токен табло вечера (evenings.board_token). */
   boardToken: string;
+  /** Код табло клуба (settings.club_board_token); null — миграции 023 ещё нет, только ссылка вечера. */
+  clubCode: string | null;
+  /** Тренировочный вечер: табло клуба может быть занято настоящим вечером. */
+  training?: boolean;
 }
 
-export function TvSheet({ open, onClose, boardToken }: TvSheetProps) {
-  return open ? <TvSheetInner onClose={onClose} boardToken={boardToken} /> : null;
+export function TvSheet({ open, ...rest }: TvSheetProps) {
+  return open ? <TvSheetInner {...rest} /> : null;
 }
 
-function TvSheetInner({ onClose, boardToken }: Omit<TvSheetProps, 'open'>) {
-  const url = boardUrl(boardToken);
+function TvSheetInner({
+  onClose,
+  boardToken,
+  clubCode,
+  training = false,
+}: Omit<TvSheetProps, 'open'>) {
   const toast = useToast();
-  const [qr, setQr] = useState<{ url: string; data: string } | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    QRCode.toDataURL(url, {
-      errorCorrectionLevel: 'M',
-      margin: 2,
-      width: 480,
-      color: lightTokens(),
-    })
-      .then((data) => {
-        if (!cancelled) setQr({ url, data });
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
+  // Без кода клуба — только ссылка вечера (как до 023).
+  const [eveningOnly, setEveningOnly] = useState(clubCode === null);
+  const url = !eveningOnly && clubCode ? clubBoardUrl(clubCode) : boardUrl(boardToken);
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      toast.show('Ссылка на табло скопирована', { tone: 'positive' });
-    } catch {
+    if (await copyText(url))
+      toast.show(
+        eveningOnly ? 'Ссылка на табло вечера скопирована' : 'Ссылка на табло клуба скопирована',
+        {
+          tone: 'positive',
+        },
+      );
+    else
       toast.show('Ссылку не скопировать из этого окна', {
         tone: 'caution',
         detail: 'Выдели её в поле выше и скопируй вручную.',
       });
-    }
   };
+
+  const description = eveningOnly
+    ? 'Ссылка только на этот вечер: погаснет через 6 часов после финала. Наведи камеру телефона или ноутбука у телевизора на код — табло откроется без входа.'
+    : 'Одна ссылка на все вечера: табло само показывает идущий вечер, сегодняшний анонс или итог — 6 часов после финала. Открой её на ТВ один раз и сохрани в закладки.';
 
   return (
     <Sheet
       open
       onClose={onClose}
-      title="Табло на ТВ"
-      description="Наведи камеру телефона или ноутбука у телевизора на код. Табло открывается без входа и обновляется само."
+      title={eveningOnly ? 'Табло этого вечера' : 'Табло клуба'}
+      description={description}
       actions={
         <div className="ev-sheet-actions">
           <Button variant="primary" block icon="copy" onClick={() => void copy()}>
@@ -87,19 +66,26 @@ function TvSheetInner({ onClose, boardToken }: Omit<TvSheetProps, 'open'>) {
           <Button variant="ghost" block icon="external-link" onClick={() => openLink(url)}>
             Открыть табло здесь
           </Button>
+          {clubCode && (
+            <Button variant="ghost" block icon="tv" onClick={() => setEveningOnly((v) => !v)}>
+              {eveningOnly ? 'Показать табло клуба' : 'Ссылка только на этот вечер'}
+            </Button>
+          )}
         </div>
       }
     >
-      <div className="ev-qr">
-        {qr && qr.url === url ? (
-          <img className="ev-qr__image" src={qr.data} alt="QR-код ссылки на табло вечера" />
-        ) : failed ? (
-          <p className="m-small">Код не построился. Открой табло по ссылке ниже.</p>
-        ) : (
-          <Skeleton width={240} height={240} />
-        )}
-        <p className="m-mono ev-qr__link">{url}</p>
-      </div>
+      <LinkQr
+        url={url}
+        alt={eveningOnly ? 'QR-код ссылки на табло вечера' : 'QR-код ссылки на табло клуба'}
+      />
+      {!eveningOnly && (
+        <p className="m-small">
+          ТВ без камеры: набери адрес в браузере ТВ или открой его на ноутбуке у телевизора.
+          {training
+            ? ' Если табло клуба занято настоящим вечером, открой ссылку только на эту тренировку.'
+            : ''}
+        </p>
+      )}
     </Sheet>
   );
 }

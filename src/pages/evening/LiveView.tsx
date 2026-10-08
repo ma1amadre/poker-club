@@ -1,24 +1,32 @@
 // Живой вечер: уровень и обратный отсчёт, блайнды, ребаи, фонд, игроки и лента. У банкира и
 // админа поверх того же экрана — пульт: таймер, уровни, раздачи, вылеты, ребаи, отмена, финиш.
-// Пока на табло олл-ин, его панель (руки, стол, шансы, ауты) — первой на экране у всех.
+// Пульт в двух видах (переключатель «Стол / Подробно», выбор помнит устройство — pultView.ts):
+// «Стол» (TableView) — всё под рукой без прокрутки: полоса часов, места сеткой, вылетевшие, олл-ин;
+// «Подробно» — прежний экран: часы карточкой, пульт кнопками, статы, список игроков.
+// Пока на табло олл-ин, его панель (руки, стол, шансы, ауты) — первой на экране у игроков и в
+// «Подробно»; в «Столе» — под пультом. После ривера — «Записать вылет: X» (useRiverBusts).
 // У того, кто ведёт пульт, экран не гаснет (Screen Wake Lock; нельзя — подсказка отключить
 // автоблокировку), а закрытие Mini App Telegram переспрашивает: пульт — не место для случайного свайпа.
 // У игрока, который пульт не ведёт, вверху — «Ты за столом» (статус, входы, нокауты, баланс с
 // банкиром), в списке — «(ты)», строки ведут в карточки игроков.
+// Перерыв на N минут (022): на часах — «Продолжаем через 07:12», по истечении — «Пора продолжать»
+// (таймер сам не продолжает). Пауза — шторка «Пауза» (без срока или 5–30 мин), ±1 мин — у часов.
+// Лента: нажатие на вход, ребай или вылет — «Изменить запись» (правка на месте, AmendSheet).
+// Под статами у банкира и админа — строка «Проверка перед игрой» (связь, табло, голос; PregameCheck).
+import { amendField } from '@domain/amend.ts';
 import { computeMoney, paymentsFromEvents } from '@domain/money.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
 import type { PlayerState } from '@domain/types.ts';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { notifyEveningFinished, useRsvps } from '../../shared/api';
+import { useState, type ReactNode } from 'react';
+import { useRsvps, type EveningEventRecord } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import {
   formatBlinds,
   formatNumber,
   formatRub,
   formatTime,
+  NBSP,
   paths,
-  joinNames,
   plural,
   pluralWithNumber,
   useWakeLock,
@@ -30,81 +38,85 @@ import {
   Button,
   ButtonLink,
   Card,
+  Icon,
   IconButton,
   Notice,
   Progress,
   Section,
+  Segmented,
   ShowdownView,
   Stat,
   Stats,
   useToast,
-  Icon,
 } from '../../shared/ui';
+import { AmendSheet } from './AmendSheet';
+import { ClockSheet } from './ClockSheet';
 import {
   averageStackBb,
+  breakView,
   clockView,
   describeEvent,
   formatBbValue,
-  lastUndoable,
-  levelEdgeLeftMs,
   levelLabel,
-  levelMovedText,
-  levelNextClosesRebuys,
   mySeat,
-  rebuysClosingText,
   rebuyText,
   rebuyWindow,
+  timeAdjustable,
   triggerProgress,
 } from './lib';
 import { EventFeed, MySeatCard, PlayersList } from './parts';
+import { PauseSheet } from './PauseSheet';
+import { PregameRow } from './PregameCheck';
+import './pult.css';
 import { PlayerSheet } from './PlayerSheet';
+import type { PultView } from './pultView';
+import { riverBustLabel } from './riverBusts';
 import { SeatSheet } from './SeatSheet';
 import { ShowdownSheet } from './ShowdownSheet';
+import { TableView } from './TableView';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
+import { usePult, type Pult } from './usePult';
+import { useRiverBusts } from './useRiverBusts';
 
 export interface LiveViewProps {
   model: EveningModel;
   actions: EveningActions;
+  /** Вид пульта (у банкира и админа): живёт в EveningScreen — от него зависит и шапка экрана. */
+  view: PultView;
+  onViewChange: (view: PultView) => void;
+  /** Открыть «Вывести на ТВ» (из проверки перед игрой: табло не на связи). */
+  onTv: () => void;
 }
 
-/** Ближе к авто-переходу «Уровень вперёд» переспрашивает (сеть + расхождение часов). */
-const LEVEL_EDGE_MS = 5000;
+const VIEW_OPTIONS = [
+  { value: 'table' as const, label: 'Стол' },
+  { value: 'details' as const, label: 'Подробно' },
+];
 
 function chipsText(n: number): string {
-  return `${formatNumber(n)} ${plural(n, ['фишка', 'фишки', 'фишек'])}`;
+  return `${formatNumber(n)} ${plural(n, ['фишка', 'фишки', 'фишек'])}`;
 }
 
-export function LiveView({ model, actions }: LiveViewProps) {
-  const { evening, state, nameOf, playersById, canControl, events, errorsById } = model;
+export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewProps) {
+  const { evening, state, nameOf, canControl, events, errorsById } = model;
   const format = evening.format;
-  const navigate = useNavigate();
   const toast = useToast();
   const { player: me } = useAuth();
   const rsvps = useRsvps(canControl ? evening.id : undefined).data ?? [];
   const [selected, setSelected] = useState<PlayerState | null>(null);
   const [seatOpen, setSeatOpen] = useState(false);
   const [showdownOpen, setShowdownOpen] = useState(false);
-  const [finishing, setFinishing] = useState(false);
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [clockOpen, setClockOpen] = useState(false);
+  const [amending, setAmending] = useState<EveningEventRecord | null>(null);
   const showdown = visibleShowdown(state.showdown, model.nowMs);
   // Пульт: экран не гаснет, закрытие Mini App — с вопросом (как в админке с несохранёнными правками).
   const wake = useWakeLock(canControl);
   useClosingConfirmation(canControl);
   const wakeHint = canControl ? wakeLockHint(wake) : null;
-
-  const timer = state.timer;
-  const paused = timer.status === 'paused';
-  const progress = triggerProgress(state);
-  const win = rebuyWindow(format, state);
-  const avg = averageStackBb(state);
-  const lastAlive =
-    state.aliveCount === 1 ? state.joinOrder.find((id) => state.players[id]?.alive) : undefined;
-  const money = computeMoney(format, state);
-  const owedRub = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
-  const payments = paymentsFromEvents(events);
-  const paidRub = payments.reduce((s, p) => s + p.amountRub, 0);
-  // «Ты за столом» — тому, кто играет и не ведёт пульт (у банкира и админа наверху пульт).
-  const seat = !canControl && me ? mySeat(format, state, model.applied, payments, me.id) : null;
+  const pult = usePult(model, actions);
+  const tableMode = canControl && view === 'table';
 
   // «Ребай» в тосте после вылета: шторка ребая по свежему журналу (тост живёт дольше рендера).
   const openRebuy = (playerId: string) => {
@@ -115,98 +127,119 @@ export function LiveView({ model, actions }: LiveViewProps) {
         detail: 'Ребай уже записан или вылет отменён — проверь ленту.',
       });
   };
+  const river = useRiverBusts(model, actions, openRebuy);
 
-  const undoTarget = lastUndoable(events);
+  // Лента: вход, ребай и вылет — «Изменить запись» (там же «Отменить запись»), остальное — отмена.
+  const selectEvent = (ev: EveningEventRecord) => {
+    if (amendField(ev) !== null && !ev.voided) setAmending(ev);
+    else void actions.voidWithConfirm(ev);
+  };
+  const canEdit = (ev: EveningEventRecord) => amendField(ev) !== null;
 
-  // Один живой при открытых ребаях — обычно ненадолго: вылетевшие сейчас докупятся. Финиш тогда
-  // не главное действие, а подтверждение прямо говорит, что ребаи закроются.
-  const rebuysStillOpen = win.kind !== 'closed';
-  const bustedNames = state.joinOrder.filter((id) => !state.players[id]?.alive).map(nameOf);
+  /** После ривера: один проигравший — вопрос здесь же; несколько — шторка олл-ина. */
+  const riverButton = river.suggestion ? (
+    <Button
+      variant="primary"
+      icon="user-x"
+      disabled={actions.busy}
+      onClick={() => {
+        const s = river.suggestion;
+        if (s && s.victims.length === 1) void river.record(s.victims, true);
+        else setShowdownOpen(true);
+      }}
+    >
+      {riverBustLabel(river.suggestion.victims.map(nameOf))}
+    </Button>
+  ) : null;
 
-  const finish = async () => {
-    const winner = lastAlive ? nameOf(lastAlive) : 'последний игрок';
-    const rebuyWarning = rebuysStillOpen
-      ? ` ${rebuyText(win)}: после завершения ${bustedNames.length > 0 ? `${joinNames(bustedNames)} не ${bustedNames.length > 1 ? 'смогут' : 'сможет'} докупиться` : 'докупиться будет нельзя'}.`
-      : '';
-    const ok = await actions.confirm({
-      title: 'Завершить вечер?',
-      message: `Победитель — ${winner}.${rebuyWarning} Места, очки и деньги зафиксируются, откроется голосование на 24 часа, итог уйдёт в группу. Вернуть вечер в игру после этого сможет только админ.`,
-      confirmText: 'Завершить вечер',
-      cancelText: 'Продолжить игру',
-    });
-    if (!ok) return;
-    setFinishing(true);
-    const record = await actions.send('finish');
-    if (!record) {
-      setFinishing(false);
-      return;
-    }
-    try {
-      const outcome = await notifyEveningFinished(evening.id);
-      if (outcome === 'already_posted') {
-        toast.show('Итог уже был в группе', {
-          detail: 'Новый пост не отправлен. Исправленный итог админ публикует с экрана вечера.',
-        });
+  const showdownPanel = showdown && (
+    <ShowdownView
+      showdown={showdown}
+      nameOf={nameOf}
+      footer={
+        canControl ? (
+          <div className="ev-sd-footer">
+            {!tableMode && riverButton}
+            <Button icon="pencil" onClick={() => setShowdownOpen(true)}>
+              Отметить карты
+            </Button>
+          </div>
+        ) : undefined
       }
-    } catch {
-      // Пост в группу не должен мешать расчёту: если не ушёл сейчас, его добьёт cron-tick.
-      toast.show('Итог не ушёл в группу', {
-        tone: 'caution',
-        detail: 'Бот отправит его сам в течение 15 минут.',
-      });
-    }
-    setFinishing(false);
-    navigate(paths.settle(evening.id));
-  };
+    />
+  );
 
-  const undoLast = () => {
-    if (undoTarget) void actions.voidWithConfirm(undoTarget);
-  };
+  const money = computeMoney(format, state);
+  const owedRub = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
+  const payments = paymentsFromEvents(events);
+  const paidRub = payments.reduce((s, p) => s + p.amountRub, 0);
+  const avg = averageStackBb(state);
 
-  // «Уровень вперёд» за секунды до авто-перехода: запрос придёт на сервер уже на следующем уровне,
-  // и replay переключит ещё раз — уровень пропустится. Переход, который закроет ребаи, переспрашиваем
-  // всегда: ошибочный тап меняет деньги вечера, а «Уровень назад» начнёт уровень с нуля.
-  // Вопрос может висеть долго: уровень за это время сменится сам (время, вылет, раздача с другого
-  // устройства). Поэтому после ответа — свежее состояние: уровень сменился — запись не уходит
-  // (guard в send), до авто-перехода остались секунды — ещё вопрос о краю уровня.
-  const confirmEdge = (leftMs: number) =>
-    actions.confirm({
-      title: 'Уровень и так сейчас сменится',
-      message: `До конца уровня ${Math.max(1, Math.ceil(leftMs / 1000))} с — он сменится сам. Если перейти вручную, запись может прийти уже на следующем уровне, и он пропустится.`,
-      confirmText: 'Всё равно перейти',
-      cancelText: 'Подождать',
-    });
+  const statsBlock = (
+    <>
+      <Stats>
+        <Stat
+          label="Призовой фонд"
+          value={formatNumber(state.prizePoolRub)}
+          unit="₽"
+          note={`выплаты ${format.payoutPct.join(' / ')} %`}
+        />
+        <Stat
+          label="В игре"
+          value={String(state.aliveCount)}
+          unit={`из ${state.joinOrder.length}`}
+          note={pluralWithNumber(state.totalEntries, ['вход', 'входа', 'входов'])}
+        />
+        {avg !== null && (
+          <Stat
+            label="Средний стек"
+            value={formatBbValue(avg)}
+            unit="BB"
+            note={chipsText(Math.round(state.totalChips / state.aliveCount))}
+          />
+        )}
+      </Stats>
 
-  const levelNext = async () => {
-    const before = actions.freshState();
-    const from = before.timer.levelIndex;
-    const left = levelEdgeLeftMs(before, LEVEL_EDGE_MS);
-    const closes = levelNextClosesRebuys(format, before);
-    if (left !== null) {
-      if (!(await confirmEdge(left))) return;
-    } else if (closes) {
-      const ok = await actions.confirm({
-        title: `Перейти на ${from + 2}-й уровень?`,
-        message: `${rebuysClosingText(closes.busted.map(nameOf))} Ошибочный переход отменяется кнопкой «Отменить» в тосте.`,
-        confirmText: 'Перейти и закрыть ребаи',
-        cancelText: 'Остаться на уровне',
-      });
-      if (!ok) return;
-      const after = actions.freshState();
-      const leftNow = levelMovedText(from, after) ? null : levelEdgeLeftMs(after, LEVEL_EDGE_MS);
-      if (leftNow !== null && !(await confirmEdge(leftNow))) return;
-    }
-    void actions.send(
-      'level_next',
-      {},
-      { success: 'Уровень вперёд', undo: true, guard: (fresh) => levelMovedText(from, fresh) },
-    );
-  };
+      {canControl && owedRub > 0 && (
+        <div className="ev-actions">
+          <ButtonLink to={paths.settle(evening.id)} variant="ghost" block icon="wallet">
+            Открыть расчёт
+          </ButtonLink>
+          <p className="m-small">
+            Взносы за вечер — {formatRub(owedRub)}, у банкира — {formatRub(paidRub)}. Платежи
+            записываются в расчёте или сразу при входе и ребае («Оплачено сразу»).
+          </p>
+        </div>
+      )}
 
-  const clock = clockView(state);
+      {canControl && <PregameRow model={model} rsvps={rsvps} onTv={onTv} holdScreen />}
+    </>
+  );
+
+  const feed = (
+    <EventFeed
+      events={events}
+      nameOf={nameOf}
+      format={format}
+      errorsById={errorsById}
+      feed={model.feed}
+      onSelect={canControl ? selectEvent : undefined}
+      canEdit={canControl ? canEdit : undefined}
+    />
+  );
 
   return (
     <>
+      {canControl && (
+        <Segmented
+          options={VIEW_OPTIONS}
+          value={view}
+          onChange={onViewChange}
+          label="Вид пульта"
+          block
+        />
+      )}
+
       {state.errors.length > 0 && canControl && (
         <Notice
           tone="caution"
@@ -216,19 +249,132 @@ export function LiveView({ model, actions }: LiveViewProps) {
         </Notice>
       )}
 
-      {showdown && (
-        <ShowdownView
-          showdown={showdown}
-          nameOf={nameOf}
-          footer={
-            canControl ? (
-              <Button icon="pencil" onClick={() => setShowdownOpen(true)}>
-                Отметить карты
-              </Button>
-            ) : undefined
-          }
+      {tableMode ? (
+        <>
+          <TableView
+            model={model}
+            actions={actions}
+            pult={pult}
+            river={river}
+            showdownOpen={Boolean(showdown)}
+            onPlayer={setSelected}
+            onSeat={() => setSeatOpen(true)}
+            onShowdown={() => setShowdownOpen(true)}
+            onPause={() => setPauseOpen(true)}
+            onClock={() => setClockOpen(true)}
+          />
+          {showdownPanel}
+          {statsBlock}
+          {feed}
+          {wakeHint && <p className="m-small">{wakeHint}</p>}
+        </>
+      ) : (
+        <DetailsView
+          model={model}
+          actions={actions}
+          pult={pult}
+          me={me?.id ?? null}
+          payments={payments}
+          showdownPanel={showdownPanel}
+          statsBlock={statsBlock}
+          feed={feed}
+          wakeHint={wakeHint}
+          onPlayer={setSelected}
+          onSeat={() => setSeatOpen(true)}
+          onShowdown={() => setShowdownOpen(true)}
+          onPause={() => setPauseOpen(true)}
         />
       )}
+
+      {canControl && (
+        <>
+          <PlayerSheet
+            player={selected}
+            onClose={() => setSelected(null)}
+            model={model}
+            actions={actions}
+            onRebuy={openRebuy}
+          />
+          <SeatSheet
+            open={seatOpen}
+            onClose={() => setSeatOpen(false)}
+            model={model}
+            actions={actions}
+            rsvps={rsvps}
+            mode="late"
+          />
+          <ShowdownSheet
+            open={showdownOpen}
+            onClose={() => setShowdownOpen(false)}
+            model={model}
+            actions={actions}
+            onRebuy={openRebuy}
+          />
+          <PauseSheet open={pauseOpen} onClose={() => setPauseOpen(false)} actions={actions} />
+          <ClockSheet
+            open={clockOpen}
+            onClose={() => setClockOpen(false)}
+            model={model}
+            actions={actions}
+            pult={pult}
+          />
+          <AmendSheet
+            event={amending}
+            onClose={() => setAmending(null)}
+            model={model}
+            actions={actions}
+          />
+        </>
+      )}
+    </>
+  );
+}
+
+/** «Подробно» — прежний экран (и вид игрока): часы карточкой, пульт кнопками, статы, список. */
+function DetailsView({
+  model,
+  actions,
+  pult,
+  me,
+  payments,
+  showdownPanel,
+  statsBlock,
+  feed,
+  wakeHint,
+  onPlayer,
+  onSeat,
+  onShowdown,
+  onPause,
+}: {
+  model: EveningModel;
+  actions: EveningActions;
+  pult: Pult;
+  me: string | null;
+  payments: ReturnType<typeof paymentsFromEvents>;
+  showdownPanel: ReactNode;
+  statsBlock: ReactNode;
+  feed: ReactNode;
+  wakeHint: string | null;
+  onPlayer: (p: PlayerState) => void;
+  onSeat: () => void;
+  onShowdown: () => void;
+  onPause: () => void;
+}) {
+  const { evening, state, nameOf, playersById, canControl } = model;
+  const format = evening.format;
+  const timer = state.timer;
+  const paused = timer.status === 'paused';
+  const brk = breakView(state, model.nowMs);
+  const progress = triggerProgress(state);
+  const win = rebuyWindow(format, state);
+  const clock = clockView(state);
+  const { lastAlive, rebuysStillOpen, undoTarget } = pult;
+  // «Ты за столом» — тому, кто играет и не ведёт пульт (у банкира и админа наверху пульт).
+  const seat = !canControl && me ? mySeat(format, state, model.applied, payments, me) : null;
+
+  return (
+    <>
+      {showdownPanel}
 
       {seat && <MySeatCard seat={seat} />}
 
@@ -237,7 +383,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
           <div className="ev-clock__head">
             <p className="m-eyebrow">{levelLabel(format, state)}</p>
             {paused ? (
-              <Badge tone="caution">Пауза</Badge>
+              <Badge tone="caution">{brk ? 'Перерыв' : 'Пауза'}</Badge>
             ) : timer.status === 'running' ? (
               <Badge tone="positive" dot>
                 Идёт
@@ -255,7 +401,52 @@ export function LiveView({ model, actions }: LiveViewProps) {
           >
             {clock.text}
           </p>
+          {brk && (
+            <p
+              className={
+                brk.due ? 'm-body ev-clock__break ev-clock__break--due' : 'm-body ev-clock__break'
+              }
+            >
+              <Icon name="clock" size={16} />
+              <span>
+                {brk.due ? 'Пора продолжать' : `Продолжаем через ${brk.countdown}`}
+                <span className="m-small">{`${NBSP}· перерыв ${brk.minutes}${NBSP}мин`}</span>
+              </span>
+            </p>
+          )}
           {clock.note && <p className="m-small">{clock.note}</p>}
+          {/* ±1 мин — у часов (миграция 022): «ушли за пиццей и забыли паузу». */}
+          {canControl && timeAdjustable(state) && (
+            <div className="ev-pult__levels">
+              <IconButton
+                variant="secondary"
+                icon="minus"
+                label="Убавить минуту уровня"
+                disabled={actions.busy || Boolean(actions.check('time_adjust', { seconds: -60 }))}
+                onClick={() =>
+                  void actions.send(
+                    'time_adjust',
+                    { seconds: -60 },
+                    { success: 'Минута убавлена', undo: true },
+                  )
+                }
+              />
+              <span className="m-small ev-pult__levels-label">{`Время уровня ±1${NBSP}мин`}</span>
+              <IconButton
+                variant="secondary"
+                icon="plus"
+                label="Прибавить минуту уровня"
+                disabled={actions.busy || Boolean(actions.check('time_adjust', { seconds: 60 }))}
+                onClick={() =>
+                  void actions.send(
+                    'time_adjust',
+                    { seconds: 60 },
+                    { success: 'Минута прибавлена', undo: true },
+                  )
+                }
+              />
+            </div>
+          )}
           {progress && (
             <Progress
               label={progress.label}
@@ -293,20 +484,16 @@ export function LiveView({ model, actions }: LiveViewProps) {
                 block
                 size="lg"
                 icon="flag"
-                loading={finishing}
+                loading={pult.finishing}
                 disabled={Boolean(actions.check('finish')) || actions.busy}
-                onClick={() => void finish()}
+                onClick={() => void pult.finish()}
               >
                 Завершить вечер
               </Button>
             )}
             <div className="ev-pult__row">
               {timer.status === 'running' && (
-                <Button
-                  icon="pause"
-                  disabled={actions.busy}
-                  onClick={() => void actions.send('timer_pause', {}, { success: 'Пауза' })}
-                >
+                <Button icon="pause" disabled={actions.busy} onClick={onPause}>
                   Поставить паузу
                 </Button>
               )}
@@ -362,36 +549,33 @@ export function LiveView({ model, actions }: LiveViewProps) {
                 icon="skip-forward"
                 label="Уровень вперёд"
                 disabled={actions.busy || Boolean(actions.check('level_next'))}
-                onClick={() => void levelNext()}
+                onClick={() => void pult.levelNext()}
               />
             </div>
             <div className="ev-pult__row">
               <Button
                 icon="eye"
-                disabled={!showdown && state.aliveCount < 2}
-                onClick={() => setShowdownOpen(true)}
+                disabled={!showdownPanel && state.aliveCount < 2}
+                onClick={onShowdown}
               >
-                {showdown ? 'Продолжить олл-ин' : 'Отметить олл-ин'}
+                {showdownPanel ? 'Продолжить олл-ин' : 'Отметить олл-ин'}
               </Button>
-              <Button
-                icon="user-plus"
-                disabled={win.kind === 'closed'}
-                onClick={() => setSeatOpen(true)}
-              >
+              <Button icon="user-plus" disabled={win.kind === 'closed'} onClick={onSeat}>
                 Посадить опоздавшего
               </Button>
               <Button
                 variant="ghost"
                 icon="rotate-ccw"
                 disabled={!undoTarget || actions.busy}
-                onClick={undoLast}
+                onClick={pult.undoLast}
               >
                 Отменить последнее
               </Button>
             </div>
             {undoTarget && (
               <p className="m-small">
-                Последняя запись — «{describeEvent(undoTarget, nameOf, formatRub, format).title}»,{' '}
+                Последняя запись — «
+                {describeEvent(undoTarget, nameOf, formatRub, format, model.feed).title}»,{' '}
                 {formatTime(undoTarget.at)}
               </p>
             )}
@@ -400,40 +584,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
         </Section>
       )}
 
-      <Stats>
-        <Stat
-          label="Призовой фонд"
-          value={formatNumber(state.prizePoolRub)}
-          unit="₽"
-          note={`выплаты ${format.payoutPct.join(' / ')} %`}
-        />
-        <Stat
-          label="В игре"
-          value={String(state.aliveCount)}
-          unit={`из ${state.joinOrder.length}`}
-          note={pluralWithNumber(state.totalEntries, ['вход', 'входа', 'входов'])}
-        />
-        {avg !== null && (
-          <Stat
-            label="Средний стек"
-            value={formatBbValue(avg)}
-            unit="BB"
-            note={chipsText(Math.round(state.totalChips / state.aliveCount))}
-          />
-        )}
-      </Stats>
-
-      {canControl && owedRub > 0 && (
-        <div className="ev-actions">
-          <ButtonLink to={paths.settle(evening.id)} variant="ghost" block icon="wallet">
-            Открыть расчёт
-          </ButtonLink>
-          <p className="m-small">
-            Взносы за вечер — {formatRub(owedRub)}, у банкира — {formatRub(paidRub)}. Платежи
-            записываются в расчёте или сразу при входе и ребае («Оплачено сразу»).
-          </p>
-        </div>
-      )}
+      {statsBlock}
 
       <Section
         title="Игроки"
@@ -446,48 +597,16 @@ export function LiveView({ model, actions }: LiveViewProps) {
             format={format}
             nameOf={nameOf}
             playersById={playersById}
-            onSelect={canControl ? setSelected : undefined}
+            onSelect={canControl ? onPlayer : undefined}
             linkPlayers={!canControl}
-            meId={me?.id}
+            meId={me}
           />
         ) : (
           <p className="m-small">За столом пока никого.</p>
         )}
       </Section>
 
-      <EventFeed
-        events={events}
-        nameOf={nameOf}
-        format={format}
-        errorsById={errorsById}
-        onVoid={canControl ? (ev) => void actions.voidWithConfirm(ev) : undefined}
-      />
-
-      {canControl && (
-        <>
-          <PlayerSheet
-            player={selected}
-            onClose={() => setSelected(null)}
-            model={model}
-            actions={actions}
-            onRebuy={openRebuy}
-          />
-          <SeatSheet
-            open={seatOpen}
-            onClose={() => setSeatOpen(false)}
-            model={model}
-            actions={actions}
-            rsvps={rsvps}
-            mode="late"
-          />
-          <ShowdownSheet
-            open={showdownOpen}
-            onClose={() => setShowdownOpen(false)}
-            model={model}
-            actions={actions}
-          />
-        </>
-      )}
+      {feed}
     </>
   );
 }

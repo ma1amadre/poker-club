@@ -9,4 +9,5 @@ export * from './rpc';
 export * from './admin';
 export * from './photos';
 export * from './board';
-export { syncServerClock, useServerClockSync } from './serverClock';
+export { pingServer, syncServerClock, useServerClockSync } from './serverClock';
+export { useRealtimeStatus, type RealtimeStatus } from './realtime';

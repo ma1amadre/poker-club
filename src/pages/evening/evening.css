@@ -302,31 +302,6 @@
   gap: var(--space-2);
 }
 
-/* QR на табло: всегда тёмный код на светлом поле (токены светлого Кобальта) — так его читает любая камера. */
-.ev-qr {
-  display: grid;
-  justify-items: center;
-  gap: var(--space-3);
-}
-
-.ev-qr__image {
-  display: block;
-  width: min(240px, 100%);
-  aspect-ratio: 1;
-  border-radius: var(--m-r-control);
-  border: 1px solid var(--line);
-  image-rendering: pixelated;
-}
-
-.ev-qr__link {
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--m-r-control);
-  background: var(--surface-sunken);
-  font-size: var(--m-small-size);
-  overflow-wrap: anywhere;
-}
-
 /* ---------- Расчёт ---------- */
 
 .ev-pay-summary {
@@ -357,4 +332,34 @@
 
 .ev-sep {
   color: var(--line-strong);
+}
+
+/* ---------- Перерыв на N минут (миграция 022) ---------- */
+
+.ev-clock__break {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--accent);
+}
+
+.ev-clock__break .m-icon {
+  flex: none;
+  margin-top: 3px;
+}
+
+.ev-clock__break .m-small {
+  color: var(--ink-muted);
+}
+
+/* Срок вышел: таймер сам не продолжает — строка зовёт продолжить. */
+.ev-clock__break--due {
+  color: var(--critical);
+  font-weight: 600;
+}
+
+.ev-pause {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(96px, 100%), 1fr));
+  gap: var(--space-2);
 }

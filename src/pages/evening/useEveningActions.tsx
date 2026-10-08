@@ -11,9 +11,10 @@
 // ребаем, отменяется вместе с ним и при отмене из ленты (linkedPayment). Если журнал принял не всё
 // (ребай пришёл после закрытия), кнопка тоста отменяет только непринятое и оплату с ним
 // (rejectedPart), а принятый вылет остаётся.
+import { canAmend } from '@domain/amend.ts';
 import { canApply, canApplySequence, replayLog, type EventDraft } from '@domain/replay.ts';
 import { isShowdownEvent } from '@domain/showdown.ts';
-import type { EveningState, EventPayload, EventType } from '@domain/types.ts';
+import type { AmendPayload, EveningState, EventPayload, EventType } from '@domain/types.ts';
 import { useCallback, useLayoutEffect, useRef, type ReactElement } from 'react';
 import {
   retryKeys,
@@ -112,7 +113,7 @@ function voidEffect(model: EveningModel, eventIds: number | readonly number[]) {
 
 /** «Ребай: Саша, ребай на 1 000 ₽», 20:15 — запись в тексте подтверждения. */
 function quoteEvent(model: EveningModel, event: EveningEventRecord): string {
-  const l = describeEvent(event, model.nameOf, formatRub, model.evening.format);
+  const l = describeEvent(event, model.nameOf, formatRub, model.evening.format, model.feed);
   return `«${l.title}${l.detail ? `, ${l.detail}` : ''}», ${formatTime(event.at)}`;
 }
 
@@ -139,10 +140,14 @@ export function useEveningActions(model: EveningModel): EveningActions {
     modelRef.current = model;
   });
 
+  // Правку записи на месте (022) состояние не проверит — нужен журнал: canAmend (replay с правкой).
+  const events = model.events;
   const check = useCallback(
     (type: EventType, payload: EventPayload = {}) =>
-      canApply(evening.format, state, type, payload, nowMs),
-    [evening.format, state, nowMs],
+      type === 'amend'
+        ? canAmend(evening.format, events, payload as AmendPayload, nowMs)
+        : canApply(evening.format, state, type, payload, nowMs),
+    [evening.format, state, nowMs, events],
   );
 
   /** Отмена одной записи (void_event) или действия целиком (void_events, одна транзакция). */
@@ -180,7 +185,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
     ) => {
       const current = modelRef.current;
       const format = current.evening.format;
-      const line = describeEvent(event, current.nameOf, formatRub, format);
+      const line = describeEvent(event, current.nameOf, formatRub, format, current.feed);
       // Оплата при входе — по каждой отменяемой записи входа или ребая.
       const group = [event, ...extra.filter((e) => e.id !== event.id && !e.voided)];
       const paid = group
@@ -197,11 +202,13 @@ export function useEveningActions(model: EveningModel): EveningActions {
             ? ' Остаток игрока в расчёте пересчитается.'
             : event.type === 'join' || event.type === 'rebuy' || event.type === 'bust'
               ? ' Места, нокауты и деньги пересчитаются.'
-              : isShowdownEvent(event.type)
-                ? event.type === 'showdown_close'
-                  ? ' Раздача снова появится на табло.'
-                  : ' Табло покажет раздачу такой, какой она была до этой записи. На игру и деньги олл-ин не влияет.'
-                : ' Таймер и уровень пересчитаются.';
+              : event.type === 'amend'
+                ? ' Исправленная запись вернётся к прежнему значению, нокауты и деньги пересчитаются.'
+                : isShowdownEvent(event.type)
+                  ? event.type === 'showdown_close'
+                    ? ' Раздача снова появится на табло.'
+                    : ' Табло покажет раздачу такой, какой она была до этой записи. На игру и деньги олл-ин не влияет.'
+                  : ' Таймер и уровень пересчитаются.';
       const impactText = voidImpactText(impact, (e) => quoteEvent(current, e));
       const others = group.slice(1);
       const othersText =
@@ -353,11 +360,12 @@ export function useEveningActions(model: EveningModel): EveningActions {
     async (type: EventType, payload: EventPayload = {}, options: SendOptions = {}) => {
       const problemNow = () => {
         const fresh = freshState();
-        return (
-          canApply(modelRef.current.evening.format, fresh, type, payload, serverNow()) ??
-          options.guard?.(fresh) ??
-          null
-        );
+        const m = modelRef.current;
+        const problem =
+          type === 'amend'
+            ? canAmend(m.evening.format, m.events, payload as AmendPayload, serverNow())
+            : canApply(m.evening.format, fresh, type, payload, serverNow());
+        return problem ?? options.guard?.(fresh) ?? null;
       };
       const refuse = (problem: string) => {
         // Хаптику (warning) даёт сам тост тона caution.

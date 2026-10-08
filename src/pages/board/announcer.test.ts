@@ -600,6 +600,133 @@ describe('голос табло: что объявить', () => {
     expect(out.at(-1)).toEqual({ kind: 'winner', winner: 'a' });
   });
 
+  describe('пауза на N минут (022)', () => {
+    it('«Перерыв N минут» вместо «Пауза»; правка записи и поправка времени молчат', () => {
+      const j = seated();
+      j.start();
+      j.wait(2);
+      const bust = j.bust('c', ['a']);
+      j.wait(1);
+      expect(step(j, () => j.amend(bust, { by: ['b'] }))).toEqual([]);
+      expect(step(j, () => j.adjust(60))).toEqual([]);
+      expect(step(j, () => j.pauseFor(10))).toEqual([{ kind: 'break', minutes: 10 }]);
+    });
+
+    it('минута до конца перерыва — один раз; по истечении голос молчит', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(2).pauseFor(5);
+      const pausedAt = j.now();
+      j.wait(9).resume();
+      const out = simulate(j, t0 - 1000, j.now() + 2000);
+      expect(kinds(out)).toEqual(['start', 'break', 'break_minute', 'resume']);
+      // 4:00 перерыва — ровно «минута до конца»: проверим, что не раньше.
+      const early = simulate(j, pausedAt, pausedAt + 3.9 * MIN);
+      expect(kinds(early)).toEqual([]);
+    });
+
+    it('пауза без срока — без минуты; табло, открытое за 40 с до конца перерыва, не догоняет', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(2).pause();
+      j.wait(20).resume();
+      expect(kinds(simulate(j, t0 - 1000, j.now()))).toEqual(['start', 'pause', 'resume']);
+      const k = seated();
+      k.start();
+      k.wait(1).pauseFor(2);
+      const opened = k.now() + 80_000;
+      expect(kinds(simulate(k, opened, opened + 60_000))).toEqual([]);
+    });
+  });
+
+  describe('поправка времени ±1 мин через порог (ревью 08.10.2026)', () => {
+    it('«−1 мин» за 1:30 до конца уровня — «Минута до повышения» сразу', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(8.5).adjust(-60); // осталось 1:30 → 0:30
+      for (const lag of [0, POLL_LAG_MS]) {
+        expect(kinds(simulate(j, t0 - 1000, t0 + 9.5 * MIN, FMT, lag)), `lag ${lag}`).toEqual([
+          'start',
+          'minute',
+          'level', // 9:00 — уровень короче на минуту
+          'rebuys_last_level',
+        ]);
+      }
+    });
+
+    it('«−1 мин» за 5:30 до закрытия ребаев — «Пять минут до закрытия» сразу', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(14.5).adjust(-60); // 2-й уровень, до закрытия 5:30 → 4:30
+      expect(kinds(simulate(j, t0 - 1000, t0 + 20 * MIN))).toEqual([
+        'start',
+        'minute', // 9:00
+        'level', // 10:00
+        'rebuys_last_level',
+        'rebuys_soon', // 14:30 — сразу после поправки
+        'minute', // 18:00
+        'level', // 19:00
+        'rebuys_closed',
+      ]);
+    });
+
+    it('«−1 мин» на паузе через порог — предупреждение после «Продолжаем»', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(8.5).pause(); // осталось 1:30
+      j.wait(1).adjust(-60); // на паузе: 0:30
+      j.wait(2).resume();
+      expect(kinds(simulate(j, t0 - 1000, j.now() + 40_000))).toEqual([
+        'start',
+        'pause',
+        'resume',
+        'minute',
+        'level',
+        'rebuys_last_level',
+      ]);
+      // Ребаи так же: на паузе до закрытия стало меньше пяти минут — после продолжения.
+      const k = seated();
+      const k0 = k.now();
+      k.start();
+      k.wait(14.5).pause(); // до закрытия 5:30
+      k.wait(1).adjust(-60);
+      k.wait(1).resume();
+      const out = kinds(simulate(k, k0 - 1000, k.now() + 5000));
+      expect(out.slice(-3)).toEqual(['pause', 'resume', 'rebuys_soon']);
+    });
+
+    it('«+1 мин» после сказанной минуты — минута ещё раз, когда часы снова дойдут', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(9 + 10 / 60).adjust(60); // 9:10: осталось 0:50 → 1:50
+      expect(kinds(simulate(j, t0 - 1000, t0 + 11 * MIN))).toEqual([
+        'start',
+        'minute', // 9:00
+        'minute', // 10:00 — снова минута до конца
+        'level', // 11:00
+        'rebuys_last_level',
+      ]);
+    });
+
+    it('«−1 мин», после которой до края 15 с и меньше, — сразу уровень, без минуты', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(8 + 55 / 60).adjust(-60); // осталось 1:05 → 0:05
+      expect(kinds(simulate(j, t0 - 1000, t0 + 9.5 * MIN))).toEqual([
+        'start',
+        'level',
+        'rebuys_last_level',
+      ]);
+    });
+  });
+
   it('старые события после долгого обрыва связи не зачитываются', () => {
     const j = seated();
     j.start();

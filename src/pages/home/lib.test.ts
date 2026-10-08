@@ -8,6 +8,7 @@ import {
   myResult,
   nameWithMe,
   openSettlements,
+  pickTraining,
   pickUpcoming,
   type PlayerLike,
   playerName,
@@ -114,6 +115,7 @@ const player = (id: string, name: string, extra: Partial<PlayerLike> = {}): Play
   photo_url: null,
   is_guest: false,
   is_active: true,
+  is_spectator: null,
   ...extra,
 });
 
@@ -142,6 +144,24 @@ describe('состав', () => {
     expect(g.maybe.map((p) => p.id)).toEqual(['d']);
     expect(g.no.map((p) => p.id)).toEqual(['m']);
     expect(g.silent.map((p) => p.id)).toEqual(['k']);
+  });
+
+  it('болельщик (миграция 024): без ответа — не молчун; ответил — в своей группе; за столом — молчун', () => {
+    const fans = [
+      ...players,
+      player('f1', 'Аня', { is_spectator: true }),
+      player('f2', 'Оля', { is_spectator: true }),
+      player('f3', 'Таня', { is_spectator: false }),
+    ];
+    const g = groupRsvps(fans, [...rsvps, { player_id: 'f2', status: 'yes' as const }]);
+    expect(g.silent.map((p) => p.id)).toEqual(['k', 'f3']);
+    expect(g.yes.map((p) => p.id)).toEqual(['s', 'j', 'g1', 'f2']);
+    // Посадили за стол без ответа — на этот вечер игрок, как любой посаженный молчун.
+    expect(groupRsvps(fans, rsvps, new Set(['f1'])).silent.map((p) => p.id)).toEqual([
+      'f1',
+      'k',
+      'f3',
+    ]);
   });
 
   it('оптимистичный ответ: моя строка заменяется и уходит в конец', () => {
@@ -346,5 +366,48 @@ describe('имена', () => {
   it('себя видно сразу', () => {
     expect(nameWithMe(byId, 'a', 'a')).toBe('Саша (ты)');
     expect(nameWithMe(byId, 'a', 'b')).toBe('Саша');
+  });
+});
+
+describe('pickTraining — тренировка на главной (миграция 023)', () => {
+  const ev = (id: string, status: UpcomingLike['status'], scheduled: string, started?: string) => ({
+    id,
+    status,
+    scheduled_at: scheduled,
+    started_at: started ?? null,
+  });
+
+  it('идущая важнее объявленной; из объявленных — ближайшая', () => {
+    expect(
+      pickTraining(
+        [
+          ev('soon', 'announced', '2026-10-06T13:00:00Z'),
+          ev('live', 'live', '2026-10-06T11:00:00Z', '2026-10-06T11:05:00Z'),
+        ],
+        NOW,
+      )?.id,
+    ).toBe('live');
+    expect(
+      pickTraining(
+        [
+          ev('later', 'announced', '2026-10-07T13:00:00Z'),
+          ev('soon', 'announced', '2026-10-06T13:00:00Z'),
+        ],
+        NOW,
+      )?.id,
+    ).toBe('soon');
+  });
+
+  it('забытую, завершённую и отменённую всем не показываем', () => {
+    expect(
+      pickTraining(
+        [
+          ev('old', 'announced', new Date(NOW - STALE_ANNOUNCE_MS - 1000).toISOString()),
+          ev('done', 'finished', '2026-10-06T10:00:00Z'),
+          ev('off', 'cancelled', '2026-10-06T13:00:00Z'),
+        ],
+        NOW,
+      ),
+    ).toBeNull();
   });
 });

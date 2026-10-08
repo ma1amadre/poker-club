@@ -1,0 +1,136 @@
+/*
+ * «Олл-ины вечера» (AllInList): карточки раздач — стол, таблица долей по улицам, итог.
+ * Только переменные «Материи». Цвета мастей и карты — showdown.css (PlayingCard).
+ */
+
+.ui-allins {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.ui-allin {
+  min-width: 0;
+}
+
+.ui-allin .m-card-body {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ui-allin__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+}
+
+.ui-allin__head p {
+  margin: 0;
+}
+
+.ui-allin__result {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ui-allin__board {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.ui-allin__table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--m-small-size);
+  line-height: 1.4;
+}
+
+.ui-allin__table th,
+.ui-allin__table td {
+  padding: var(--space-2) 0;
+  vertical-align: middle;
+  text-align: left;
+}
+
+.ui-allin__table thead th {
+  padding-block: 0 var(--space-1);
+  font-family: var(--m-font-eyebrow);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: var(--m-eyebrow-track);
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+
+.ui-allin__table tbody tr + tr th,
+.ui-allin__table tbody tr + tr td {
+  border-top: 1px solid var(--line);
+}
+
+.ui-allin__table tbody th {
+  font-weight: 400;
+  min-width: 0;
+}
+
+.ui-allin__table .ui-allin__num {
+  padding-inline-start: var(--space-2);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  inline-size: 1%;
+}
+
+.ui-allin__who {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ui-allin__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ui-allin__cards {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+}
+
+.ui-allin__notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-1);
+  color: var(--ink-muted);
+}
+
+.ui-allin__pill {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border-radius: var(--m-r-badge);
+  background: var(--surface-sunken);
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.ui-allin__pill--swing {
+  background: var(--positive-soft);
+  color: var(--positive);
+  font-weight: 600;
+}
+
+.is-lost .ui-allin__name,
+.is-lost .ui-allin__cards {
+  opacity: 0.7;
+}

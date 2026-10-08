@@ -404,6 +404,24 @@ drop table seed_ev;
 drop table seed_pl;
 
 -- ---------------------------------------------------------------------------
+-- Болельщик (миграция 024): кто сыграл настоящий вечер — «играет», как backfill миграции (seed
+-- заливается после миграций, и backfill этих игроков не видит). Вопроса «Играешь или следишь?» на
+-- главной у них нет; у нового профиля из tg-auth он появится.
+-- ---------------------------------------------------------------------------
+update public.players p
+set is_spectator = false
+where not p.is_guest
+  and p.is_spectator is null
+  and exists (
+    select 1
+    from public.evening_events ee
+    join public.evenings e on e.id = ee.evening_id
+    where ee.type = 'join'
+      and ee.voided_at is null
+      and ee.payload ->> 'playerId' = p.id::text
+      and not e.is_training);
+
+-- ---------------------------------------------------------------------------
 -- Vault: адрес и секрет для локального cron (миграция 005)
 -- ---------------------------------------------------------------------------
 -- host.docker.internal — потому что запрос идёт из контейнера БД к API на хосте (порт 57321).

@@ -30,6 +30,7 @@ import {
   normalizeGuestName,
   seatButtonLabel,
   seatCandidates,
+  seatSpectator,
   seatDrafts,
 } from './lib';
 import { PaidNowCheckbox, StacksPicker } from './StacksPicker';
@@ -90,7 +91,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     candidates.map((c) => [
       c.player.id,
       [
-        c.player.is_guest ? 'гость' : null,
+        c.player.is_guest ? 'гость' : seatSpectator(c) ? 'болельщик' : null,
         c.rsvp ? RSVP_STATUS_META[c.rsvp].other.toLowerCase() : null,
       ]
         .filter(Boolean)

@@ -2,6 +2,7 @@
 // по расписанию клуба.
 import { scorePrediction } from '@domain/predictions.ts';
 import { replay } from '@domain/replay.ts';
+import { seatedIds } from '@domain/spectators.ts';
 import type { EveningEvent } from '@domain/types.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, type ReactNode } from 'react';
@@ -13,6 +14,7 @@ import {
   useEveningEvents,
   usePredictions,
   useRsvps,
+  useSetMySpectator,
   useSetRsvp,
   type Evening,
   type Player,
@@ -33,6 +35,8 @@ import {
   paths,
   plural,
   pluralWithNumber,
+  SPECTATOR_RSVP_HINT,
+  SPECTATOR_YES_TOAST,
   useNow,
 } from '../../shared/lib';
 import {
@@ -64,7 +68,9 @@ import {
   UNKNOWN_PLAYER,
   upsertRsvp,
 } from './lib';
-// Блок прогноза — тот же, что на экране вечера (туда ведут кнопки анонса).
+// Блок прогноза и «На кону» — те же, что на экране вечера (туда ведут кнопки анонса).
+import { StakesList } from '../evening/EveningStakes';
+import { hasStakes, useEveningStakes } from '../evening/useEveningStakes';
 import { PredictionSection } from '../evening/PredictionSection';
 
 type PlayersById = ReadonlyMap<string, Player>;
@@ -115,15 +121,20 @@ export function AnnouncedEvening({
   nowMs,
 }: AnnouncedEveningProps) {
   // Подписка на журнал и строку вечера: старт таймера переводит вечер в live у всех сразу.
-  useEveningEvents(evening.id);
+  const events = useEveningEvents(evening.id);
   const rsvps = useRsvps(evening.id);
   const setRsvp = useSetRsvp(evening.id);
+  const setSpectator = useSetMySpectator();
   const queryClient = useQueryClient();
   const toast = useToast();
 
   const rows = useMemo(() => rsvps.data ?? [], [rsvps.data]);
-  const groups = useMemo(() => groupRsvps(players, rows), [players, rows]);
+  // Посаженный до старта болельщик на этот вечер — игрок (миграция 024, spectatesEvening).
+  const seated = useMemo(() => seatedIds(events.data ?? []), [events.data]);
+  const groups = useMemo(() => groupRsvps(players, rows, seated), [players, rows, seated]);
   const myRsvp = rows.find((r) => r.player_id === me.id)?.status ?? null;
+  const stakes = useEveningStakes(evening, rows, players);
+  const nameOf = (id: string) => playerName(playersById, id) ?? UNKNOWN_PLAYER;
   const stale = Date.parse(evening.scheduled_at) < nowMs - STALE_ANNOUNCE_MS;
   const banker = playerName(playersById, evening.banker_id);
   // Пульт «Отметить пришедших / Начать вечер» живёт на экране вечера — банкиру (не админу) туда
@@ -143,6 +154,18 @@ export function AnnouncedEvening({
       }),
     );
     setRsvp.mutate(status, {
+      onSuccess: () => {
+        // Болельщик сказал «Иду» — на этот вечер он игрок; играть постоянно — одной кнопкой.
+        if (status !== 'yes' || me.is_spectator !== true) return;
+        toast.show(SPECTATOR_YES_TOAST.title, {
+          tone: 'positive',
+          detail: SPECTATOR_YES_TOAST.detail,
+          action: {
+            label: SPECTATOR_YES_TOAST.action,
+            onClick: () => setSpectator.mutate(false),
+          },
+        });
+      },
       onError: (error) => {
         queryClient.setQueryData(key, previous);
         toast.show('Ответ не сохранён', { tone: 'critical', detail: errorMessage(error) });
@@ -202,6 +225,13 @@ export function AnnouncedEvening({
           ) : (
             <Going groups={groups} meId={me.id} />
           )}
+          {stakes && hasStakes(stakes, me.id) && (
+            <>
+              <hr className="home-rule" />
+              <p className="m-eyebrow">На кону</p>
+              <StakesList stakes={stakes} nameOf={nameOf} meId={me.id} />
+            </>
+          )}
         </Card>
         {canControl ? (
           <ButtonLink variant="primary" block icon="user-plus" to={paths.evening(evening.id)}>
@@ -214,7 +244,13 @@ export function AnnouncedEvening({
         )}
         <FieldGroup
           label="Твой ответ"
-          hint={myRsvp ? undefined : 'Ответ нужен банкиру, чтобы собрать список игроков.'}
+          hint={
+            myRsvp
+              ? undefined
+              : me.is_spectator === true
+                ? SPECTATOR_RSVP_HINT
+                : 'Ответ нужен банкиру, чтобы собрать список игроков.'
+          }
         >
           <Segmented
             block

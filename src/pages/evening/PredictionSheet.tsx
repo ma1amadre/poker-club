@@ -1,9 +1,12 @@
 // Шторка прогноза: «Кто выиграет» (3 очка) и «Кто вылетит первым» (2 очка). Кандидаты — все
-// активные игроки, гости после постоянных (predictionCandidates). Сохраняет set_prediction.
-// Открывается из блока прогноза (PredictionSection) на экране вечера и на главной.
+// активные игроки, гости после постоянных, без болельщиков на этот вечер (predictionCandidates).
+// Сохраняет set_prediction. Открывается из блока прогноза (PredictionSection) на экране вечера и на
+// главной.
 import { PREDICTION_POINTS } from '@domain/predictions.ts';
+import { seatedIds } from '@domain/spectators.ts';
 import { useMemo, useState } from 'react';
 import {
+  useEveningEvents,
   useSetPrediction,
   type Evening,
   type Player,
@@ -35,9 +38,17 @@ export function PredictionSheet({
   const [winner, setWinner] = useState<string | null>(current?.winner_id ?? null);
   const [firstOut, setFirstOut] = useState<string | null>(current?.first_out_id ?? null);
 
+  // Посаженный до старта болельщик — кандидат (журнал — тот же запрос, что у экрана).
+  const events = useEveningEvents(evening.id).data;
   const candidates = useMemo(
-    () => predictionCandidates(players, rsvps, [current?.winner_id, current?.first_out_id]),
-    [players, rsvps, current],
+    () =>
+      predictionCandidates(
+        players,
+        rsvps,
+        [current?.winner_id, current?.first_out_id],
+        seatedIds(events ?? []),
+      ),
+    [players, rsvps, current, events],
   );
   const pickerPlayers = candidates.map((c) => c.player);
   const hints = Object.fromEntries(candidates.map((c) => [c.player.id, candidateHint(c)]));

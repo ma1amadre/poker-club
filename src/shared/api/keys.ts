@@ -17,7 +17,10 @@ export const queryKeys = {
   votes: (eveningId: string) => ['evening', eveningId, 'votes'] as const,
   clubHistory: ['club-history'] as const,
   board: (token: string) => ['board', token] as const,
+  clubBoard: (code: string) => ['club-board', code] as const,
+  boardPresence: (eveningId: string) => ['evening', eveningId, 'board-presence'] as const,
+  voicePresent: (voice: string, hashes: string) => ['voice-present', voice, hashes] as const,
   votePhoto: (path: string) => ['vote-photo', path] as const,
-  mergePreview: (guestId: string, targetId: string) =>
-    ['merge-preview', guestId, targetId] as const,
+  mergePreview: (guestId: string, targetId: string, kind: 'telegram' | 'guest' = 'telegram') =>
+    ['merge-preview', kind, guestId, targetId] as const,
 };

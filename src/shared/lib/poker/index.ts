@@ -38,7 +38,9 @@ export {
 export { nCk, outsEquity } from './pokermath';
 export {
   useShowdownAnalysis,
+  useShowdownEquities,
   useShowdownEquity,
   type ShowdownAnalysisState,
   type ShowdownEquityState,
 } from './useShowdownEquity';
+export { useAllInSwings, type AllInSwingsState } from './useAllInSwings';

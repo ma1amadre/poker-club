@@ -30,7 +30,11 @@ const failed = new Set<string>();
 const pending = new Set<string>();
 const listeners = new Set<() => void>();
 
+/** Растёт с каждым оповещением: снимок для useShowdownEquities (список ключей). */
+let version = 0;
+
 function notify(): void {
+  version += 1;
   for (const listener of listeners) listener();
 }
 
@@ -187,4 +191,30 @@ export function useShowdownAnalysis(
     return analyzeShowdown(hands, board, equity);
   }, [key, equity]);
   return { analysis, failed: isFailed };
+}
+
+/**
+ * Шансы нескольких раздач сразу (улицы «Олл-инов вечера»): по ответу на ключ, null — ещё считается
+ * или не посчиталось. Точные (флоп и дальше) — сразу, до флопа — тем же воркером и кешем, что у
+ * панели олл-ина: одна раздача на табло, у банкира и в истории считается один раз.
+ */
+export function useShowdownEquities(keys: readonly string[]): (EquityResult | null)[] {
+  // Ключи раздачи — без запятых и кавычек («AsKd|QhQc/2c7d9h»), JSON — стабильная подпись списка.
+  const signature = JSON.stringify(keys);
+  const stamp = useSyncExternalStore(subscribe, () => version);
+  useEffect(() => {
+    for (const key of JSON.parse(signature) as string[]) {
+      const { hands, board } = parseShowdownKey(key);
+      if (planEquity(hands.length, board.length, key).kind === 'mc') request(key);
+    }
+  }, [signature]);
+  return useMemo(() => {
+    void stamp; // пересчёт — при каждом новом ответе воркера
+    return (JSON.parse(signature) as string[]).map((key) => {
+      const { hands, board } = parseShowdownKey(key);
+      return planEquity(hands.length, board.length, key).kind === 'exact'
+        ? exactNow(key)
+        : (cache.get(key) ?? null);
+    });
+  }, [signature, stamp]);
 }

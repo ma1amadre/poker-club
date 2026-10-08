@@ -2,6 +2,7 @@
 // Сама оценка смещения — src/shared/lib/serverClock.ts; здесь только замеры по сети.
 import { useEffect } from 'react';
 import { addClockSample } from '../lib/serverClock';
+import { TimeoutError, withTimeout } from '../lib/timeout';
 import { supabase } from '../supabase';
 
 /** Замеров за одну сверку: из них в оценку идёт самый быстрый. */
@@ -51,4 +52,24 @@ export function useServerClockSync(): void {
       window.removeEventListener('online', onVisible);
     };
   }, []);
+}
+
+/** Проверка перед игрой: сколько ждать ответа сервера, прежде чем сказать «не отвечает». */
+export const SERVER_PING_TIMEOUT_MS = 5_000;
+
+/**
+ * Один запрос server_now с пределом ожидания — время ответа в мс (проверка перед игрой). Нет ответа
+ * за SERVER_PING_TIMEOUT_MS или ошибка — исключение. Замер заодно уточняет часы.
+ */
+export async function pingServer(): Promise<number> {
+  const t0 = Date.now();
+  const { data, error } = await withTimeout(
+    (signal) => supabase.rpc('server_now').abortSignal(signal),
+    SERVER_PING_TIMEOUT_MS,
+    () => new TimeoutError('Сервер не ответил', SERVER_PING_TIMEOUT_MS),
+  );
+  const t1 = Date.now();
+  if (error) throw new Error(error.message);
+  if (typeof data === 'string') addClockSample(data, t0, t1);
+  return t1 - t0;
 }

@@ -3,6 +3,8 @@ import { DEFAULT_FORMAT } from './format.ts';
 import type { BlindLevel } from './types.ts';
 import {
   announcementVariants,
+  BREAK_TEXTS,
+  breakPhrase,
   blindsWords,
   clipHash,
   eveningVoiceTexts,
@@ -11,6 +13,7 @@ import {
   knockoutSegments,
   levelPhrase,
   levelTexts,
+  minutesWords,
   normalizeSpeech,
   normalizeSpokenName,
   numberWords,
@@ -128,6 +131,37 @@ describe('фразы', () => {
     // Проверка звука — первой в списке: табло подгружает клипы по порядку FIXED_TEXTS.
     expect(FIXED_TEXTS[0]).toBe(PHRASES.voiceOn);
     for (const t of FIXED_TEXTS) expect(t).toBe(normalizeSpeech(t));
+  });
+
+  it('перерыв на N минут (022): минуты с согласованием, фразы пульта — в фиксированных', () => {
+    expect(minutesWords(1)).toBe('одна минута');
+    expect(minutesWords(2)).toBe('две минуты');
+    expect(minutesWords(4)).toBe('четыре минуты');
+    expect(minutesWords(5)).toBe('пять минут');
+    expect(minutesWords(11)).toBe('одиннадцать минут');
+    expect(minutesWords(12)).toBe('двенадцать минут');
+    expect(minutesWords(21)).toBe('двадцать одна минута');
+    expect(minutesWords(22)).toBe('двадцать две минуты');
+    expect(minutesWords(45)).toBe('сорок пять минут');
+    expect(minutesWords(101)).toBe('сто одна минута');
+    expect(breakPhrase(10)).toBe('Перерыв десять минут.');
+    expect(BREAK_TEXTS).toEqual([
+      'Перерыв пять минут.',
+      'Перерыв десять минут.',
+      'Перерыв пятнадцать минут.',
+      'Перерыв двадцать минут.',
+      'Перерыв тридцать минут.',
+    ]);
+    expect(PHRASES.breakMinute).toBe('Минута до конца перерыва.');
+    for (const t of [...BREAK_TEXTS, PHRASES.breakMinute]) expect(FIXED_TEXTS).toContain(t);
+    // Длительность не из пульта — фразы может не быть в озвучке: запасной вариант — «Пауза.».
+    expect(announcementVariants({ kind: 'break', minutes: 10 }, () => null)).toEqual([
+      ['Перерыв десять минут.'],
+      ['Пауза.'],
+    ]);
+    expect(announcementVariants({ kind: 'break_minute' }, () => null)).toEqual([
+      ['Минута до конца перерыва.'],
+    ]);
   });
 
   it('нокаут: один выбивший, двое, трое, без выбивших, без жертвы', () => {

@@ -3,11 +3,15 @@
 // банкир (меняется в любой момент), отмена до старта, ссылки на экран вечера и расчёт.
 // Если анонс уже в группе, после сохранения бот пишет о переносе, отмене или возврате вечера
 // (notify evening_changed; не дошедший вызов добьёт cron-tick).
+// Тренировочный вечер (миграция 023, /admin/evening/new?training=1): сегодня через несколько минут,
+// банкир — админ; день клуба не занимает, в группу о нём ничего не уходит, отмены нет — только
+// «Удалить тренировку» целиком (delete_training_evening).
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState, type FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   fetchEvening,
+  isTrainingEvening,
   notifyEveningChanged,
   queryKeys,
   upsertEvening,
@@ -16,6 +20,7 @@ import {
   useFormats,
   usePlayers,
   useSettings,
+  useDeleteTrainingEvening,
   useUpsertEvening,
   type Evening,
   type EveningInput,
@@ -51,6 +56,7 @@ import {
   PlayerPicker,
   Section,
   Select,
+  TrainingBadge,
   useConfirm,
   useToast,
 } from '../../shared/ui';
@@ -63,6 +69,7 @@ import {
   eveningDirty,
   KEEP_FORMAT,
   newEveningDraft,
+  trainingEveningDraft,
   type EveningDraft,
   type EveningField,
 } from './eveningDraft';
@@ -77,6 +84,7 @@ import {
   cancelledNoticeText,
   noteHint,
   takenDates,
+  trainingDeletedText,
   vacatedSlot,
 } from './lib';
 import { AdminGuard } from './parts';
@@ -108,6 +116,9 @@ export default function EveningEditPage() {
 
 function EveningEditScreen() {
   const { id } = useParams<{ id: string }>();
+  const [params] = useSearchParams();
+  // ?training=1 — только у нового вечера; у существующего пометка — из строки.
+  const trainingParam = !id && params.get('training') === '1';
   const evening = useEvening(id);
   const evenings = useEvenings();
   const formats = useFormats();
@@ -117,7 +128,7 @@ function EveningEditScreen() {
   // У /admin/evening/new запроса вечера нет (enabled: false) — он навсегда «pending».
   const queries = [evenings, formats, settings, players, ...(id ? [evening] : [])];
   const failed = queries.find((q) => q.isError);
-  const title = id ? 'Вечер' : 'Новый вечер';
+  const title = id ? 'Вечер' : trainingParam ? 'Тренировочный вечер' : 'Новый вечер';
 
   if (failed)
     return (
@@ -148,8 +159,9 @@ function EveningEditScreen() {
 
   return (
     <EveningForm
-      key={id ?? 'new'}
+      key={id ?? (trainingParam ? 'new-training' : 'new')}
       evening={evening.data ?? null}
+      training={evening.data ? isTrainingEvening(evening.data) : trainingParam}
       evenings={evenings.data ?? []}
       formats={formats.data ?? []}
       settings={settings.data ?? null}
@@ -160,19 +172,29 @@ function EveningEditScreen() {
 
 interface EveningFormProps {
   evening: Evening | null;
+  /** Тренировочный вечер (миграция 023): у нового — из ?training=1, у существующего — из строки. */
+  training: boolean;
   evenings: Evening[];
   formats: FormatRow[];
   settings: Settings | null;
   players: Player[];
 }
 
-function EveningForm({ evening, evenings, formats, settings, players }: EveningFormProps) {
+function EveningForm({
+  evening,
+  training,
+  evenings,
+  formats,
+  settings,
+  players,
+}: EveningFormProps) {
   const me = useCurrentPlayer();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const toast = useToast();
   const now = useNow(60_000);
   const save = useUpsertEvening();
+  const removeTraining = useDeleteTrainingEvening();
   const formRef = useRef<HTMLFormElement>(null);
   const focusInvalid = useFocusInvalid(formRef);
   const [checking, setChecking] = useState(false);
@@ -181,9 +203,17 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
   // Причина отмены для поста в группу — отдельно от заметки анонса (evenings.cancel_reason).
   const [cancelReason, setCancelReason] = useState('');
 
-  const taken = useMemo(() => takenDates(evenings, evening?.id), [evenings, evening?.id]);
+  // Тренировка день клуба не занимает — для неё занятых дат нет.
+  const taken = useMemo(
+    () => (training ? new Set<string>() : takenDates(evenings, evening?.id)),
+    [training, evenings, evening?.id],
+  );
   const [initial] = useState<EveningDraft>(() =>
-    evening ? draftFromEvening(evening) : newEveningDraft(Date.now(), settings, formats, taken),
+    evening
+      ? draftFromEvening(evening)
+      : training
+        ? trainingEveningDraft(Date.now(), settings, formats, me.id)
+        : newEveningDraft(Date.now(), settings, formats, taken),
   );
   // После сохранения «исходное» — то, что теперь в базе.
   const baseline = evening ? draftFromEvening(evening) : initial;
@@ -215,7 +245,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
   const reach = evening ? announceReach(evening, now) : 'none';
   // Перенос на другой день: день по расписанию останется за этим вечером (slot_date) пустым.
   const vacated =
-    evening && status === 'announced'
+    evening && status === 'announced' && !training
       ? vacatedSlot(evening, draft.date, settings?.game_weekday, now)
       : null;
 
@@ -293,7 +323,9 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
       }
     }
     const input: EveningInput = {
-      ...(evening ? { id: evening.id } : { created_by: me.id }),
+      ...(evening
+        ? { id: evening.id }
+        : { created_by: me.id, ...(training ? { is_training: true } : {}) }),
       scheduled_at: check.scheduledAt,
       location: draft.location.trim() || null,
       note: draft.note.trim() || null,
@@ -308,6 +340,13 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
           setTouched(new Set());
           setSubmitted(false);
           void savedToast(saved, 'Вечер сохранён');
+        } else if (training) {
+          // Тренировку создают, чтобы сразу прогнать пульт: открываем экран вечера.
+          toast.success('Тренировка создана', {
+            detail:
+              'Посади игроков и запусти таймер — табло и голос работают как в настоящей игре.',
+          });
+          navigate(paths.evening(saved.id), { replace: true });
         } else {
           toast.success('Вечер создан');
           navigate(paths.adminEvening(saved.id), { replace: true });
@@ -403,7 +442,32 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
     );
   };
 
-  const titleText = evening ? capitalize(formatWeekdayDate(evening.scheduled_at)) : 'Новый вечер';
+  /** Удалить тренировку целиком — без возврата, поэтому через подтверждение. */
+  const deleteTraining = async () => {
+    if (!evening) return;
+    const ok = await confirm({
+      title: 'Удалить тренировку?',
+      message:
+        'Журнал, ответы и гости, которых завели на этой тренировке, удалятся без возврата. На историю клуба и рейтинг это не влияет.',
+      confirmText: 'Удалить тренировку',
+      cancelText: 'Не удалять',
+      danger: true,
+    });
+    if (!ok) return;
+    removeTraining.mutate(evening.id, {
+      onSuccess: ({ guestsDeleted }) => {
+        toast.success(trainingDeletedText(guestsDeleted));
+        navigate(EVENINGS_PATH, { replace: true });
+      },
+      onError: (error) => toast.error(adminErrorText(error)),
+    });
+  };
+
+  const titleText = evening
+    ? capitalize(formatWeekdayDate(evening.scheduled_at))
+    : training
+      ? 'Тренировочный вечер'
+      : 'Новый вечер';
 
   return (
     <Page
@@ -414,6 +478,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
         evening ? (
           <span className="adm-subtitle">
             <EveningStatusBadge status={evening.status} />
+            {training && <TrainingBadge />}
             <span>
               {[formatTime(evening.scheduled_at), evening.location].filter(Boolean).join(' · ')}
             </span>
@@ -424,6 +489,16 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
     >
       {confirmElement}
       {cancelConfirmElement}
+
+      {training && (
+        <Notice tone="info" title={evening ? 'Тренировочный вечер' : 'Как устроена тренировка'}>
+          Прогон пульта, табло и голоса. Вечер не попадёт в историю, рейтинг, сезон, ачивки, ленту и
+          посты бота, голосования у него нет, день клуба он не занимает.{' '}
+          {evening
+            ? 'Когда прогон закончен, удали его целиком — кнопка внизу.'
+            : 'После прогона его удаляют целиком здесь же, в форме вечера.'}
+        </Notice>
+      )}
 
       {status === 'cancelled' && (
         <Notice
@@ -498,7 +573,11 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
             label="Заметка"
             multiline
             placeholder="Возьмите наличку на ребаи"
-            hint={noteHint(status, Boolean(evening?.announce_posted_at))}
+            hint={
+              training
+                ? 'Видна только на экране тренировки — в группу ничего не уходит.'
+                : noteHint(status, Boolean(evening?.announce_posted_at))
+            }
             value={draft.note}
             onChange={(e) => set('note', e.target.value)}
           />
@@ -562,7 +641,7 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
             loading={save.isPending || checking}
             disabled={evening !== null && !dirty}
           >
-            {evening ? 'Сохранить вечер' : 'Создать вечер'}
+            {evening ? 'Сохранить вечер' : training ? 'Создать тренировку' : 'Создать вечер'}
           </Button>
           {evening !== null && !dirty && <p className="m-small adm-muted">Изменений нет.</p>}
           {!evening && (
@@ -594,7 +673,24 @@ function EveningForm({ evening, evenings, formats, settings, players }: EveningF
         </Section>
       )}
 
-      {evening && status === 'announced' && (
+      {evening && training && (
+        <Section
+          title="Удаление"
+          footer="Тренировку не отменяют, а удаляют целиком: журнал, ответы и гостей, которых завели на ней."
+        >
+          <Button
+            variant="danger"
+            icon="trash"
+            block
+            loading={removeTraining.isPending}
+            onClick={() => void deleteTraining()}
+          >
+            Удалить тренировку
+          </Button>
+        </Section>
+      )}
+
+      {evening && status === 'announced' && !training && (
         <Section title="Отмена" footer={cancelFooter(reach)}>
           {reach === 'group' && (
             <Field

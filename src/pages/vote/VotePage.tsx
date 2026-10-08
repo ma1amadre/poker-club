@@ -1,5 +1,6 @@
 // Голосование вечера: рука / блеф / бэд-бит. Пока открыто — мои голоса по номинациям (шторка
 // с формой), обратный отсчёт; после закрытия — итоги voteResults с подписями и фото.
+import { eveningAllIns, type AllIn } from '@domain/allins.ts';
 import { VOTE_CATEGORIES, VOTE_CATEGORY_META, type VoteCategory } from '@domain/votes.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -79,6 +80,12 @@ export default function VotePage() {
     () => new Map<string, Player>((players.data ?? []).map((p) => [p.id, p])),
     [players.data],
   );
+  // Олл-ины вечера — подсказки в шторке «Рука» и «Бэд-бит».
+  const format = evening.data?.format;
+  const allIns = useMemo(
+    () => (format && events.data ? eveningAllIns(format, events.data) : []),
+    [format, events.data],
+  );
   const back = { fallback: id ? paths.evening(id) : paths.home };
 
   // Без id запросы выключены и навсегда остались бы pending — сразу «не найден».
@@ -144,6 +151,7 @@ export default function VotePage() {
               participants={participants}
               votes={votes.data ?? []}
               playersById={playersById}
+              allIns={allIns}
             />
           ) : (
             <Notice tone="info" title="Голосуют только игравшие">
@@ -166,6 +174,17 @@ export default function VotePage() {
 }
 
 function NotYet({ evening }: { evening: Evening }) {
+  // Тренировочный вечер (миграция 023): голосования у него нет вовсе.
+  if (evening.is_training === true) {
+    return (
+      <Empty
+        icon="x"
+        title="Это тренировка"
+        description="У тренировочного вечера нет голосования: он не попадает в историю и моменты клуба."
+        action={<ButtonLink to={paths.evening(evening.id)}>Открыть вечер</ButtonLink>}
+      />
+    );
+  }
   if (evening.status === 'cancelled') {
     return (
       <Empty
@@ -206,12 +225,14 @@ function MyVotes({
   participants,
   votes,
   playersById,
+  allIns,
 }: {
   eveningId: string;
   me: Player;
   participants: readonly Player[];
   votes: readonly VoteRow[];
   playersById: ReadonlyMap<string, Player>;
+  allIns: readonly AllIn[];
 }) {
   const [editing, setEditing] = useState<VoteCategory | null>(null);
   const { confirm, confirmElement } = useConfirm();
@@ -302,6 +323,7 @@ function MyVotes({
           me={me}
           participants={participants}
           current={mine.get(editing) ?? null}
+          allIns={allIns}
           onClose={() => setEditing(null)}
           onWithdraw={(vote) => void withdraw(vote)}
         />

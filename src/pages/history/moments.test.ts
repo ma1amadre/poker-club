@@ -1,9 +1,10 @@
+import type { AllIn } from '@domain/allins.ts';
 import { clubMoments } from '@domain/feed.ts';
 import { simpleEvening } from '@domain/test-utils.ts';
 import { describe, expect, it } from 'vitest';
 import type { ClubHistory, Evening, VoteRow } from '../../shared/api';
 import { clubFeedInput, momentsNowMs, nextVotingCloseMs } from '../../shared/api/historyFeed';
-import { groupMoments, openVotings } from './moments';
+import { groupMoments, momentEvenings, openVotings } from './moments';
 
 const HOUR = 3_600_000;
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
@@ -140,5 +141,43 @@ describe('идущие голосования', () => {
       evening('live', new Date(NOW + HOUR).toISOString(), 'live'),
     ];
     expect(openVotings(list, NOW).map((e) => e.id)).toEqual(['soon', 'late']);
+  });
+});
+
+describe('вечера вкладки «Моменты»: моменты и олл-ины', () => {
+  const ev = (id: string, at: string) => ({ id, scheduled_at: at });
+  const allIn = (showdownId: string): AllIn => ({
+    showdownId,
+    openedEventId: 1,
+    openedAt: '2026-10-08T18:00:00.000Z',
+    updatedAt: '2026-10-08T18:00:00.000Z',
+    hands: [],
+    board: [],
+    boardSizes: [0],
+    winners: null,
+  });
+
+  it('порядок истории; вечер без моментов, но с олл-инами — тоже; без того и другого — нет', () => {
+    const groups = [
+      { eveningId: 'e1', date: '2026-10-01T16:00:00.000Z', moments: [] },
+      { eveningId: 'e3', date: '2026-10-15T16:00:00.000Z', moments: [] },
+    ];
+    const evenings = [
+      ev('e3', '2026-10-15T16:00:00.000Z'),
+      ev('e2', '2026-10-08T16:00:00.000Z'),
+      ev('e1', '2026-10-01T16:00:00.000Z'),
+      ev('e0', '2026-09-24T16:00:00.000Z'),
+    ];
+    const allIns = new Map([
+      ['e2', [allIn('x')]],
+      ['e1', [allIn('y'), allIn('z')]],
+    ]);
+    expect(
+      momentEvenings(groups, evenings, allIns).map((g) => [g.eveningId, g.date, g.allIns.length]),
+    ).toEqual([
+      ['e3', '2026-10-15T16:00:00.000Z', 0],
+      ['e2', '2026-10-08T16:00:00.000Z', 1],
+      ['e1', '2026-10-01T16:00:00.000Z', 2],
+    ]);
   });
 });

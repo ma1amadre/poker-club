@@ -1,10 +1,10 @@
 // Оценщик рук: те же проверки, что в курсе (tests/engines.test.js, раздел 1–2), плюс полный перебор
 // всех 2 598 960 пятикарточных рук против табличных частот — точное совпадение.
-import { CARD_RANKS, CARD_SUITS, isCardCode } from '@domain/showdown.ts';
+import { CARD_RANKS, CARD_SUITS, isCardCode } from '../showdown.ts';
 import { describe, expect, it } from 'vitest';
-import { cardCode, cardLabel, cardName, deckWithout, parseCard, parseCards } from './cards';
-import { CATEGORY, categoryOf, describeHand, evaluate } from './evaluator';
-import { mulberry32 } from './equity';
+import { cardCode, cardLabel, cardName, deckWithout, parseCard, parseCards } from './cards.ts';
+import { CATEGORY, categoryOf, describeHand, evaluate } from './evaluator.ts';
+import { mulberry32 } from './equity.ts';
 
 /** 'AhKd2c…' → счёт. */
 const E = (s: string) => evaluate(parseCards(s.match(/../g) ?? []));

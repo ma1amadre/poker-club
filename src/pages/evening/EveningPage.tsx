@@ -1,9 +1,12 @@
 // Экран вечера /evening/:id — одна страница, режим по статусу и роли: анонс (сбор стола и старт),
 // живая игра (у банкира и админа — пульт), итог (у админа — правка закрытого вечера).
 // Realtime подключён в useEveningEvents: экран обновляется у всех без перезагрузки.
+// Тренировочный вечер (миграция 023) — «Тренировка 8 октября» в шапке и пометка под ней: в историю,
+// рейтинг и посты бота он не попадает. «Вывести на ТВ» — табло клуба (постоянная ссылка) или только
+// этого вечера; кнопка видна и 6 ч после финала — столько живёт ссылка вечера.
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { EVENING_STATUS_META } from '../../shared/api';
+import { EVENING_STATUS_META, isTrainingEvening, useSettings } from '../../shared/api';
 import { formatDate, formatWeekdayDate, formatTime, paths } from '../../shared/lib';
 import {
   ButtonLink,
@@ -19,9 +22,13 @@ import './evening.css';
 import { FinishedView } from './FinishedView';
 import { LiveView } from './LiveView';
 import { FormatSummary, StaleNotice } from './parts';
+import { usePultView } from './pultView';
 import { TvSheet } from './TvSheet';
 import { useEveningActions } from './useEveningActions';
 import { useEveningModel, type EveningModel } from './useEveningModel';
+
+/** Сколько после финала табло ещё показывает итог (private.board_evening_id, миграция 016). */
+const BOARD_AFTER_FINISH_MS = 6 * 60 * 60 * 1000;
 
 export default function EveningPage() {
   const { id } = useParams<{ id: string }>();
@@ -54,6 +61,11 @@ function EveningScreen({ model }: { model: EveningModel }) {
   const { evening, playersById } = model;
   const actions = useEveningActions(model);
   const [tvOpen, setTvOpen] = useState(false);
+  const [pultView, setPultView] = usePultView();
+  const clubCode = useSettings().data?.club_board_token ?? null;
+  const training = isTrainingEvening(evening);
+  // «Режим стола» у банкира: шапка без подписи и заметки, отступы плотнее — пульт без прокрутки.
+  const tableMode = model.canControl && evening.status === 'live' && pultView === 'table';
 
   const banker = evening.banker_id ? playersById.get(evening.banker_id) : undefined;
   const subtitle = [
@@ -64,15 +76,24 @@ function EveningScreen({ model }: { model: EveningModel }) {
     .filter(Boolean)
     .join(' · ');
 
+  // Итог табло показывает ещё 6 ч после финала (board_state, 016) — столько видна и кнопка.
+  const finishedMs = evening.finished_at ? Date.parse(evening.finished_at) : Number.NaN;
+  const recentlyFinished =
+    (evening.status === 'finished' || evening.status === 'settled') &&
+    Number.isFinite(finishedMs) &&
+    model.nowMs - finishedMs < BOARD_AFTER_FINISH_MS;
   const showTv =
-    Boolean(evening.board_token) && (evening.status === 'announced' || evening.status === 'live');
+    Boolean(evening.board_token) &&
+    (evening.status === 'announced' || evening.status === 'live' || recentlyFinished);
+  const statusTitle = EVENING_STATUS_META[evening.status].title;
 
   return (
     <Page
       back
-      eyebrow={EVENING_STATUS_META[evening.status].title}
-      title={`Вечер ${formatDate(evening.scheduled_at, model.nowMs)}`}
-      subtitle={subtitle}
+      eyebrow={statusTitle}
+      title={`${training ? 'Тренировка' : 'Вечер'} ${formatDate(evening.scheduled_at, model.nowMs)}`}
+      subtitle={tableMode ? undefined : subtitle}
+      className={tableMode ? 'ev-page--table' : undefined}
       actions={
         showTv ? (
           <IconButton icon="tv" label="Вывести на ТВ" onClick={() => setTvOpen(true)} />
@@ -80,10 +101,26 @@ function EveningScreen({ model }: { model: EveningModel }) {
       }
     >
       {model.stale && <StaleNotice updatedAt={model.updatedAt} onRetry={model.retry} />}
-      {evening.note && <p className="m-body">{evening.note}</p>}
+      {training && !tableMode && (
+        <Notice tone="info" title="Тренировочный вечер">
+          Его не будет в истории, рейтинге, сезоне, ачивках и постах бота. Когда прогон закончен,
+          админ удаляет его целиком: «Админ» → «Вечера».
+        </Notice>
+      )}
+      {evening.note && !tableMode && <p className="m-body">{evening.note}</p>}
 
-      {evening.status === 'announced' && <AnnouncedView model={model} actions={actions} />}
-      {evening.status === 'live' && <LiveView model={model} actions={actions} />}
+      {evening.status === 'announced' && (
+        <AnnouncedView model={model} actions={actions} onTv={() => setTvOpen(true)} />
+      )}
+      {evening.status === 'live' && (
+        <LiveView
+          model={model}
+          actions={actions}
+          view={pultView}
+          onViewChange={setPultView}
+          onTv={() => setTvOpen(true)}
+        />
+      )}
       {(evening.status === 'finished' || evening.status === 'settled') && (
         <FinishedView model={model} actions={actions} />
       )}
@@ -104,7 +141,13 @@ function EveningScreen({ model }: { model: EveningModel }) {
       )}
 
       {evening.board_token && (
-        <TvSheet open={tvOpen} onClose={() => setTvOpen(false)} boardToken={evening.board_token} />
+        <TvSheet
+          open={tvOpen}
+          onClose={() => setTvOpen(false)}
+          boardToken={evening.board_token}
+          clubCode={clubCode}
+          training={training}
+        />
       )}
       {actions.confirmElement}
     </Page>
