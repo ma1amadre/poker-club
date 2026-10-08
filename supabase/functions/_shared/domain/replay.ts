@@ -464,3 +464,39 @@ export function canApply(
 ): string | null {
   return validate(format, state, type, payload);
 }
+
+/** Запись, которую пульт собирается отправить: тип и payload, без id и времени. */
+export interface EventDraft {
+  type: EventType;
+  payload: EventPayload;
+}
+
+/**
+ * Можно ли сейчас записать несколько событий подряд одним действием (вылет и ребай, вход и
+ * оплата): журнал проигрывается до nowMs, затем черновики применяются по порядку — каждый к
+ * состоянию после предыдущего, теми же правилами, что replay. Ответ — первая отказная запись
+ * (индекс в drafts и текст) или null. Пустой список — null.
+ */
+export function canApplySequence(
+  format: TournamentFormat,
+  events: readonly EveningEvent[],
+  drafts: readonly EventDraft[],
+  nowMs: number,
+): { index: number; message: string } | null {
+  if (drafts.length === 0) return null;
+  const lastId = events.reduce((m, e) => Math.max(m, e.id), 0);
+  const at = new Date(nowMs).toISOString();
+  const tail: EveningEvent[] = drafts.map((d, i) => ({
+    id: lastId + 1 + i,
+    type: d.type,
+    payload: d.payload,
+    at,
+    voided: false,
+  }));
+  const { state } = replayLog(format, [...events, ...tail], nowMs);
+  for (const [index, ev] of tail.entries()) {
+    const error = state.errors.find((e) => e.eventId === ev.id);
+    if (error) return { index, message: error.message };
+  }
+  return null;
+}

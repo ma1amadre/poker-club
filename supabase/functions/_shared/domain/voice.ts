@@ -216,9 +216,18 @@ export function speakableName(player: SpeakablePlayer): string | null {
 
 // --- Фразы ----------------------------------------------------------------------------------
 
-/** Фразы без переменных. */
+/**
+ * Фразы без переменных. Порядок ключей — порядок FIXED_TEXTS, а значит и подгрузки клипов табло:
+ * проверка звука («Голос включён.») — первой, она нужна сразу после нажатия кнопки.
+ */
 export const PHRASES = {
+  /** Проверка звука: табло говорит её, когда голос включился (аудит 07.10.2026). */
+  voiceOn: 'Голос включён.',
   minute: 'Минута до повышения блайндов.',
+  /** Начался уровень, в конце которого ребаи закроются (номер rebuyUntilLevel). */
+  rebuysLastLevel: 'Последний уровень ребаев.',
+  /** До закрытия ребаев пять минут игрового времени. */
+  rebuysSoon: 'Пять минут до закрытия ребаев.',
   rebuysClosed: 'Ребаи закрыты.',
   pause: 'Пауза.',
   resume: 'Продолжаем.',
@@ -296,9 +305,12 @@ export function winnerPhrase(name: string | null): string {
 
 /** Что табло объявляет голосом (детектор — src/pages/board/announcer.ts). */
 export type Announcement =
+  | { kind: 'voice_on' }
   | { kind: 'start'; level: BlindLevel }
   | { kind: 'level'; level: BlindLevel }
   | { kind: 'minute' }
+  | { kind: 'rebuys_last_level' }
+  | { kind: 'rebuys_soon' }
   | { kind: 'rebuys_closed' }
   | { kind: 'pause' }
   | { kind: 'resume' }
@@ -331,6 +343,8 @@ function pushVariant(out: string[][], clips: string[]): void {
 export function announcementVariants(a: Announcement, nameOf: SpokenNameOf): string[][] {
   const out: string[][] = [];
   switch (a.kind) {
+    case 'voice_on':
+      return [[PHRASES.voiceOn]];
     case 'start': {
       const text = safe(() => startPhrase(a.level));
       if (text) out.push([text]);
@@ -343,6 +357,10 @@ export function announcementVariants(a: Announcement, nameOf: SpokenNameOf): str
     }
     case 'minute':
       return [[PHRASES.minute]];
+    case 'rebuys_last_level':
+      return [[PHRASES.rebuysLastLevel]];
+    case 'rebuys_soon':
+      return [[PHRASES.rebuysSoon]];
     case 'rebuys_closed':
       return [[PHRASES.rebuysClosed]];
     case 'pause':

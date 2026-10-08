@@ -4,6 +4,7 @@ import {
   decideGamedayPost,
   gamedayHours,
   gamedayRoster,
+  predictionsMade,
   type GamedayEveningLike,
   type GamedayPlayerRow,
   type GamedayRoster,
@@ -235,6 +236,7 @@ const input = (over: Partial<GamedayPostInput> = {}): GamedayPostInput => ({
   roster: gamedayRoster(PLAYERS, RSVPS),
   botUsername: 'poker_club_bot',
   nowMs: NOW,
+  predictionsMade: 2,
   ...over,
 });
 
@@ -277,6 +279,7 @@ describe('gamedayPost', () => {
         'Ещё не ответили (2): Костя (@kostya_k) и <a href="tg://user?id=1005">Миша</a>',
         '',
         'Кто ещё не ответил или под вопросом — отметьтесь, идёте ли.',
+        'Прогнозы закрываются со стартом — сделано 2.',
       ].join('\n'),
     );
     expect(post.buttons).toEqual([
@@ -316,7 +319,7 @@ describe('gamedayPost', () => {
           l.startsWith('Ещё не ответили'),
       ),
     ).toBe(false);
-    expect(empty.at(-1)).toBe('Если планы поменялись, обновите ответ «иду / не иду».');
+    expect(empty.at(-2)).toBe('Если планы поменялись, обновите ответ «иду / не иду».');
 
     const onlyPending = gamedayPost(
       input({
@@ -326,7 +329,7 @@ describe('gamedayPost', () => {
         ),
       }),
     ).text;
-    expect(onlyPending.split('\n').at(-1)).toBe('Кто ещё не ответил — отметьтесь, идёте ли.');
+    expect(onlyPending.split('\n').at(-2)).toBe('Кто ещё не ответил — отметьтесь, идёте ли.');
 
     const answeredAll = gamedayRoster(
       PLAYERS.filter((p) => ['p1', 'p3'].includes(p.id)),
@@ -335,8 +338,27 @@ describe('gamedayPost', () => {
     expect(
       gamedayPost(input({ roster: answeredAll }))
         .text.split('\n')
-        .at(-1),
+        .at(-2),
     ).toBe('Кто под вопросом — отметьтесь, идёте ли.');
+  });
+
+  it('последняя строка — сколько прогнозов сделано, без содержимого; снятые не в счёт', () => {
+    const last = (made: number) =>
+      gamedayPost(input({ predictionsMade: made }))
+        .text.split('\n')
+        .at(-1);
+    expect(last(0)).toBe('Прогнозы закрываются со стартом — пока ни одного.');
+    expect(last(1)).toBe('Прогнозы закрываются со стартом — сделано 1.');
+    expect(last(5)).toBe('Прогнозы закрываются со стартом — сделано 5.');
+    expect(
+      predictionsMade([
+        { winner_id: 'a', first_out_id: null },
+        { winner_id: null, first_out_id: 'b' },
+        { winner_id: 'a', first_out_id: 'b' },
+        { winner_id: null, first_out_id: null }, // снят
+      ]),
+    ).toBe(3);
+    expect(predictionsMade([])).toBe(0);
   });
 
   it('«сегодня» и «завтра» — по московскому календарю, дальше — с датой', () => {
@@ -400,7 +422,7 @@ describe('gamedayPost: лимит Telegram на длину текста', () => 
       expect(shown.length + Number(rest)).toBe(n - 8);
       // Показаны первые по имени — ровно те упоминания, что строит mentionHtml.
       expect(shown).toEqual(roster.pending.slice(0, shown.length).map(mentionHtml));
-      expect(text.split('\n').at(-1)).toBe('Кто ещё не ответил — отметьтесь, идёте ли.');
+      expect(text.split('\n').at(-2)).toBe('Кто ещё не ответил — отметьтесь, идёте ли.');
     }
   });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_FORMAT, validateFormat } from './format.ts';
-import { canApply, readStacks, replay, replayLog } from './replay.ts';
+import { canApply, canApplySequence, readStacks, replay, replayLog } from './replay.ts';
 import { journal, MIN } from './test-utils.ts';
 import { MAX_ENTRY_STACKS, type BlindLevel, type TournamentFormat } from './types.ts';
 
@@ -618,5 +618,120 @@ describe('кратность входа и ребая (stacks)', () => {
     expect(s.players.C).toMatchObject({ stacks: 2, entries: 2 });
     expect(s.prizePoolRub).toBe(2000);
     expect(s.players.B?.kos).toBe(1);
+  });
+});
+
+describe('canApplySequence: несколько записей одним действием', () => {
+  const bustRebuy = (id: string, by: string[], stacks?: number) => [
+    { type: 'bust' as const, payload: { playerId: id, by } },
+    {
+      type: 'rebuy' as const,
+      payload: stacks === undefined ? { playerId: id } : { playerId: id, stacks },
+    },
+  ];
+
+  it('вылет и ребай подряд: каждая запись проверяется по состоянию после предыдущей', () => {
+    const j = journal().join('A', 'B', 'C');
+    j.start();
+    j.wait(10);
+    expect(canApplySequence(F, j.events, bustRebuy('C', ['A'], 2), j.now())).toBeNull();
+    // По отдельности ребай живому не положен — поэтому и нужна проверка цепочкой.
+    expect(canApply(F, replay(F, j.events, j.now()), 'rebuy', { playerId: 'C' }, j.now())).toBe(
+      'Игрок ещё в игре — ребай только после вылета',
+    );
+    // Та же цепочка, записанная в журнал, принимается целиком.
+    j.bust('C', ['A']);
+    j.rebuy('C', 2);
+    const s = replay(F, j.events, j.now());
+    expect(s.errors).toEqual([]);
+    expect(s.players.C).toMatchObject({ alive: true, stacks: 3, rebuys: 1 });
+    expect(s.players.A?.kos).toBe(1);
+  });
+
+  it('порядок важен: ребай до вылета — отказ на первой записи', () => {
+    const j = journal().join('A', 'B');
+    j.start();
+    const drafts = bustRebuy('B', ['A']).reverse();
+    expect(canApplySequence(F, j.events, drafts, j.now())).toEqual({
+      index: 0,
+      message: 'Игрок ещё в игре — ребай только после вылета',
+    });
+  });
+
+  it('ребаи закрыты: вылет проходит, ребай — нет', () => {
+    const j = journal().join('A', 'B', 'C');
+    j.start();
+    j.wait(5 * 40 + 1); // 6-й уровень: ребаи до конца 5-го
+    expect(canApplySequence(F, j.events, bustRebuy('C', ['A']), j.now())).toEqual({
+      index: 1,
+      message: 'Ребаи закрыты',
+    });
+  });
+
+  it('лимит ребаев исчерпан — отказ на ребае', () => {
+    const fmt: TournamentFormat = { ...F, rebuyLimit: 1 };
+    const j = journal().join('A', 'B', 'C');
+    j.start();
+    j.bust('C', ['A']);
+    j.rebuy('C');
+    expect(canApplySequence(fmt, j.events, bustRebuy('C', ['B']), j.now())).toEqual({
+      index: 1,
+      message: 'Лимит ребаев исчерпан',
+    });
+  });
+
+  it('вылет сам переводит уровень и закрывает ребаи — ребай в той же цепочке не проходит', () => {
+    const fmt: TournamentFormat = {
+      ...F,
+      rebuyUntilLevel: 1,
+      levels: [
+        { sb: 5, bb: 10, trigger: { type: 'eliminations', count: 1 } },
+        { sb: 10, bb: 20, trigger: { type: 'eliminations', count: 1 } },
+      ],
+    };
+    const j = journal().join('A', 'B', 'C');
+    j.start();
+    expect(canApplySequence(fmt, j.events, bustRebuy('C', ['A']), j.now())).toEqual({
+      index: 1,
+      message: 'Ребаи закрыты',
+    });
+  });
+
+  it('хедз-ап: вылет и ребай возвращают двоих за стол', () => {
+    const j = journal().join('A', 'B');
+    j.start();
+    expect(canApplySequence(F, j.events, bustRebuy('B', ['A']), j.now())).toBeNull();
+  });
+
+  it('посадка с оплатой: вход и платёж каждого; уже сидящий — отказ на его входе', () => {
+    const j = journal().join('A');
+    const drafts = [
+      { type: 'join' as const, payload: { playerId: 'B', stacks: 2 } },
+      { type: 'payment' as const, payload: { playerId: 'B', amountRub: 1000 } },
+      { type: 'join' as const, payload: { playerId: 'C' } },
+      { type: 'payment' as const, payload: { playerId: 'C', amountRub: 500 } },
+    ];
+    expect(canApplySequence(F, j.events, drafts, j.now())).toBeNull();
+    const again = [{ type: 'join' as const, payload: { playerId: 'A' } }, ...drafts];
+    expect(canApplySequence(F, j.events, again, j.now())).toEqual({
+      index: 0,
+      message: 'Игрок уже в турнире',
+    });
+    expect(
+      canApplySequence(
+        F,
+        j.events,
+        [...drafts, { type: 'join', payload: { playerId: 'B' } }],
+        j.now(),
+      ),
+    ).toEqual({ index: 4, message: 'Игрок уже в турнире' });
+  });
+
+  it('журнал не меняется, пустая цепочка — без отказа', () => {
+    const j = journal().join('A', 'B');
+    const before = JSON.stringify(j.events);
+    canApplySequence(F, j.events, bustRebuy('B', ['A']), j.now());
+    expect(JSON.stringify(j.events)).toBe(before);
+    expect(canApplySequence(F, j.events, [], j.now())).toBeNull();
   });
 });

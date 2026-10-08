@@ -53,6 +53,7 @@ export type AlertKind =
   | 'cron_gameday'
   | 'cron_results'
   | 'cron_voting'
+  | 'cron_voting_reminder'
   | 'cron_crash'
   | 'notify_post';
 
@@ -101,6 +102,12 @@ export const ALERT_KINDS: Record<AlertKind, KindInfo> = {
     fn: 'cron-tick',
     what: 'Не ушли итоги голосования в группу.',
     check: RETRY_BY_CRON,
+  },
+  cron_voting_reminder: {
+    fn: 'cron-tick',
+    what: 'Не ушло напоминание о голосовании в группу.',
+    check:
+      'Проверь логи функции. cron-tick повторит напоминание через 15 минут, пока до закрытия голосования больше получаса, но, пока причина не устранена, это не поможет.',
   },
   cron_crash: {
     fn: 'cron-tick',

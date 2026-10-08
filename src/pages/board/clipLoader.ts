@@ -107,8 +107,13 @@ export class ClipLoader {
   /** Сколько из hashes точно не озвучено: сервер ответил, а клипа нет. */
   missing(hashes: Iterable<string>): number {
     let count = 0;
-    for (const h of new Set(hashes)) if (!this.store.has(h) && this.missingAt.has(h)) count += 1;
+    for (const h of new Set(hashes)) if (this.isMissing(h)) count += 1;
     return count;
+  }
+
+  /** Хеш точно не озвучен: сервер ответил, а клипа нет. */
+  isMissing(hash: string): boolean {
+    return !this.store.has(hash) && this.missingAt.has(hash);
   }
 
   private fail(hashes: readonly string[], at: number): void {

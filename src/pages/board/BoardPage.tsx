@@ -3,40 +3,70 @@
 // для anon, опрос раз в 3 с), время — useNow + replay на клиенте, как у всех экранов вечера.
 // Денег из платежей здесь нет (board_state их не отдаёт) — только фонд и выплаты по местам.
 // Голос (useBoardVoice) объявляет события вечера клипами Silero — включается кнопкой.
-import { payouts } from '@domain/money.ts';
+// На ТВ (от 1024 px в горизонтали) — своя шкала шрифтов от размера экрана (board.css, --bd-px):
+// всё, что читают с дивана, крупно; что не влезло — уменьшает useFitToScreen (--bd-fit).
+import { computeMoney, payouts } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
 import { VOICE_CREDIT } from '@domain/voice.ts';
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { errorMessage, useBoardState, type BoardState } from '../../shared/api';
 import {
   clockOffsetMs,
+  cn,
   formatBlinds,
+  formatDate,
   formatDateNumeric,
   formatNumber,
   formatRub,
   formatTime,
+  joinNames,
+  kosCount,
+  moscowDateKey,
+  NBSP,
   pluralWithNumber,
   useNow,
   useWakeLock,
 } from '../../shared/lib';
 import { Badge, Button, Icon, List, ListItem, PageSkeleton, Stat, Stats } from '../../shared/ui';
 import {
+  bestHunters,
   clockView,
-  describeEvent,
+  describeTrigger,
+  formatBbValue,
   levelLabel,
   orderedPlayers,
   ordinalPlace,
-  rebuyText,
-  rebuyWindow,
-  totalRebuys,
   type NameOf,
 } from '../evening/lib';
 import './board.css';
+import {
+  bigBlinds,
+  blindsParts,
+  boardClock,
+  entriesText,
+  formatGameTime,
+  lastKnockout,
+  levelPlan,
+  pausedForMs,
+  pauseText,
+  payoutPlan,
+  rebuyLine,
+  startingStackBb,
+  startsInText,
+  tableLine,
+  voiceGapNotes,
+} from './boardView';
+import { useFitToScreen } from './fitToScreen';
 import { ShowdownBoard } from './ShowdownBoard';
 import { useFullscreen } from './useScreenControls';
 import { useBoardVoice, type BoardVoice } from './useBoardVoice';
+
+/** Масштаб шкалы ТВ, который подбирает useFitToScreen (board.css: --bd-px). */
+const BOARD_FIT_VAR = '--bd-fit';
+/** Имена через точку; неразрывный пробел перед ней — строка не начнётся с «·». */
+const NAMES_SEP = `${NBSP}· `;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -79,6 +109,20 @@ export default function BoardPage() {
       failing={query.isError || query.fetchStatus === 'paused'}
       updatedAt={query.dataUpdatedAt}
     />
+  );
+}
+
+/** Блайнды с местом переноса после «/» (blindsParts): узкая колонка не режет число посреди разряда. */
+function BlindsText({ text }: { text: string }) {
+  const [head, tail] = blindsParts(text);
+  return tail === undefined ? (
+    <>{head}</>
+  ) : (
+    <>
+      {head}
+      <wbr />
+      {tail}
+    </>
   );
 }
 
@@ -159,13 +203,13 @@ function Board({
       </header>
 
       {finished ? (
-        <FinishedBoard state={state} nameOf={nameOf} />
+        <FinishedBoard format={format} state={state} nameOf={nameOf} />
       ) : showdown ? (
         <ShowdownBoard showdown={showdown} state={state} format={format} nameOf={nameOf} />
       ) : state.timer.status === 'not_started' ? (
-        <WaitingBoard state={state} nameOf={nameOf} />
+        <WaitingBoard data={data} state={state} nameOf={nameOf} nowMs={nowMs} />
       ) : (
-        <LiveBoard data={data} state={state} applied={applied} nameOf={nameOf} />
+        <LiveBoard data={data} state={state} applied={applied} nameOf={nameOf} nowMs={nowMs} />
       )}
 
       <footer className="bd-foot">
@@ -175,12 +219,13 @@ function Board({
             устройства.
           </p>
         )}
-        {voice.status === 'on' && voice.missing > 0 && (
-          <p className="m-small bd-muted">
-            Часть фраз этого вечера ещё не озвучена — табло скажет их короче, без имён. Новые имена
-            озвучиваются раз в сутки.
-          </p>
-        )}
+        {/* Что голосу нечем сказать — без обещаний сверх того, что табло сделает (voiceGapNotes). */}
+        {voice.status === 'on' &&
+          voiceGapNotes(voice.gaps).map((note) => (
+            <p key={note} className="m-small bd-muted">
+              {note}
+            </p>
+          ))}
         {voice.status !== 'unsupported' && <p className="m-small bd-muted">{VOICE_CREDIT}</p>}
       </footer>
     </main>
@@ -216,16 +261,19 @@ function LiveBoard({
   state,
   applied,
   nameOf,
+  nowMs,
 }: {
   data: BoardState;
   state: Replayed['state'];
   applied: Replayed['applied'];
   nameOf: NameOf;
+  nowMs: number;
 }) {
   const { format } = data;
   const timer = state.timer;
-  const paused = timer.status === 'paused';
   const clock = clockView(state);
+  const signal = boardClock(state);
+  const pausedMs = pausedForMs(state, applied, nowMs);
   const trig = state.currentLevel.trigger;
   const trigNote =
     trig.type === 'hands'
@@ -235,90 +283,143 @@ function LiveBoard({
         : null;
   // Выплаты по местам — доменная раскладка фонда (та же, что попадёт в итог).
   const prizes = payouts(state.prizePoolRub, format.payoutPct, state.joinOrder.length);
-  const koEvent = [...applied].reverse().find((e) => e.type === 'bust');
-  const koLine = koEvent ? describeEvent(koEvent, nameOf, formatRub, format) : null;
-  const rebuys = totalRebuys(state);
+  const ko = lastKnockout(applied, nameOf);
+  const rebuy = rebuyLine(format, state);
   const alive = orderedPlayers(state).filter((p) => p.alive);
+  const bottom = tableLine(state);
+  const blinds = formatBlinds(state.currentLevel);
+  const big = bigBlinds(state.currentLevel);
+
+  const screenRef = useRef<HTMLDivElement>(null);
+  useFitToScreen(
+    screenRef,
+    [alive.length, prizes.length, ko?.by, signal.paused, signal.lastLevel].join('|'),
+    BOARD_FIT_VAR,
+  );
 
   return (
-    <div className="bd-main">
-      <section className="bd-clock" aria-label="Уровень и таймер">
-        <div className="bd-clock__head">
-          <p className="m-eyebrow">{levelLabel(format, state)}</p>
-          {paused && (
-            <Badge tone="neutral">
-              <Icon name="pause" size={14} /> Пауза
-            </Badge>
-          )}
-        </div>
-        {/* Единственное свечение экрана — за главным числом (исключение правил Янтаря). */}
-        <div className="bd-glow">
-          <p
-            className={paused ? 'm-display bd-time bd-time--paused' : 'm-display bd-time'}
-            role="timer"
-            aria-label={clock.aria}
-          >
-            {clock.text}
-          </p>
-        </div>
-        {clock.note && <p className="m-body bd-muted">{clock.note}</p>}
-        <div className="bd-blinds">
-          <div className="bd-blinds__now">
-            <p className="m-eyebrow">Блайнды</p>
-            <p className="m-figure bd-blinds__value">{formatBlinds(state.currentLevel)}</p>
-          </div>
-          <div className="bd-blinds__next">
-            <p className="m-eyebrow">Дальше</p>
-            <p className="m-figure bd-muted">
-              {state.nextLevel ? formatBlinds(state.nextLevel) : 'блайнды не растут'}
+    <div ref={screenRef} className="bd-main bd-screen">
+      <section
+        className={cn(
+          'bd-clock',
+          signal.paused && 'bd-clock--paused',
+          signal.finalMinute && 'bd-clock--final',
+          signal.fresh && 'bd-clock--fresh',
+        )}
+        aria-label="Уровень и таймер"
+      >
+        <p className="m-eyebrow">{levelLabel(format, state)}</p>
+        {signal.paused ? (
+          // Пауза — на весь блок часов: слово вместо цифр и сколько уже стоим.
+          <>
+            <div className="bd-glow">
+              <p className="m-display bd-big" role="timer" aria-label={`Пауза. ${clock.aria}`}>
+                Пауза
+              </p>
+            </div>
+            <p className="m-h2 bd-hot">{pausedMs === null ? 'часы стоят' : pauseText(pausedMs)}</p>
+            <p className="m-body bd-muted">
+              {signal.lastLevel ? `Последний уровень · ${blinds}` : `На часах ${clock.text}`}
             </p>
+          </>
+        ) : signal.lastLevel ? (
+          // Последний уровень сам не кончается: главное число — блайнды, а не счёт вверх.
+          <>
+            <p className="m-h2 bd-hot">Последний уровень</p>
+            {/* Одной строкой, вписанной в колонку (board.css, --bd-em); анте — строкой ниже. */}
+            <div className="bd-glow">
+              <p
+                className="m-display bd-big bd-big--wide"
+                style={{ '--bd-em': String(big.em) } as CSSProperties}
+                aria-label={`Последний уровень, блайнды ${blinds}`}
+              >
+                <BlindsText text={big.text} />
+              </p>
+            </div>
+            {big.ante && <p className="m-h3">Анте {big.ante}</p>}
+            <p className="m-body bd-muted">Блайнды больше не растут</p>
+          </>
+        ) : (
+          <>
+            {/* Единственное свечение экрана — за главным числом (исключение правил Янтаря). */}
+            <div className="bd-glow">
+              <p className="m-display bd-big bd-time" role="timer" aria-label={clock.aria}>
+                {clock.text}
+              </p>
+            </div>
+            {signal.finalMinute && (
+              <p className="m-h3 bd-final">
+                <Icon name="clock" size={20} /> Последняя минута уровня
+              </p>
+            )}
+          </>
+        )}
+        {!signal.lastLevel && (
+          <div className="bd-blinds">
+            <div className="bd-blinds__now">
+              <p className="m-eyebrow">Блайнды</p>
+              <p className="m-figure bd-blinds__value">
+                <BlindsText text={blinds} />
+              </p>
+            </div>
+            <div className="bd-blinds__next">
+              <p className="m-eyebrow">Дальше</p>
+              <p className="m-figure bd-muted">
+                {state.nextLevel ? (
+                  <BlindsText text={formatBlinds(state.nextLevel)} />
+                ) : (
+                  'блайнды не растут'
+                )}
+              </p>
+            </div>
           </div>
-        </div>
+        )}
         {trigNote && <p className="m-body bd-muted">{trigNote}</p>}
-        <p className="m-body bd-rebuy">
+        <p className={rebuy.emphasis ? 'm-h3 bd-rebuy bd-rebuy--hot' : 'm-body bd-rebuy'}>
           <Icon name={state.rebuysOpen ? 'refresh-cw' : 'x'} size={20} />
-          <span>{rebuyText(rebuyWindow(format, state))}</span>
+          <span>{rebuy.text}</span>
         </p>
+        {bottom && <p className="m-h3 bd-bottom">{bottom}</p>}
       </section>
 
       <section className="bd-side" aria-label="Стол и деньги">
-        <Stats>
+        {/* Выплаты по местам — рядом с фондом, теми же плитками: на ТВ так всё в экране. */}
+        <Stats className="bd-stats">
           <Stat
             label="В игре"
             value={String(state.aliveCount)}
             unit={`из ${state.joinOrder.length}`}
-            note={`${pluralWithNumber(state.totalEntries, ['вход', 'входа', 'входов'])}, ${pluralWithNumber(rebuys, ['ребай', 'ребая', 'ребаев'])}`}
+            note={entriesText(state)}
           />
           <Stat label="Фонд" value={formatNumber(state.prizePoolRub)} unit="₽" />
+          {prizes.map((rub, index) => (
+            <Stat
+              key={index}
+              label={`${ordinalPlace(index + 1)} место`}
+              value={formatNumber(rub)}
+              unit="₽"
+            />
+          ))}
         </Stats>
 
-        {prizes.length > 0 && (
-          <div className="bd-block">
-            <p className="m-eyebrow">Выплаты</p>
-            <List aria-label="Выплаты по местам">
-              {prizes.map((rub, index) => (
-                <ListItem
-                  key={index}
-                  title={`${ordinalPlace(index + 1)} место`}
-                  after={<span className="m-mono bd-amount">{formatRub(rub)}</span>}
-                />
-              ))}
-            </List>
-          </div>
-        )}
-
-        {koLine && (
+        {ko && (
           <div className="bd-block">
             <p className="m-eyebrow">Последний нокаут</p>
-            <p className="m-h3">{koLine.title}</p>
-            {koLine.detail && <p className="m-body bd-muted">{koLine.detail}</p>}
+            <p className="m-body bd-names">
+              <span className="bd-ko">{ko.victim}</span>
+              <span className="bd-muted">
+                {NBSP}· {ko.by}
+              </span>
+            </p>
           </div>
         )}
 
         {alive.length > 0 && (
           <div className="bd-block">
             <p className="m-eyebrow">За столом</p>
-            <p className="m-body bd-names">{alive.map((p) => nameOf(p.playerId)).join(' · ')}</p>
+            <p className="m-body bd-names">
+              {alive.map((p) => nameOf(p.playerId)).join(NAMES_SEP)}
+            </p>
           </div>
         )}
       </section>
@@ -326,50 +427,198 @@ function LiveBoard({
   );
 }
 
-function WaitingBoard({ state, nameOf }: { state: Replayed['state']; nameOf: NameOf }) {
+function WaitingBoard({
+  data,
+  state,
+  nameOf,
+  nowMs,
+}: {
+  data: BoardState;
+  state: Replayed['state'];
+  nameOf: NameOf;
+  nowMs: number;
+}) {
+  const { format, evening } = data;
   const seated = state.joinOrder.map(nameOf);
+  const scheduledMs = Date.parse(evening.scheduled_at);
+  const known = Number.isFinite(scheduledMs);
+  const startsIn = known ? startsInText(scheduledMs, nowMs) : null;
+  const sameDay = known && moscowDateKey(scheduledMs) === moscowDateKey(nowMs);
+  // Время старта прошло, а таймер стоит: часы уровней — «если начнём сейчас» (со следующей минуты).
+  const planStart = known
+    ? Math.max(scheduledMs, Math.ceil(nowMs / 60_000) * 60_000)
+    : Math.ceil(nowMs / 60_000) * 60_000;
+  const plan = levelPlan(format, planStart);
+  const payoutRows = payoutPlan(format, state);
+  const stackBb = startingStackBb(format);
+
+  const screenRef = useRef<HTMLDivElement>(null);
+  useFitToScreen(screenRef, `${seated.length}|${plan.length}`, BOARD_FIT_VAR);
+
   return (
-    <section className="bd-wait" aria-label="Вечер ещё не начался">
-      <div className="bd-glow">
-        <h1 className="m-display">Скоро начнём</h1>
-      </div>
-      <p className="m-h3 bd-muted">
-        {seated.length > 0
-          ? `За столом ${pluralWithNumber(seated.length, ['игрок', 'игрока', 'игроков'])}`
-          : 'Банкир рассаживает игроков'}
-      </p>
-      {seated.length > 0 && <p className="m-body bd-names">{seated.join(' · ')}</p>}
-    </section>
+    <div ref={screenRef} className="bd-wait bd-screen" aria-label="Вечер ещё не начался">
+      <section className="bd-wait__main">
+        {known ? (
+          <div className="bd-glow">
+            <h1 className="m-display bd-headline">
+              {sameDay
+                ? `Начинаем в ${formatTime(scheduledMs)}`
+                : `Начинаем ${formatDate(scheduledMs, nowMs)} в ${formatTime(scheduledMs)}`}
+            </h1>
+          </div>
+        ) : (
+          <div className="bd-glow">
+            <h1 className="m-display bd-headline">Скоро начнём</h1>
+          </div>
+        )}
+        <p className="m-h2 bd-hot">{startsIn ?? 'Таймер запустит банкир'}</p>
+        <p className="m-h3 bd-muted">
+          {seated.length > 0
+            ? `За столом ${pluralWithNumber(seated.length, ['игрок', 'игрока', 'игроков'])}`
+            : 'Банкир рассаживает игроков'}
+        </p>
+        {seated.length > 0 && <p className="m-body bd-names">{seated.join(NAMES_SEP)}</p>}
+      </section>
+
+      <section className="bd-wait__side" aria-label="Структура вечера">
+        {plan.length > 0 && (
+          <div className="bd-block">
+            <p className="m-eyebrow">
+              Уровни · время МСК{startsIn === null ? ', если начать сейчас' : ''}
+            </p>
+            <table className="bd-plan">
+              <thead className="sr-only">
+                <tr>
+                  <th scope="col">Уровень</th>
+                  <th scope="col">Начало</th>
+                  <th scope="col">Блайнды</th>
+                  <th scope="col">Ребаи</th>
+                </tr>
+              </thead>
+              <tbody>
+                {plan.map((row) => (
+                  <tr key={row.n} className={row.lastRebuy ? 'bd-plan__last-rebuy' : undefined}>
+                    <td className="m-mono bd-muted">{row.n}</td>
+                    <td className="m-mono">
+                      {row.at === null ? describeTrigger(row.level) : formatTime(row.at)}
+                    </td>
+                    <td className="bd-plan__blinds">
+                      <BlindsText text={formatBlinds(row.level)} />
+                    </td>
+                    <td className="bd-plan__note">{row.lastRebuy ? 'последний с ребаями' : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="bd-wait__facts">
+          {payoutRows.length > 0 && (
+            <div className="bd-block">
+              <p className="m-eyebrow">Выплаты</p>
+              <List aria-label="Выплаты по местам">
+                {payoutRows.map((row) => (
+                  <ListItem
+                    key={row.place}
+                    title={`${ordinalPlace(row.place)} место · ${formatNumber(row.pct)}${NBSP}%`}
+                    after={
+                      row.rub !== null ? (
+                        <span className="m-mono bd-amount">{formatRub(row.rub)}</span>
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </List>
+            </div>
+          )}
+          {stackBb !== null && (
+            <Stats>
+              <Stat
+                label="Стартовый стек"
+                value={formatBbValue(stackBb)}
+                unit="BB"
+                note={`${formatNumber(format.startingChips)} фишек за ${formatRub(format.buyInRub)}`}
+              />
+            </Stats>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
-function FinishedBoard({ state, nameOf }: { state: Replayed['state']; nameOf: NameOf }) {
+function FinishedBoard({
+  format,
+  state,
+  nameOf,
+}: {
+  format: BoardState['format'];
+  state: Replayed['state'];
+  nameOf: NameOf;
+}) {
+  // Призы — доменная раскладка фонда по местам (computeMoney), как в итоге вечера в приложении.
+  const money = computeMoney(format, state);
   const winner = state.places[0];
+  const winnerKos = winner ? (state.players[winner]?.kos ?? 0) : 0;
   const rest = orderedPlayers(state).filter((p) => p.playerId !== winner);
+  const hunters = bestHunters(state);
+  const hunterKos = hunters[0] ? (state.players[hunters[0]]?.kos ?? 0) : 0;
+  const played = state.timer.totalElapsedMs;
+
+  const screenRef = useRef<HTMLDivElement>(null);
+  useFitToScreen(screenRef, `${rest.length}|${winner ?? ''}`, BOARD_FIT_VAR);
+
   return (
-    <section className="bd-wait" aria-label="Итог вечера">
-      <p className="m-eyebrow">Игра окончена · победитель</p>
-      <div className="bd-glow">
-        <h1 className="m-display">{winner ? nameOf(winner) : 'Итог считается'}</h1>
-      </div>
+    <div ref={screenRef} className="bd-wait bd-screen" aria-label="Итог вечера">
+      <section className="bd-wait__main">
+        <p className="m-eyebrow">Игра окончена · победитель</p>
+        <div className="bd-glow">
+          <h1 className="m-display bd-headline">{winner ? nameOf(winner) : 'Итог считается'}</h1>
+        </div>
+        {winner && (
+          <p className="m-h2 bd-hot">
+            Приз {formatRub(money[winner]?.prizeRub ?? 0)}
+            {winnerKos > 0 ? `${NBSP}· ${kosCount(winnerKos)}` : ''}
+          </p>
+        )}
+        {hunters.length > 0 && (
+          <p className="m-h3">
+            Лучший охотник{NBSP}— {joinNames(hunters.map(nameOf))}: {kosCount(hunterKos)}
+            {hunters.length > 1 ? ' у каждого' : ''}
+          </p>
+        )}
+        {played > 0 && <p className="m-h3 bd-muted">Игра шла {formatGameTime(played)}</p>}
+      </section>
+
       {rest.length > 0 && (
-        <List aria-label="Места">
-          {rest.map((p) => (
-            <ListItem
-              key={p.playerId}
-              before={<span className="m-mono bd-place">{p.place ?? '—'}</span>}
-              title={nameOf(p.playerId)}
-              after={
-                p.kos > 0 ? (
-                  <span className="m-small">
-                    {pluralWithNumber(p.kos, ['нокаут', 'нокаута', 'нокаутов'])}
-                  </span>
-                ) : undefined
-              }
-            />
-          ))}
-        </List>
+        <section className="bd-wait__side" aria-label="Места">
+          <div className="bd-block">
+            <p className="m-eyebrow">Места</p>
+            <List aria-label="Места">
+              {rest.map((p) => {
+                const prize = money[p.playerId]?.prizeRub ?? 0;
+                const parts = [
+                  prize > 0 ? `приз ${formatRub(prize)}` : null,
+                  p.kos > 0 ? kosCount(p.kos) : null,
+                ].filter(Boolean);
+                return (
+                  <ListItem
+                    key={p.playerId}
+                    before={<span className="m-mono bd-place">{p.place ?? '—'}</span>}
+                    title={nameOf(p.playerId)}
+                    after={
+                      parts.length > 0 ? (
+                        <span className="bd-place-after">{parts.join(NAMES_SEP)}</span>
+                      ) : undefined
+                    }
+                  />
+                );
+              })}
+            </List>
+          </div>
+        </section>
       )}
-    </section>
+    </div>
   );
 }

@@ -14,6 +14,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Выложить, даже если в облаке идёт игра (вечер в статусе «идёт»)'
+        type: boolean
+        default: false
 
 # По умолчанию — никаких прав; каждый job берёт только своё.
 permissions: {}
@@ -25,6 +30,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Запрет выкладки во время игры (аудит 07.10.2026). Новая сборка удаляет старые части сайта —
+  # у банкира на первом же экране, который грузится по требованию, выскочит «Вышло обновление», —
+  # а миграции меняют серверные функции прямо под работающим пультом. Поэтому, пока в облаке есть
+  # вечер в статусе «идёт» (live), выкладка — и сайта, и бэкенда — падает с понятным текстом.
+  # Статус спрашиваем тем же, чем уже ходит проверка после деплоя: SQL через Management API с
+  # SUPABASE_ACCESS_TOKEN — новых секретов нет. Только чтение; в лог — дата вечера, без id.
+  # Срочно выложить во время игры — Run workflow с галочкой force (ручной запуск).
+  live-guard:
+    name: Нет ли идущей игры
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      # На push inputs пуст — force только у ручного запуска.
+      FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true }}
+    steps:
+      - name: Вечер в статусе «идёт»
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::notice title=Идёт ли игра — не проверено::Нет секрета SUPABASE_ACCESS_TOKEN: облако не спросить. Бэкенд без него и так не деплоится (job «Бэкенд Supabase»), сайт выкладывается."
+            exit 0
+          fi
+          if ! printf '%s' "$SUPABASE_PROJECT_REF" | grep -Eq '^[a-z]{20}$'; then
+            echo "::error::Переменная SUPABASE_PROJECT_REF не задана или не похожа на ref проекта (20 строчных латинских букв)"
+            exit 1
+          fi
+          sql="select to_char(scheduled_at at time zone 'Europe/Moscow', 'DD.MM HH24:MI') as at_msk,
+                      to_char(started_at at time zone 'Europe/Moscow', 'HH24:MI') as started_msk
+               from public.evenings where status = 'live' order by scheduled_at"
+          body="$(jq -n --arg q "$sql" '{query: $q}')"
+          out="$RUNNER_TEMP/live.json"
+          status="$(curl -sS -o "$out" -w '%{http_code}' --retry 2 --retry-all-errors --max-time 30 \
+            -X POST "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/query" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data "$body")" || status="${status:-000}"
+          if [ "${status:0:1}" != "2" ]; then
+            if [ "$FORCE" = "true" ]; then
+              echo "::warning title=Идёт ли игра — не проверено (force)::Management API ответил $status. Запуск с force — выкладываю."
+              exit 0
+            fi
+            echo "::error title=Статус вечера не проверен::Management API ответил $status, поэтому неизвестно, идёт ли игра. Перезапусти (Re-run failed jobs); если игры точно нет и ответа всё нет — Actions → deploy → Run workflow с галочкой force."
+            head -c 1000 "$out" 2>/dev/null || true
+            exit 1
+          fi
+          count="$(jq 'length' "$out")"
+          if [ "$count" = "0" ]; then
+            echo "Идущих вечеров нет — выкладываю."
+            exit 0
+          fi
+          list="$(jq -r 'map("вечер \(.at_msk) МСК, таймер с \(.started_msk // "—")") | join("; ")' "$out")"
+          if [ "$FORCE" = "true" ]; then
+            echo "::warning title=Выкладка во время игры (force)::Идёт игра: $list. После деплоя перезагрузи табло на ТВ и Mini App у игроков (DEPLOY.md, «Обновления»)."
+            exit 0
+          fi
+          echo "::error title=Идёт игра — выложи после финала::$list. Выкладка остановлена: новая сборка и миграции под работающим пультом ломают экраны банкира и табло. После финала — Re-run all jobs этого запуска; срочно — Actions → deploy → Run workflow с галочкой force. Если вечер на самом деле закончился, а в статусе «идёт» остался, — заверши его в приложении."
+          exit 1
+
   checks:
     name: Проверки
     runs-on: ubuntu-latest
@@ -45,7 +111,7 @@ jobs:
 
   pages-build:
     name: Сборка сайта
-    needs: checks
+    needs: [checks, live-guard]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -101,7 +167,7 @@ jobs:
 
   backend:
     name: Бэкенд Supabase
-    needs: checks
+    needs: [checks, live-guard]
     # Только main: Run workflow позволяет выбрать любую ветку, а db push необратим — миграции
     # невлитой ветки не должны попасть в облако.
     if: github.ref == 'refs/heads/main'
@@ -236,7 +302,7 @@ jobs:
           fi
           echo "project_url = $url"
 
-      # Проверка после деплоя, три ступени — от «функция жива» до «клуб работает»:
+      # Проверка после деплоя, четыре ступени — от «функция жива» до «клуб работает»:
       # 1) cron-tick с заведомо неверным x-cron-secret → 401 (функция отвечает, RPC verify_cron_secret
       #    на месте; 500 — миграции 011 нет или функция не видит базу);
       # 2) SQL через Management API: у service_role есть права на все таблицы и sequences public
@@ -244,7 +310,8 @@ jobs:
       #    в Vault есть cron_secret и project_url, задание pg_cron активно;
       # 3) вся цепочка как у будильника: private.invoke_cron_tick() → pg_net → cron-tick с секретом из
       #    Vault → таблицы; ответ из net._http_response — 200 без errors. Это обычный тик (тот же, что
-      #    pg_cron делает раз в 15 минут; все шаги cron-tick идемпотентны), и если пора — он и запостит.
+      #    pg_cron делает раз в 15 минут; все шаги cron-tick идемпотентны), и если пора — он и запостит;
+      # 4) этот тик записал отметку сторожа будильника (public.cron_heartbeat, миграция 021).
       # В лог идут только коды, флаги и список errors, не тело ответа целиком.
       - name: Проверка после деплоя
         if: steps.gate.outputs.ready == 'true'
@@ -259,7 +326,7 @@ jobs:
             echo "::error::cron-tick с неверным секретом ответил $code, ожидался 401"
             exit 1
           fi
-          echo "1/3 cron-tick: 401 на неверный секрет — как и должно быть"
+          echo "1/4 cron-tick: 401 на неверный секрет — как и должно быть"
 
           # SQL через Management API; ответ — JSON-массив строк. Ошибки — в stderr (иначе их
           # проглотит $(…)), тело ответа при ошибке — без секретов (текст ошибки SQL).
@@ -294,7 +361,7 @@ jobs:
               exists(select 1 from vault.secrets where name = 'project_url') as project_url_ok,
               exists(select 1 from cron.job where jobname = 'poker-club-cron-tick' and active) as cron_job_ok
           ")"
-          echo "2/3 $(jq -c '.[0]' <<<"$checks")"
+          echo "2/4 $(jq -c '.[0]' <<<"$checks")"
           if [ "$(jq -r '.[0] | [.[]] | all' <<<"$checks")" != "true" ]; then
             echo "::error::Облако настроено не полностью (false выше): tables_ok/sequences_ok — гранты service_role (миграция 011 и следующие), cron_secret_ok — миграция 011, project_url_ok — шаг «project_url в Vault», cron_job_ok — миграция 005"
             exit 1
@@ -329,4 +396,16 @@ jobs:
             echo "::error::Тик через pg_net ответил 200, но с ошибками (Edge Functions → cron-tick → Logs): $errors"
             exit 1
           fi
-          echo "3/3 pg_cron-обёртка → cron-tick → таблицы: 200, ошибок нет"
+          echo "3/4 pg_cron-обёртка → cron-tick → таблицы: 200, ошибок нет"
+
+          # 4) Сторож будильника (миграция 021): тик выше закончился отметкой mark_cron_tick — по ней
+          #    keepalive в poker-club-ops замечает, что будильник встал. Отметки нет — у service_role нет
+          #    права на mark_cron_tick или функции; тик при этом отвечает 200, ошибку видно только в логах.
+          heartbeat="$(run_sql "select coalesce((select last_ok_at > now() - interval '5 minutes'
+                                                 from public.cron_heartbeat where id = 1), false) as fresh")"
+          fresh="$(jq -r '.[0].fresh' <<<"$heartbeat")"
+          if [ "$fresh" != "true" ]; then
+            echo "::error::Тик прошёл, но отметки сторожа будильника нет (public.cron_heartbeat) — проверь миграцию 021 и логи cron-tick («отметка тика не записана»)"
+            exit 1
+          fi
+          echo "4/4 сторож будильника: отметка тика свежая"

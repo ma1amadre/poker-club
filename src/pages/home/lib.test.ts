@@ -11,9 +11,6 @@ import {
   pickUpcoming,
   type PlayerLike,
   playerName,
-  candidateHint,
-  predictionCandidates,
-  rsvpHint,
   seasonPosition,
   type SettleEveningLike,
   STALE_ANNOUNCE_MS,
@@ -120,7 +117,7 @@ const player = (id: string, name: string, extra: Partial<PlayerLike> = {}): Play
   ...extra,
 });
 
-describe('состав и кандидаты в прогноз', () => {
+describe('состав', () => {
   const players = [
     player('j', 'Женя'),
     player('s', 'Саша'),
@@ -147,41 +144,6 @@ describe('состав и кандидаты в прогноз', () => {
     expect(g.silent.map((p) => p.id)).toEqual(['k']);
   });
 
-  it('кандидаты: все активные; постоянные по ответу на анонс, за ними гости по имени', () => {
-    const list = predictionCandidates(players, rsvps);
-    expect(list.map((c) => c.player.id)).toEqual(['j', 's', 'd', 'k', 'm', 'g1', 'g2']);
-    expect(list.find((c) => c.player.id === 'k')?.rsvp).toBeNull();
-  });
-
-  it('гость в прогнозе без ответа на анонс; отключённый — нет', () => {
-    const list = predictionCandidates(players, []);
-    expect(list.map((c) => c.player.id)).toEqual(['d', 'j', 'k', 'm', 's', 'g1', 'g2']);
-    const off = predictionCandidates(
-      [...players, player('g3', 'Ушедший гость', { is_guest: true, is_active: false })],
-      [],
-    );
-    expect(off.map((c) => c.player.id)).not.toContain('g3');
-  });
-
-  it('подпись кандидата: гость — «гость», постоянный — ответ на анонс', () => {
-    const list = predictionCandidates(players, rsvps);
-    const hint = (id: string) => {
-      const c = list.find((x) => x.player.id === id);
-      return c ? candidateHint(c) : null;
-    };
-    expect(hint('g1')).toBe('гость');
-    expect(hint('g2')).toBe('гость');
-    expect(hint('j')).toBe('идёт');
-    expect(hint('k')).toBe('без ответа');
-  });
-
-  it('подпись к кандидату по ответу на анонс', () => {
-    expect(rsvpHint('yes')).toBe('идёт');
-    expect(rsvpHint('maybe')).toBe('под вопросом');
-    expect(rsvpHint('no')).toBe('не идёт');
-    expect(rsvpHint(null)).toBe('без ответа');
-  });
-
   it('оптимистичный ответ: моя строка заменяется и уходит в конец', () => {
     const rows: { player_id: string; status: RsvpStatus; updated_at: string }[] = [
       { player_id: 'j', status: 'yes', updated_at: '1' },
@@ -193,12 +155,6 @@ describe('состав и кандидаты в прогноз', () => {
       ['j', 'no'],
     ]);
     expect(rows).toHaveLength(2);
-  });
-
-  it('игрок из сохранённого прогноза остаётся в списке, даже отключённый', () => {
-    expect(predictionCandidates(players, rsvps).map((c) => c.player.id)).not.toContain('old');
-    const list = predictionCandidates(players, rsvps, ['old', null]);
-    expect(list.map((c) => c.player.id)).toContain('old');
   });
 });
 

@@ -13,5 +13,6 @@ export * from './achievements.ts';
 export * from './records.ts';
 export * from './feed.ts';
 export * from './recap.ts';
+export * from './clubNews.ts';
 export * from './progress.ts';
 export * from './voice.ts';

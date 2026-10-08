@@ -1,5 +1,6 @@
 // Шторка прогноза: «Кто выиграет» (3 очка) и «Кто вылетит первым» (2 очка). Кандидаты — все
 // активные игроки, гости после постоянных (predictionCandidates). Сохраняет set_prediction.
+// Открывается из блока прогноза (PredictionSection) на экране вечера и на главной.
 import { PREDICTION_POINTS } from '@domain/predictions.ts';
 import { useMemo, useState } from 'react';
 import {
@@ -11,7 +12,7 @@ import {
 } from '../../shared/api';
 import { capitalize, formatWeekdayDate } from '../../shared/lib';
 import { Button, PlayerPicker, Sheet, useToast } from '../../shared/ui';
-import { candidateHint, predictionCandidates } from './lib';
+import { candidateHint, ORACLE_NOTE, predictionCandidates } from './predictions';
 
 export interface PredictionSheetProps {
   evening: Evening;
@@ -70,7 +71,7 @@ export function PredictionSheet({
       onClose={onClose}
       dismissible={!save.isPending}
       title="Прогноз на вечер"
-      description={`${capitalize(formatWeekdayDate(evening.scheduled_at))}. Угаданный победитель — ${PREDICTION_POINTS.winner} очка, первый вылет — ${PREDICTION_POINTS.firstOut}. Менять можно до старта таймера.`}
+      description={`${capitalize(formatWeekdayDate(evening.scheduled_at))}. Угаданный победитель — ${PREDICTION_POINTS.winner} очка, первый вылет — ${PREDICTION_POINTS.firstOut}. Менять можно до старта таймера.`}
       actions={
         <>
           <Button
@@ -95,19 +96,20 @@ export function PredictionSheet({
         </>
       }
     >
+      <p className="m-small">{ORACLE_NOTE}</p>
       {pickerPlayers.length === 0 ? (
         <p className="m-small">Выбрать пока некого: в клубе нет активных игроков.</p>
       ) : (
         <>
           <PlayerPicker
-            label={`Кто выиграет · ${PREDICTION_POINTS.winner} очка`}
+            label={`Кто выиграет · ${PREDICTION_POINTS.winner} очка`}
             players={pickerPlayers}
             value={winner ? [winner] : []}
             onChange={(ids) => pickWinner(ids[0] ?? null)}
             hints={hints}
           />
           <PlayerPicker
-            label={`Кто вылетит первым · ${PREDICTION_POINTS.firstOut} очка`}
+            label={`Кто вылетит первым · ${PREDICTION_POINTS.firstOut} очка`}
             players={pickerPlayers}
             value={firstOut ? [firstOut] : []}
             onChange={(ids) => pickFirstOut(ids[0] ?? null)}

@@ -12,15 +12,21 @@
 //   уровня встаёт на место level_next в журнале, иначе — после событий; ребаи — сразу за ней;
 // - «Минута до повышения» — уровень по времени, таймер идёт, следующий уровень есть, остаток
 //   пересёк 60 с в этом шаге и не ушёл ниже 45 с (шаг не запоздал);
+// - окно ребаев (аудит 07.10.2026): «Последний уровень ребаев» — сразу за фразой уровня (или за
+//   «Поехали»), если начался уровень номер rebuyUntilLevel, в конце которого ребаи закроются (ребаи
+//   не на всю игру); «Пять минут до закрытия ребаев» — игровое время до закрытия (rebuyWindow, как
+//   «ещё N мин» на экранах) пересекло 5 минут в этом шаге при идущем таймере и не ушло ниже 4:45;
 // - отмена не объявляется: если из журнала пропало событие (void), изменения состояния в этом
 //   шаге молчат — кроме уровня, поднятого новым level_next;
 // - один раз на уровень: кадр помнит, что уже сказано (heard) — наибольший уровень, уровень с
-//   отзвучавшей минутой, закрытие ребаев. Табло узнаёт о паузе с задержкой опроса: replay успевает
+//   отзвучавшей минутой, предупреждение о пяти минутах, закрытие ребаев. Табло узнаёт о паузе с задержкой опроса: replay успевает
 //   перевести уровень через границу, а запоздавшая пауза откатывает его обратно — после
 //   «Продолжаем» граница пересекается снова, но второй раз не объявляется. Память сбрасывается к
 //   текущему состоянию только настоящим откатом: новый level_prev, timer_start или отмена (void).
 import type { EveningEvent, EveningState, TournamentFormat } from '@domain/types.ts';
 import type { Announcement } from '@domain/voice.ts';
+import { rebuyWindow } from '../evening/lib';
+import { lastRebuyLevelIndex, REBUYS_SOON_MS } from './boardView';
 
 /** Что уже сказано на этом табло (или было на нём при открытии) — чтобы не повторять. */
 export interface VoiceHeard {
@@ -28,6 +34,8 @@ export interface VoiceHeard {
   level: number;
   /** Уровень, о минуте до конца которого уже сказано; −1 — ни о каком. */
   minute: number;
+  /** «Пять минут до закрытия ребаев» уже сказано (или при открытии до закрытия было меньше). */
+  rebuysSoon: boolean;
   /** «Ребаи закрыты» уже сказано (или ребаи были закрыты при открытии). */
   rebuysClosed: boolean;
 }
@@ -50,19 +58,29 @@ const MINUTE_MS = 60_000;
 /** Предупреждение, пойманное позже 45 с до конца уровня, уже неправда — молчим. */
 const MINUTE_LATE_MS = 15_000;
 
+/** Игровое время до закрытия ребаев или null — ребаи закрыты, открыты всю игру, срок не посчитать. */
+function rebuysLeftMs(format: TournamentFormat, state: EveningState): number | null {
+  const win = rebuyWindow(format, state);
+  return win.kind === 'open' ? win.msLeft : null;
+}
+
 /** Память «как будто табло только что открыли»: всё, что уже на экране, — сказано. */
-function heardNow(state: EveningState): VoiceHeard {
+function heardNow(format: TournamentFormat, state: EveningState): VoiceHeard {
   const t = state.timer;
   const started = t.status !== 'not_started';
+  const rebuysLeft = rebuysLeftMs(format, state);
   return {
     level: t.levelIndex,
     minute:
       started && t.levelRemainingMs !== null && t.levelRemainingMs <= MINUTE_MS ? t.levelIndex : -1,
+    rebuysSoon:
+      started && (!state.rebuysOpen || (rebuysLeft !== null && rebuysLeft <= REBUYS_SOON_MS)),
     rebuysClosed: started && !state.rebuysOpen,
   };
 }
 
 export function voiceFrame(
+  format: TournamentFormat,
   events: readonly EveningEvent[],
   replayed: { state: EveningState; applied: readonly EveningEvent[] },
   nowMs: number,
@@ -72,7 +90,7 @@ export function voiceFrame(
     eventIds: new Set(events.filter((e) => !e.voided).map((e) => e.id)),
     applied: replayed.applied,
     state: replayed.state,
-    heard: heardNow(replayed.state),
+    heard: heardNow(format, replayed.state),
   };
 }
 
@@ -116,6 +134,7 @@ export function voiceStep(
   // Запоздавшая пауза откатывает replay без такого события — память остаётся.
   const reset = removed || added.some((e) => e.type === 'level_prev' || e.type === 'timer_start');
   const heard = prev.heard;
+  const lastRebuyLevel = lastRebuyLevelIndex(format);
 
   let levelSlot = -1;
   fresh.forEach((event, i) => {
@@ -123,6 +142,14 @@ export function voiceStep(
       case 'timer_start': {
         const first = format.levels[0];
         if (first) out.push({ kind: 'start', level: first });
+        // Ребаи только на первом уровне — об этом сразу за «Поехали».
+        if (
+          first &&
+          lastRebuyLevel === 0 &&
+          next.state.timer.levelIndex === 0 &&
+          next.state.rebuysOpen
+        )
+          out.push({ kind: 'rebuys_last_level' });
         return;
       }
       case 'timer_pause':
@@ -157,8 +184,11 @@ export function voiceStep(
   // Уровень, о котором уже сказано: откат replay из-за запоздавшей паузы его не «отменяет».
   const heardLevel = reset ? fromIndex : Math.max(fromIndex, heard.level);
   const derived: Announcement[] = [];
-  if (running && trusted && t1.levelIndex > heardLevel)
+  if (running && trusted && t1.levelIndex > heardLevel) {
     derived.push({ kind: 'level', level: next.state.currentLevel });
+    if (t1.levelIndex === lastRebuyLevel && next.state.rebuysOpen)
+      derived.push({ kind: 'rebuys_last_level' });
+  }
   const rebuysClosed =
     running &&
     trusted &&
@@ -189,7 +219,24 @@ export function voiceStep(
     left1 > MINUTE_MS - MINUTE_LATE_MS;
   if (minute) out.push({ kind: 'minute' });
 
-  const base = reset ? heardNow(next.state) : heard;
+  // Пять минут до закрытия ребаев: игровое время до закрытия пересекло порог в этом шаге (часы
+  // идут, ребаи открыты), шаг не запоздал. Один раз: откат запоздавшей паузы его не повторит.
+  const soonLeft0 = rebuysLeftMs(format, prev.state);
+  const soonLeft1 = rebuysLeftMs(format, next.state);
+  const soon =
+    !reset &&
+    !heard.rebuysSoon &&
+    running &&
+    t1.status === 'running' &&
+    t0.status !== 'not_started' &&
+    soonLeft0 !== null &&
+    soonLeft1 !== null &&
+    soonLeft0 > REBUYS_SOON_MS &&
+    soonLeft1 <= REBUYS_SOON_MS &&
+    soonLeft1 > REBUYS_SOON_MS - MINUTE_LATE_MS;
+  if (soon) out.push({ kind: 'rebuys_soon' });
+
+  const base = reset ? heardNow(format, next.state) : heard;
   return {
     say: out,
     frame: {
@@ -197,6 +244,7 @@ export function voiceStep(
       heard: {
         level: Math.max(base.level, t1.levelIndex),
         minute: minute ? t1.levelIndex : base.minute,
+        rebuysSoon: base.rebuysSoon || soon,
         rebuysClosed: base.rebuysClosed || rebuysClosed,
       },
     },

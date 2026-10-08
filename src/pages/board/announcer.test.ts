@@ -30,7 +30,7 @@ const FMT: TournamentFormat = {
 /** Кадр, как его строит табло: board_state отдаёт только неотменённые события. */
 function frameAt(j: Journal, format: TournamentFormat = FMT, nowMs = j.now()): VoiceFrame {
   const events = j.events.filter((e) => !e.voided);
-  return voiceFrame(events, replayLog(format, events, nowMs), nowMs);
+  return voiceFrame(format, events, replayLog(format, events, nowMs), nowMs);
 }
 
 const kinds = (list: Announcement[]) => list.map((a) => a.kind);
@@ -50,7 +50,7 @@ function simulate(
   const all = j.events.filter((e) => !e.voided);
   const frame = (t: number) => {
     const events = all.filter((e) => Date.parse(e.at) + lagMs <= t);
-    return voiceFrame(events, replayLog(format, events, t), t);
+    return voiceFrame(format, events, replayLog(format, events, t), t);
   };
   const out: Announcement[] = [];
   let prev = frame(fromMs);
@@ -145,7 +145,11 @@ describe('голос табло: что объявить', () => {
     j.wait(10 - 1 / 60); // 9:59
     const before = frameAt(j);
     const at = frameAt(j, FMT, j.now() + 1000); // 10:00
-    expect(detectAnnouncements(FMT, before, at)).toEqual([{ kind: 'level', level: FMT.levels[1] }]);
+    // 2-й уровень — последний с ребаями (rebuyUntilLevel: 2): об этом сразу за фразой уровня.
+    expect(detectAnnouncements(FMT, before, at)).toEqual([
+      { kind: 'level', level: FMT.levels[1] },
+      { kind: 'rebuys_last_level' },
+    ]);
     const after = frameAt(j, FMT, j.now() + 2000);
     expect(detectAnnouncements(FMT, at, after)).toEqual([]);
   });
@@ -158,7 +162,7 @@ describe('голос табло: что объявить', () => {
       j.next();
       j.pause();
     });
-    expect(kinds(out)).toEqual(['level', 'pause']);
+    expect(kinds(out)).toEqual(['level', 'rebuys_last_level', 'pause']);
     expect(out[0]).toEqual({ kind: 'level', level: FMT.levels[1] });
   });
 
@@ -236,6 +240,7 @@ describe('голос табло: что объявить', () => {
         'resume',
         'minute',
         'level',
+        'rebuys_last_level',
       ]);
     });
 
@@ -344,6 +349,7 @@ describe('голос табло: что объявить', () => {
         'start',
         'minute',
         'level',
+        'rebuys_last_level',
         'pause',
         'resume',
       ]);
@@ -361,6 +367,7 @@ describe('голос табло: что объявить', () => {
         'pause',
         'resume',
         'level',
+        'rebuys_last_level',
       ]);
     });
 
@@ -390,6 +397,7 @@ describe('голос табло: что объявить', () => {
         'pause',
         'resume',
         'level',
+        'rebuys_last_level',
       ]);
     });
   });
@@ -400,11 +408,14 @@ describe('голос табло: что объявить', () => {
       j.start();
       const say = stepper(j);
       j.wait(1);
-      expect(kinds(say(() => j.next()))).toEqual(['level']);
+      expect(kinds(say(() => j.next()))).toEqual(['level', 'rebuys_last_level']);
       j.wait(1);
       expect(say(() => j.prev())).toEqual([]);
       j.wait(1);
-      expect(say(() => j.next())).toEqual([{ kind: 'level', level: FMT.levels[1] }]);
+      expect(say(() => j.next())).toEqual([
+        { kind: 'level', level: FMT.levels[1] },
+        { kind: 'rebuys_last_level' },
+      ]);
     });
 
     it('отмена level_next, затем новый level_next; ребаи — тоже', () => {
@@ -434,7 +445,125 @@ describe('голос табло: что объявить', () => {
         said.push(...r.say);
         prev = r.frame;
       }
-      expect(kinds(said)).toEqual(['level']);
+      expect(kinds(said)).toEqual(['level', 'rebuys_last_level']);
+    });
+  });
+
+  describe('окно ребаев: последний уровень и пять минут до закрытия', () => {
+    it('ребаи только на 1-м уровне — сразу за «Поехали»', () => {
+      const one: TournamentFormat = { ...FMT, rebuyUntilLevel: 1 };
+      const j = seated();
+      expect(kinds(step(j, () => j.start(), one))).toEqual(['start', 'rebuys_last_level']);
+    });
+
+    it('ребаи на всю игру — ни последнего уровня, ни пяти минут', () => {
+      const whole: TournamentFormat = { ...FMT, rebuyUntilLevel: FMT.levels.length };
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      const out = kinds(simulate(j, t0 - 1000, t0 + 45 * MIN, whole));
+      expect(out).not.toContain('rebuys_last_level');
+      expect(out).not.toContain('rebuys_soon');
+      expect(out).not.toContain('rebuys_closed');
+    });
+
+    it('ребаи закрыты со старта — ни последнего уровня, ни пяти минут', () => {
+      const none: TournamentFormat = { ...FMT, rebuyUntilLevel: 0 };
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      expect(kinds(simulate(j, t0 - 1000, t0 + 25 * MIN, none))).toEqual([
+        'start',
+        'rebuys_closed',
+        'minute',
+        'level',
+        'minute',
+        'level',
+      ]);
+    });
+
+    it('пять минут: порог пересечён на последнем уровне ребаев — один раз', () => {
+      const j = seated();
+      j.start();
+      j.wait(15 - 1 / 60); // 14:59 — до закрытия ребаев (20:00) 5:01
+      const base = j.now();
+      const at = (ms: number) => frameAt(j, FMT, base + ms);
+      expect(detectAnnouncements(FMT, at(0), at(1000))).toEqual([{ kind: 'rebuys_soon' }]);
+      expect(detectAnnouncements(FMT, at(1000), at(2000))).toEqual([]);
+      // Запоздалый шаг: до закрытия уже меньше 4:45 — молчим.
+      expect(detectAnnouncements(FMT, at(0), at(20_000))).toEqual([]);
+    });
+
+    it('последний уровень ребаев короче пяти минут — предупреждение ещё на предыдущем', () => {
+      const short: TournamentFormat = {
+        ...FMT,
+        levels: [L(5, 10, ten), L(10, 20, { type: 'time', minutes: 3 }), L(20, 40, ten)],
+      };
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      // Ребаи закрываются в 13:00 — пять минут до этого на 1-м уровне, в 8:00.
+      expect(kinds(simulate(j, t0 - 1000, t0 + 14 * MIN, short))).toEqual([
+        'start',
+        'rebuys_soon', // 8:00
+        'minute', // 9:00
+        'level', // 10:00
+        'rebuys_last_level',
+        'minute', // 12:00
+        'level', // 13:00
+        'rebuys_closed',
+      ]);
+    });
+
+    it('на паузе молчим; запоздавшая пауза у порога не повторяет предупреждения', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(15 - 1 / 60).pause(); // 14:59 — до закрытия 5:01
+      j.wait(1).resume();
+      const out = kinds(simulate(j, t0 - 1000, j.now() + 30_000, FMT, POLL_LAG_MS));
+      expect(out.filter((k) => k === 'rebuys_soon')).toHaveLength(1);
+      expect(out.slice(-3)).toEqual(['rebuys_soon', 'pause', 'resume']);
+    });
+
+    it('уровни не по времени — срок не посчитать, пяти минут нет', () => {
+      const hands: TournamentFormat = {
+        ...FMT,
+        levels: [
+          L(5, 10, { type: 'hands', count: 3 }),
+          L(10, 20, { type: 'hands', count: 3 }),
+          L(20, 40, ten),
+        ],
+      };
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      j.wait(1).hand();
+      j.hand();
+      j.hand(); // 2-й уровень — последний с ребаями
+      const out = kinds(simulate(j, t0 - 1000, j.now() + 30 * MIN, hands));
+      expect(out).toEqual(['start', 'level', 'rebuys_last_level']);
+    });
+
+    it('табло открыли, когда до закрытия меньше пяти минут, — не догоняем', () => {
+      const j = seated();
+      const t0 = j.now();
+      j.start();
+      const out = kinds(simulate(j, t0 + 16 * MIN, t0 + 21 * MIN));
+      expect(out).toEqual(['minute', 'level', 'rebuys_closed']);
+    });
+
+    it('отмена level_next и новый подъём — последний уровень ребаев снова', () => {
+      const j = seated();
+      j.start();
+      const say = stepper(j);
+      j.wait(1);
+      let second = 0;
+      expect(kinds(say(() => void (second = j.next())))).toEqual(['level', 'rebuys_last_level']);
+      j.wait(1);
+      expect(say(() => j.voidEvent(second))).toEqual([]);
+      j.wait(1);
+      expect(kinds(say(() => j.next()))).toEqual(['level', 'rebuys_last_level']);
     });
   });
 
@@ -457,6 +586,8 @@ describe('голос табло: что объявить', () => {
       'knockout',
       'minute', // 9:00
       'level', // 10:00
+      'rebuys_last_level', // 2-й уровень — последний с ребаями
+      'rebuys_soon', // 15:00 — до закрытия ребаев (20:00) пять минут
       'knockout',
       'minute', // 19:00
       'level', // 20:00

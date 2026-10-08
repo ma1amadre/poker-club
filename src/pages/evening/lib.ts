@@ -1,12 +1,20 @@
 // Чистые помощники экрана вечера, расчёта и табло: подписи событий, порядок игроков, оценки
 // времени. Деньги, места и очки здесь НЕ считаются — только раскладка того, что посчитал домен.
-import { entryAmounts, type SettlementRow } from '@domain/money.ts';
-import { readStacks, replayLog } from '@domain/replay.ts';
+import {
+  computeMoney,
+  entryAmounts,
+  prepaidPayment,
+  settlement,
+  type Payment,
+  type SettlementRow,
+} from '@domain/money.ts';
+import { readStacks, replayLog, type EventDraft } from '@domain/replay.ts';
 import { readShowdown, streetOf } from '@domain/showdown.ts';
 import type {
   BlindLevel,
   EveningEvent,
   EveningState,
+  EventType,
   PlayerId,
   PlayerState,
   TournamentFormat,
@@ -138,7 +146,7 @@ export function describeEvent(
 // --- Что изменит отмена записи и переход уровня -----------------------------------------------
 
 export interface VoidImpact<T extends EveningEvent> {
-  /** Отменяемая запись (null — такой в журнале нет). */
+  /** Отменяемая запись — первая из списка (null — такой в журнале нет). */
   voided: T | null;
   /** Записи, которые журнал сейчас не принимает, а после отмены примет. */
   revived: T[];
@@ -152,26 +160,29 @@ export interface VoidImpact<T extends EveningEvent> {
 /**
  * Что сделает отмена записи: replay «до» и «после». Отмена старого вылета, например, оживляет
  * игрока — и ребай после этого вылета журнал перестаёт принимать (ребай живому не положен), а
- * отмена вылета финалиста в завершённом вечере снимает «Игра окончена».
+ * отмена вылета финалиста в завершённом вечере снимает «Игра окончена». Несколько id — отмена
+ * действия целиком (вылет и ребай, вход с оплатой): последствия считаются для всех вместе.
  */
 export function voidImpact<T extends EveningEvent>(
   format: TournamentFormat,
   events: readonly T[],
-  eventId: number,
+  eventIds: number | readonly number[],
   nowMs: number,
 ): VoidImpact<T> {
+  const list = typeof eventIds === 'number' ? [eventIds] : eventIds;
+  const ids = new Set(list);
   const before = replayLog(format, events, nowMs);
   const after = replayLog(
     format,
-    events.map((e) => (e.id === eventId ? { ...e, voided: true } : e)),
+    events.map((e) => (ids.has(e.id) ? { ...e, voided: true } : e)),
     nowMs,
   );
   const errorsBefore = new Map(before.state.errors.map((e) => [e.eventId, e.message]));
   const errorsAfter = new Map(after.state.errors.map((e) => [e.eventId, e.message]));
   const appliedAfter = new Set(after.applied.map((e) => e.id));
-  const others = events.filter((e) => !e.voided && e.id !== eventId).sort((a, b) => a.id - b.id);
+  const others = events.filter((e) => !e.voided && !ids.has(e.id)).sort((a, b) => a.id - b.id);
   return {
-    voided: events.find((e) => e.id === eventId) ?? null,
+    voided: events.find((e) => e.id === list[0]) ?? null,
     revived: others.filter((e) => errorsBefore.has(e.id) && appliedAfter.has(e.id)),
     rejected: others.flatMap((event) => {
       const message = errorsAfter.get(event.id);
@@ -655,6 +666,302 @@ export function entryPayload(
   k: number,
 ): { playerId: PlayerId; stacks?: number } {
   return k > 1 ? { playerId, stacks: k } : { playerId };
+}
+
+// --- Одно действие — несколько записей: вылет и ребай, вход с оплатой -------------------------
+
+/** Платёж как черновик записи журнала. */
+function paymentDraft(payment: Payment): EventDraft {
+  return { type: 'payment', payload: { playerId: payment.playerId, amountRub: payment.amountRub } };
+}
+
+/**
+ * Записи посадки одним нажатием: вход каждого (кратность одна на всех) и, если «Оплачено сразу»,
+ * следом его платёж на сумму взноса (сумма — доменная prepaidPayment).
+ */
+export function seatDrafts(
+  format: TournamentFormat,
+  playerIds: readonly PlayerId[],
+  k: number,
+  paid: boolean,
+): EventDraft[] {
+  return playerIds.flatMap((id) => [
+    { type: 'join' as const, payload: entryPayload(id, k) },
+    ...(paid ? [paymentDraft(prepaidPayment(format, id, k))] : []),
+  ]);
+}
+
+/** Ребай и, если «Оплачено сразу», платёж на его сумму. */
+export function rebuyDrafts(
+  format: TournamentFormat,
+  playerId: PlayerId,
+  k: number,
+  paid: boolean,
+): EventDraft[] {
+  return [
+    { type: 'rebuy', payload: entryPayload(playerId, k) },
+    ...(paid ? [paymentDraft(prepaidPayment(format, playerId, k))] : []),
+  ];
+}
+
+/** «Вылет и ребай ×k»: вылет, сразу ребай того же игрока и, если «Оплачено сразу», платёж. */
+export function bustRebuyDrafts(
+  format: TournamentFormat,
+  bust: { playerId: PlayerId; by: PlayerId[] },
+  k: number,
+  paid: boolean,
+): EventDraft[] {
+  return [
+    { type: 'bust', payload: { playerId: bust.playerId, by: bust.by } },
+    ...rebuyDrafts(format, bust.playerId, k, paid),
+  ];
+}
+
+/** Вторая кнопка шторки вылета: кратность — на кнопке, если ребай крупнее стандартного. */
+export function bustRebuyLabel(k: number): string {
+  return k > 1 ? `Вылет и ребай ×${k}` : 'Вылет и ребай';
+}
+
+/**
+ * Подсказка под «Оплачено сразу»: что запишется вместе с входом или ребаем. many — посадка
+ * нескольких: сумма у каждого своя запись.
+ */
+export function prepaidHint(
+  format: TournamentFormat,
+  kind: 'entry' | 'rebuy',
+  k: number,
+  many = false,
+): string {
+  const sum = rubText(entryAmounts(format, k).rub);
+  const what = kind === 'entry' ? 'со входом' : 'с ребаем';
+  return many
+    ? `Вместе ${what} каждого запишется его платёж банкиру — по${NBSP}${sum}. В расчёте это обычный платёж.`
+    : `Вместе ${what} запишется платёж банкиру — ${sum}. В расчёте это обычный платёж.`;
+}
+
+/**
+ * Платёж, записанный тем же действием, что вход или ребай («Оплачено сразу»): платёж того же
+ * игрока на сумму этого взноса, с тем же временем (одна транзакция add_events или add_guest —
+ * одно серверное время) и тем же автором, позже по журналу. null — оплаты при входе не было.
+ * Отмена входа отменяет и её: деньги за вход, которого нет, банкир возвращает.
+ */
+export function linkedPayment<T extends EveningEvent & { createdBy?: string | null }>(
+  events: readonly T[],
+  entry: T,
+  format: TournamentFormat,
+): T | null {
+  if (entry.type !== 'join' && entry.type !== 'rebuy') return null;
+  const id = playerOf(entry);
+  const k = readStacks(entry.payload);
+  if (!id || k === null) return null;
+  const amount = entryAmounts(format, k).rub;
+  return (
+    events.find(
+      (e) =>
+        e.type === 'payment' &&
+        !e.voided &&
+        e.id > entry.id &&
+        e.at === entry.at &&
+        playerOf(e) === id &&
+        amountOf(e) === amount &&
+        (e.createdBy ?? null) === (entry.createdBy ?? null),
+    ) ?? null
+  );
+}
+
+// --- Записано, но не принято журналом ------------------------------------------------------
+
+const REJECTED_TITLE: Partial<Record<EventType, string>> = {
+  join: 'Вход не принят',
+  rebuy: 'Ребай не принят',
+  bust: 'Вылет не принят',
+  payment: 'Платёж не принят',
+  level_next: 'Переход уровня не принят',
+  level_prev: 'Переход уровня не принят',
+  hand: 'Раздача не принята',
+  finish: 'Завершение не принято',
+  showdown: 'Олл-ин не принят',
+  showdown_close: 'Закрытие олл-ина не принято',
+};
+
+/** Заголовок тоста о непринятой записи: «Ребай не принят: Ребаи закрыты». */
+export function rejectedTitle(type: EventType, message: string): string {
+  return `${REJECTED_TITLE[type] ?? 'Запись не принята'}: ${message}`;
+}
+
+/** Записи действия в тосте. Все — мужского рода: на этом держатся «записан», «пришёл», «его». */
+const RECORD_NOUN: Partial<Record<EventType, string>> = {
+  bust: 'вылет',
+  rebuy: 'ребай',
+  join: 'вход',
+  payment: 'платёж',
+};
+
+const capitalize = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
+export interface RejectedPart<T> {
+  /** Непринятые записи действия с причиной (state.errors replay), по порядку журнала. */
+  rejected: { event: T; message: string }[];
+  /** Что отменяет кнопка тоста: непринятые записи и оплата, записанная вместе с непринятым взносом. */
+  toVoid: T[];
+  /** Принятые записи, которые кнопка не трогает (вылет перед непринятым ребаем). */
+  kept: T[];
+}
+
+/**
+ * Действие дошло до сервера, но журнал принял не всё: replay судит по серверному `at`, и «Вылет и
+ * ребай», отправленный за полсекунды до закрытия ребаев, приходит уже после — вылет принят, ребай
+ * нет. Отменять из тоста можно только непринятое и оплату, записанную вместе с непринятым входом
+ * или ребаем (за взнос, которого нет, деньги возвращают), — принятый вылет остаётся. null — принято
+ * всё. records — записи одного действия (одна транзакция add_events или одна запись add_event).
+ */
+export function rejectedPart<T extends EveningEvent & { createdBy?: string | null }>(
+  format: TournamentFormat,
+  records: readonly T[],
+  errors: readonly { eventId: number; message: string }[],
+): RejectedPart<T> | null {
+  const rejected = records.flatMap((event) => {
+    const error = errors.find((e) => e.eventId === event.id);
+    return error ? [{ event, message: error.message }] : [];
+  });
+  if (rejected.length === 0) return null;
+  const ids = new Set(rejected.map((r) => r.event.id));
+  for (const r of rejected) {
+    const paid = linkedPayment(records, r.event, format);
+    if (paid) ids.add(paid.id);
+  }
+  return {
+    rejected,
+    toVoid: records.filter((e) => ids.has(e.id)),
+    kept: records.filter((e) => !ids.has(e.id)),
+  };
+}
+
+/**
+ * Тост о непринятом: заголовок с причиной, что осталось в силе, где искать непринятое и что
+ * сделает кнопка. time — серверное время записи («21:20»). Кнопка называет, что отменяет:
+ * «Отменить ребай» после «Вылет и ребай» не тронет принятый вылет.
+ */
+export function rejectedToast<T extends EveningEvent>(
+  part: RejectedPart<T>,
+  time: string,
+): { title: string; detail: string; actionLabel: string } {
+  const [first, ...more] = part.rejected;
+  if (!first) throw new Error('rejectedToast: принято всё');
+  const noun = more.length === 0 ? (RECORD_NOUN[first.event.type] ?? null) : null;
+  const rejectedIds = new Set(part.rejected.map((r) => r.event.id));
+  const paid = part.toVoid.filter((e) => !rejectedIds.has(e.id));
+  const many = more.length > 0;
+
+  const [onlyKept, ...moreKept] = part.kept;
+  const keptOne = onlyKept && moreKept.length === 0 ? RECORD_NOUN[onlyKept.type] : undefined;
+  const keptText =
+    part.kept.length === 0
+      ? null
+      : keptOne
+        ? `${capitalize(keptOne)} записан.`
+        : 'Остальное записано.';
+  const where = `на сервер в ${time} и ${many ? 'помечены' : noun ? 'помечен' : 'помечена'} в ленте «Не принято».`;
+  const rejectedText = many
+    ? `Непринятые записи пришли ${where}`
+    : noun
+      ? `${capitalize(noun)} пришёл ${where}`
+      : `Запись пришла ${where}`;
+  const them = many ? 'их' : noun ? 'его' : 'её';
+  const actionLabel = noun
+    ? `Отменить ${noun}`
+    : many
+      ? part.kept.length === 0
+        ? 'Отменить записи'
+        : 'Отменить непринятое'
+      : 'Отменить запись';
+  const payers = new Set(paid.map(playerOf));
+  const actionText =
+    paid.length > 0
+      ? `«${actionLabel}» снимет и оплату — деньги верни ${payers.size > 1 ? 'игрокам' : 'игроку'}.`
+      : many
+        ? 'Если они лишние — отмени их.'
+        : `Если ${noun ? 'он лишний' : 'она лишняя'} — отмени ${them}.`;
+
+  return {
+    title: rejectedTitle(first.event.type, first.message),
+    detail: [keptText, rejectedText, actionText].filter(Boolean).join(' '),
+    actionLabel,
+  };
+}
+
+// --- «Ты за столом» --------------------------------------------------------------------------
+
+export interface MySeat {
+  alive: boolean;
+  /** Место вылетевшего, когда оно уже известно (ребаи закрыты): «5-е место»; иначе null. */
+  place: string | null;
+  /** Вылетевшему, пока можно докупиться: «Можно докупиться — ещё 25 мин»; иначе null. */
+  rebuyNote: string | null;
+  /** «2 входа: ×2, ×1 · взнос 1 500 ₽». */
+  entries: string;
+  /** «2 нокаута» / «Нокаутов пока нет». */
+  kos: string;
+  /** Баланс с банкиром сейчас (settlement домена): «Твой долг банкиру — 1 000 ₽». */
+  balance: string;
+  /** Сколько уже отдано банкиру: «оплачено 500 ₽»; null — платежей нет. */
+  paid: string | null;
+  balanceTone: 'owe' | 'await' | 'none';
+}
+
+/**
+ * Блок «Ты за столом» на экране идущего вечера у игрока: статус, входы и взнос, нокауты, баланс с
+ * банкиром прямо сейчас. Деньги — доменные computeMoney и settlement (до финала призовых нет, баланс
+ * — взносы минус платежи). null — игрок не за столом. Без прошедшего времени: у него есть род.
+ */
+export function mySeat(
+  format: TournamentFormat,
+  state: EveningState,
+  applied: readonly EveningEvent[],
+  payments: readonly Payment[],
+  playerId: PlayerId,
+): MySeat | null {
+  const p = state.players[playerId];
+  if (!p) return null;
+
+  let rebuyNote: string | null = null;
+  const limitLeft = format.rebuyLimit === null || p.rebuys < format.rebuyLimit;
+  if (!p.alive && limitLeft) {
+    const win = rebuyWindow(format, state);
+    if (win.kind === 'open' && win.msLeft !== null)
+      rebuyNote = `Можно докупиться — ещё ${formatDuration(win.msLeft)}`;
+    else if (win.kind === 'open' || win.kind === 'not_started')
+      rebuyNote = `Можно докупиться до конца ${win.untilLevel}-го уровня`;
+    else if (win.kind === 'whole_game') rebuyNote = 'Можно докупиться до конца игры';
+  }
+
+  const ks = applied
+    .filter((e) => (e.type === 'join' || e.type === 'rebuy') && playerOf(e) === playerId)
+    .map((e) => readStacks(e.payload) ?? 1);
+  const count = pluralWithNumber(ks.length, ['вход', 'входа', 'входов']);
+  const multiples = ks.some((k) => k > 1) ? `: ${ks.map((k) => `×${k}`).join(', ')}` : '';
+  const money = computeMoney(format, state);
+  const owes = money[playerId]?.owesRub ?? 0;
+  const row = settlement(money, payments)[playerId];
+  const remaining = row?.remainingRub ?? 0;
+  const balance =
+    remaining > 0
+      ? `Твой долг банкиру — ${rubText(remaining)}`
+      : remaining < 0
+        ? `Банкир должен тебе ${rubText(-remaining)}`
+        : 'С банкиром в расчёте';
+
+  return {
+    alive: p.alive,
+    place: !p.alive && p.place !== null ? `${ordinalPlace(p.place)} место` : null,
+    rebuyNote,
+    entries: `${count}${multiples} · взнос ${rubText(owes)}`,
+    kos:
+      p.kos > 0 ? pluralWithNumber(p.kos, ['нокаут', 'нокаута', 'нокаутов']) : 'Нокаутов пока нет',
+    balance,
+    paid: row && row.paidRub !== 0 ? `оплачено ${rubText(row.paidRub)}` : null,
+    balanceTone: remaining > 0 ? 'owe' : remaining < 0 ? 'await' : 'none',
+  };
 }
 
 // --- Кого посадить за стол -------------------------------------------------------------------

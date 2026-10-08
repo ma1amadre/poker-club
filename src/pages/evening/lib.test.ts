@@ -1,6 +1,6 @@
 import { DEFAULT_FORMAT } from '@domain/format.ts';
 import { computeMoney, paymentsFromEvents, settlement } from '@domain/money.ts';
-import { replay, replayLog } from '@domain/replay.ts';
+import { canApplySequence, replay, replayLog, type EventDraft } from '@domain/replay.ts';
 import { journal, MIN } from '@domain/test-utils.ts';
 import type { EveningEvent, TournamentFormat } from '@domain/types.ts';
 import { describe, expect, it } from 'vitest';
@@ -8,6 +8,8 @@ import {
   averageStackBb,
   bestHunters,
   bustButtonLabel,
+  bustRebuyDrafts,
+  bustRebuyLabel,
   clockView,
   describeEvent,
   describeTrigger,
@@ -22,6 +24,8 @@ import {
   lastUndoable,
   levelLabel,
   levelNextClosesRebuys,
+  linkedPayment,
+  mySeat,
   nameMatches,
   nameMatchKey,
   nameMatchNotice,
@@ -34,8 +38,12 @@ import {
   paymentEvents,
   playerLine,
   possibleKillers,
+  prepaidHint,
+  rebuyDrafts,
   rebuysClosingText,
   rebuyText,
+  rejectedPart,
+  rejectedToast,
   journalVersion,
   landedQuestion,
   levelEdgeLeftMs,
@@ -45,6 +53,7 @@ import {
   rebuyWindow,
   seatButtonLabel,
   seatCandidates,
+  seatDrafts,
   settleDirection,
   settleLabel,
   settleOrder,
@@ -878,5 +887,326 @@ describe('nameMatches / nameMatchNotice — подсказка под полем
     expect(nameMatchNotice(nameMatches(players, s, 'Костя'))).toBe(null);
     expect(nameMatchNotice(nameMatches(players, s, 'Новенький'))).toBe(null);
     expect(nameMatchNotice(nameMatches(players, s, ''))).toBe(null);
+  });
+});
+
+describe('одно действие — несколько записей: черновики пульта', () => {
+  const F = DEFAULT_FORMAT;
+
+  it('посадка: вход каждого, с «Оплачено сразу» — его платёж следом на сумму взноса', () => {
+    expect(seatDrafts(F, ['a', 'b'], 1, false)).toEqual([
+      { type: 'join', payload: { playerId: 'a' } },
+      { type: 'join', payload: { playerId: 'b' } },
+    ]);
+    expect(seatDrafts(F, ['a', 'b'], 2, true)).toEqual([
+      { type: 'join', payload: { playerId: 'a', stacks: 2 } },
+      { type: 'payment', payload: { playerId: 'a', amountRub: 1000 } },
+      { type: 'join', payload: { playerId: 'b', stacks: 2 } },
+      { type: 'payment', payload: { playerId: 'b', amountRub: 1000 } },
+    ]);
+  });
+
+  it('ребай и «вылет и ребай»: оплата — на сумму ребая, не входа', () => {
+    expect(rebuyDrafts(F, 'c', 1, false)).toEqual([{ type: 'rebuy', payload: { playerId: 'c' } }]);
+    expect(rebuyDrafts(F, 'c', 3, true)).toEqual([
+      { type: 'rebuy', payload: { playerId: 'c', stacks: 3 } },
+      { type: 'payment', payload: { playerId: 'c', amountRub: 1500 } },
+    ]);
+    expect(bustRebuyDrafts(F, { playerId: 'c', by: ['a', 'b'] }, 2, true)).toEqual([
+      { type: 'bust', payload: { playerId: 'c', by: ['a', 'b'] } },
+      { type: 'rebuy', payload: { playerId: 'c', stacks: 2 } },
+      { type: 'payment', payload: { playerId: 'c', amountRub: 1000 } },
+    ]);
+  });
+
+  it('черновики проходят доменную проверку цепочкой и дают ожидаемый расчёт', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    j.wait(5);
+    const drafts = bustRebuyDrafts(F, { playerId: 'c', by: ['a'] }, 2, true);
+    expect(canApplySequence(F, j.events, drafts, j.now())).toBeNull();
+    for (const d of drafts) j.add(d.type, d.payload);
+    const s = replay(F, j.events, j.now());
+    const t = settlement(computeMoney(F, s), paymentsFromEvents(j.events));
+    expect(s.players.c).toMatchObject({ alive: true, stacks: 3 });
+    // Ребай ×2 оплачен сразу: остаётся только первый вход.
+    expect(t.c).toMatchObject({ dueRub: 1500, paidRub: 1000, remainingRub: 500 });
+  });
+
+  it('подписи: кратность на кнопке — только у крупного ребая; подсказка оплаты', () => {
+    expect(bustRebuyLabel(1)).toBe('Вылет и ребай');
+    expect(bustRebuyLabel(3)).toBe('Вылет и ребай ×3');
+    expect(prepaidHint(F, 'rebuy', 2)).toBe(
+      'Вместе с ребаем запишется платёж банкиру — 1\u00a0000\u00a0₽. В расчёте это обычный платёж.',
+    );
+    expect(prepaidHint(F, 'entry', 1, true)).toBe(
+      'Вместе со входом каждого запишется его платёж банкиру — по\u00a0500\u00a0₽. В расчёте это обычный платёж.',
+    );
+  });
+});
+
+describe('linkedPayment: оплата, записанная вместе со входом', () => {
+  const F = DEFAULT_FORMAT;
+  type Rec = EveningEvent & { createdBy: string | null };
+  const rec = (
+    id: number,
+    type: EveningEvent['type'],
+    payload: object,
+    at = '2026-10-08T16:00:00.000Z',
+    createdBy: string | null = 'bank',
+  ): Rec => ({ id, type, payload: payload as never, at, voided: false, createdBy });
+
+  it('тот же игрок, та же сумма, то же время и автор — это оплата входа', () => {
+    const join = rec(1, 'join', { playerId: 'a', stacks: 2 });
+    const pay = rec(2, 'payment', { playerId: 'a', amountRub: 1000 });
+    expect(linkedPayment([join, pay], join, F)?.id).toBe(2);
+    const rebuy = rec(3, 'rebuy', { playerId: 'b' }, '2026-10-08T17:00:00.000Z');
+    const payB = rec(4, 'payment', { playerId: 'b', amountRub: 500 }, '2026-10-08T17:00:00.000Z');
+    expect(linkedPayment([join, pay, rebuy, payB], rebuy, F)?.id).toBe(4);
+  });
+
+  it('другое время, сумма, игрок, автор или отменённый платёж — не оплата входа', () => {
+    const join = rec(1, 'join', { playerId: 'a' });
+    const cases: Rec[] = [
+      rec(2, 'payment', { playerId: 'a', amountRub: 500 }, '2026-10-08T16:00:01.000Z'),
+      rec(2, 'payment', { playerId: 'a', amountRub: 1000 }),
+      rec(2, 'payment', { playerId: 'b', amountRub: 500 }),
+      rec(2, 'payment', { playerId: 'a', amountRub: 500 }, undefined, 'admin'),
+      { ...rec(2, 'payment', { playerId: 'a', amountRub: 500 }), voided: true },
+    ];
+    for (const pay of cases) expect(linkedPayment([join, pay], join, F)).toBeNull();
+    const bust = rec(3, 'bust', { playerId: 'a', by: [] });
+    expect(
+      linkedPayment([bust, rec(4, 'payment', { playerId: 'a', amountRub: 500 })], bust, F),
+    ).toBeNull();
+  });
+
+  it('посадка нескольких: у каждого входа — свой платёж', () => {
+    const drafts = seatDrafts(F, ['a', 'b'], 1, true);
+    const recs = drafts.map((d, i) => rec(i + 1, d.type, d.payload));
+    expect(linkedPayment(recs, recs[0] as Rec, F)?.id).toBe(2);
+    expect(linkedPayment(recs, recs[2] as Rec, F)?.id).toBe(4);
+  });
+});
+
+describe('voidImpact: отмена действия целиком', () => {
+  it('вылет и ребай одной отменой — ни оживших, ни «не принято»; по отдельности вылет задел бы ребай', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    const bust = j.bust('c', ['a']);
+    const rebuy = j.rebuy('c');
+    const pay = j.payment('c', 500);
+    const alone = voidImpact(DEFAULT_FORMAT, j.events, bust, j.now());
+    expect(alone.rejected.map((r) => r.event.id)).toEqual([rebuy]);
+    const all = voidImpact(DEFAULT_FORMAT, j.events, [rebuy, pay, bust], j.now());
+    expect(all.voided?.id).toBe(rebuy);
+    expect(all).toMatchObject({
+      revived: [],
+      rejected: [],
+      finishedBefore: false,
+      finishedAfter: false,
+    });
+  });
+});
+
+describe('rejectedPart / rejectedToast: записано, но журнал принял не всё', () => {
+  const F = DEFAULT_FORMAT;
+  /** Ребаи клубного формата закрываются с концом 5-го уровня: 5 × 40 мин от старта часов. */
+  const CLOSE_MIN = 5 * 40;
+  /** Записи одного действия — одна транзакция, одно серверное время. */
+  const addAll = (j: ReturnType<typeof journal>, drafts: readonly EventDraft[]) =>
+    drafts.map((d) => j.events[j.add(d.type, d.payload) - 1] as EveningEvent);
+  const errorsOf = (j: ReturnType<typeof journal>) => replay(F, j.events, j.now()).errors;
+  const plain = (text: string) => text.replace(/ /g, ' ');
+
+  it('«Вылет и ребай» на полсекунды позже закрытия: отменяется ребай с оплатой, вылет остаётся', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    // Клиент проверил цепочку за полсекунды до закрытия — она проходила.
+    j.wait(CLOSE_MIN - 0.5 / 60);
+    const drafts = bustRebuyDrafts(F, { playerId: 'a', by: ['b'] }, 1, true);
+    expect(canApplySequence(F, j.events, drafts, j.now())).toBeNull();
+    // А на сервер записи пришли через 0,3 с после закрытия.
+    j.wait(0.8 / 60);
+    const recs = addAll(j, drafts);
+    const [bust, rebuy, pay] = recs;
+
+    const part = rejectedPart(F, recs, errorsOf(j));
+    expect(part?.rejected.map((r) => [r.event.id, r.message])).toEqual([
+      [rebuy?.id, 'Ребаи закрыты'],
+    ]);
+    expect(part?.toVoid.map((e) => e.id)).toEqual([rebuy?.id, pay?.id]);
+    expect(part?.kept.map((e) => e.id)).toEqual([bust?.id]);
+
+    // Кнопка тоста отменяет только toVoid: без вопросов (никого не задевает), вылет и нокаут целы,
+    // платёж за непринятый ребай снят.
+    const ids = part?.toVoid.map((e) => e.id) ?? [];
+    expect(voidImpact(F, j.events, ids, j.now())).toMatchObject({ revived: [], rejected: [] });
+    for (const id of ids) j.voidEvent(id);
+    const s = replay(F, j.events, j.now());
+    expect(s.players.a).toMatchObject({ alive: false, rebuys: 0 });
+    expect(s.players.b?.kos).toBe(1);
+    expect(paymentsFromEvents(j.events)).toEqual([]);
+
+    const toast = rejectedToast(part as NonNullable<typeof part>, '19:20');
+    expect(toast.title).toBe('Ребай не принят: Ребаи закрыты');
+    expect(toast.actionLabel).toBe('Отменить ребай');
+    expect(plain(toast.detail)).toBe(
+      'Вылет записан. Ребай пришёл на сервер в 19:20 и помечен в ленте «Не принято». «Отменить ребай» снимет и оплату — деньги верни игроку.',
+    );
+  });
+
+  it('без оплаты: кнопка снимает только ребай', () => {
+    const j = journal().join('a', 'b');
+    j.start();
+    j.wait(CLOSE_MIN + 0.3 / 60);
+    const recs = addAll(j, bustRebuyDrafts(F, { playerId: 'a', by: [] }, 2, false));
+    const part = rejectedPart(F, recs, errorsOf(j));
+    expect(part?.toVoid.map((e) => e.type)).toEqual(['rebuy']);
+    expect(part?.kept.map((e) => e.type)).toEqual(['bust']);
+    const toast = rejectedToast(part as NonNullable<typeof part>, '19:20');
+    expect(toast.detail).toBe(
+      'Вылет записан. Ребай пришёл на сервер в 19:20 и помечен в ленте «Не принято». Если он лишний — отмени его.',
+    );
+  });
+
+  it('посадка нескольких: непринятый вход — со своей оплатой, остальные входы остаются', () => {
+    const j = journal().join('a');
+    // «a» уже за столом (второе устройство), «b» садится впервые.
+    const recs = addAll(j, seatDrafts(F, ['a', 'b'], 1, true));
+    const part = rejectedPart(F, recs, errorsOf(j));
+    expect(part?.rejected).toHaveLength(1);
+    expect(part?.toVoid.map((e) => [e.type, e.payload])).toEqual([
+      ['join', { playerId: 'a' }],
+      ['payment', { playerId: 'a', amountRub: 500 }],
+    ]);
+    expect(part?.kept.map((e) => [e.type, e.payload])).toEqual([
+      ['join', { playerId: 'b' }],
+      ['payment', { playerId: 'b', amountRub: 500 }],
+    ]);
+    const toast = rejectedToast(part as NonNullable<typeof part>, '18:05');
+    expect(toast.actionLabel).toBe('Отменить вход');
+    expect(toast.detail).toBe(
+      'Остальное записано. Вход пришёл на сервер в 18:05 и помечен в ленте «Не принято». «Отменить вход» снимет и оплату — деньги верни игроку.',
+    );
+  });
+
+  it('не принято ничего, кроме оплаты: отменяется всё действие', () => {
+    const j = journal().join('a', 'b');
+    j.start();
+    j.bust('a');
+    j.wait(CLOSE_MIN + 1);
+    const recs = addAll(j, rebuyDrafts(F, 'a', 1, true));
+    const part = rejectedPart(F, recs, errorsOf(j));
+    expect(part?.toVoid).toHaveLength(2);
+    expect(part?.kept).toEqual([]);
+    const toast = rejectedToast(part as NonNullable<typeof part>, '19:21');
+    expect(toast.detail).toBe(
+      'Ребай пришёл на сервер в 19:21 и помечен в ленте «Не принято». «Отменить ребай» снимет и оплату — деньги верни игроку.',
+    );
+  });
+
+  it('несколько непринятых и одиночная запись без своего слова', () => {
+    const j = journal().join('a', 'b');
+    const many = addAll(j, seatDrafts(F, ['a', 'b'], 1, false));
+    const part = rejectedPart(F, many, errorsOf(j));
+    const toast = rejectedToast(part as NonNullable<typeof part>, '18:05');
+    expect(toast.actionLabel).toBe('Отменить записи');
+    expect(toast.detail).toBe(
+      'Непринятые записи пришли на сервер в 18:05 и помечены в ленте «Не принято». Если они лишние — отмени их.',
+    );
+
+    const k = journal().join('a', 'b');
+    const one = rejectedPart(F, addAll(k, [{ type: 'level_next', payload: {} }]), errorsOf(k));
+    const single = rejectedToast(one as NonNullable<typeof one>, '20:00');
+    expect(single.title).toBe('Переход уровня не принят: Таймер не запущен');
+    expect(single.actionLabel).toBe('Отменить запись');
+    expect(single.detail).toBe(
+      'Запись пришла на сервер в 20:00 и помечена в ленте «Не принято». Если она лишняя — отмени её.',
+    );
+  });
+
+  it('принято всё — null', () => {
+    const j = journal().join('a', 'b');
+    j.start();
+    const recs = addAll(j, bustRebuyDrafts(F, { playerId: 'a', by: ['b'] }, 1, true));
+    expect(rejectedPart(F, recs, errorsOf(j))).toBeNull();
+  });
+});
+
+describe('mySeat: «Ты за столом»', () => {
+  const F = DEFAULT_FORMAT;
+  // Неразрывные пробелы (в числах и перед единицами) в ожиданиях — обычные: так читается тест.
+  const plain = <T extends object | null>(v: T): T =>
+    v && (JSON.parse(JSON.stringify(v).replace(/\u00a0/g, ' ')) as T);
+  const seat = (j: ReturnType<typeof journal>, id: string) => {
+    const { state, applied } = replayLog(F, j.events, j.now());
+    return plain(mySeat(F, state, applied, paymentsFromEvents(j.events), id));
+  };
+
+  it('в игре: входы, взнос, нокауты и долг банкиру', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    j.wait(10).bust('c', ['a']);
+    expect(seat(j, 'a')).toEqual({
+      alive: true,
+      place: null,
+      rebuyNote: null,
+      entries: '1 вход · взнос 500 ₽',
+      kos: '1 нокаут',
+      balance: 'Твой долг банкиру — 500 ₽',
+      paid: null,
+      balanceTone: 'owe',
+    });
+    expect(seat(j, 'zzz')).toBeNull();
+  });
+
+  it('вылетевший при открытых ребаях: сколько ещё можно докупиться; кратные входы и оплата', () => {
+    const j = journal();
+    j.joinStacks('a', 2);
+    j.join('b', 'c');
+    j.payment('a', 1000);
+    j.start();
+    j.wait(10).bust('a', ['b']);
+    j.rebuy('a');
+    j.wait(10).bust('a', ['c']);
+    const me = seat(j, 'a');
+    expect(me).toMatchObject({
+      alive: false,
+      place: null,
+      // Ребаи до конца 5-го уровня по 40 мин: прошло 20 мин — ещё 3 ч.
+      rebuyNote: 'Можно докупиться — ещё 3 ч',
+      entries: '2 входа: ×2, ×1 · взнос 1 500 ₽',
+      kos: 'Нокаутов пока нет',
+      balance: 'Твой долг банкиру — 500 ₽',
+      paid: 'оплачено 1 000 ₽',
+    });
+  });
+
+  it('ребаи закрыты или лимит исчерпан — докупиться нельзя; место уже известно', () => {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    j.wait(5 * 40 + 1).bust('c', ['a']);
+    expect(seat(j, 'c')).toMatchObject({ place: '3-е место', rebuyNote: null });
+
+    const k = journal().join('a', 'b', 'c');
+    k.start();
+    k.bust('c', ['a']);
+    k.rebuy('c');
+    k.bust('c', ['a']);
+    const { state, applied } = replayLog({ ...F, rebuyLimit: 1 }, k.events, k.now());
+    expect(mySeat({ ...F, rebuyLimit: 1 }, state, applied, [], 'c')?.rebuyNote).toBeNull();
+  });
+
+  it('переплата — банкир должен; ровно — в расчёте', () => {
+    const j = journal().join('a', 'b');
+    j.payment('a', 500);
+    j.payment('b', 700);
+    j.start();
+    expect(seat(j, 'a')).toMatchObject({ balance: 'С банкиром в расчёте', balanceTone: 'none' });
+    expect(seat(j, 'b')).toMatchObject({
+      balance: 'Банкир должен тебе 200 ₽',
+      balanceTone: 'await',
+    });
   });
 });

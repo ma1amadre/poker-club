@@ -1,4 +1,4 @@
-// Общие куски экранов вечера: формат турнира, список игроков, лента событий.
+// Общие куски экранов вечера: формат турнира, список игроков, «Ты за столом», лента событий.
 import type { EveningState, EventType, PlayerState, TournamentFormat } from '@domain/types.ts';
 import { useState } from 'react';
 import type { EveningEventRecord, Player } from '../../shared/api';
@@ -8,6 +8,7 @@ import {
   formatRub,
   formatTime,
   NBSP,
+  paths,
   plural,
   pluralWithNumber,
 } from '../../shared/lib';
@@ -31,6 +32,7 @@ import {
   feedEvents,
   orderedPlayers,
   playerLine,
+  type MySeat,
   type NameOf,
 } from './lib';
 
@@ -137,6 +139,10 @@ export interface PlayersListProps {
   playersById: Map<string, Player>;
   /** Строка-кнопка: пульт игрока у банкира. */
   onSelect?: (player: PlayerState) => void;
+  /** Строка-ссылка в карточку игрока — у того, кто не ведёт пульт (onSelect важнее). */
+  linkPlayers?: boolean;
+  /** Свой id: у своей строки — «(ты)». */
+  meId?: string | null;
   /** Шеврон у строки-кнопки (переход). false — строка открывает действие, а не экран. */
   chevron?: boolean;
   label?: string;
@@ -149,6 +155,8 @@ export function PlayersList({
   nameOf,
   playersById,
   onSelect,
+  linkPlayers = false,
+  meId,
   chevron = true,
   label,
 }: PlayersListProps) {
@@ -165,6 +173,7 @@ export function PlayersList({
             title={
               <>
                 {nameOf(p.playerId)}
+                {p.playerId === meId && ' (ты)'}
                 {info?.is_guest && <span className="m-small"> · гость</span>}
               </>
             }
@@ -179,11 +188,57 @@ export function PlayersList({
               )
             }
             onClick={onSelect ? () => onSelect(p) : undefined}
-            chevron={Boolean(onSelect) && chevron}
+            to={!onSelect && linkPlayers ? paths.player(p.playerId) : undefined}
+            chevron={onSelect ? chevron : linkPlayers}
           />
         );
       })}
     </List>
+  );
+}
+
+// --- Ты за столом ----------------------------------------------------------------------------
+
+/**
+ * «Ты за столом» — вверху экрана идущего вечера у игрока, который не ведёт пульт: статус и
+ * сколько ещё можно докупиться, входы и взнос, нокауты, баланс с банкиром прямо сейчас (mySeat).
+ */
+export function MySeatCard({ seat }: { seat: MySeat }) {
+  return (
+    <Card>
+      <div className="ev-me">
+        <div className="ev-me__head">
+          <p className="m-eyebrow">Ты за столом</p>
+          {seat.alive ? (
+            <Badge tone="positive" dot>
+              В игре
+            </Badge>
+          ) : (
+            <Badge tone="neutral">Вне игры</Badge>
+          )}
+        </div>
+        {(seat.rebuyNote ?? seat.place) && (
+          <p className="m-body ev-me__status">{seat.rebuyNote ?? seat.place}</p>
+        )}
+        <ul className="ev-factlist">
+          <li>
+            <Icon name="coins" size={16} />
+            <span>{seat.entries}</span>
+          </li>
+          <li>
+            <Icon name="user-x" size={16} />
+            <span>{seat.kos}</span>
+          </li>
+          <li>
+            <Icon name="wallet" size={16} />
+            <span>
+              {seat.balance}
+              {seat.paid && <span className="ev-me__muted"> · {seat.paid}</span>}
+            </span>
+          </li>
+        </ul>
+      </div>
+    </Card>
   );
 }
 

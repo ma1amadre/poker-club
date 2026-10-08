@@ -24,6 +24,14 @@ export function entryAmounts(format: TournamentFormat, stacks = 1): EntryAmounts
   };
 }
 
+/**
+ * «Оплачено сразу»: платёж игрока банкиру на взнос входа или ребая кратности `stacks` — пульт пишет
+ * его тем же действием, что и сам вход. В расчёте это обычный платёж (+ игрок → банкиру).
+ */
+export function prepaidPayment(format: TournamentFormat, playerId: PlayerId, stacks = 1): Payment {
+  return { playerId, amountRub: entryAmounts(format, stacks).rub };
+}
+
 export interface MoneyRow {
   owesRub: number; // взносы: сумма кратностей входа и ребаев × buyIn
   prizeRub: number; // призовые за место

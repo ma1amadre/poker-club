@@ -5,15 +5,36 @@
 // send проверяет запись по свежему журналу на эту секунду, а не по рендеру, в котором нажали
 // кнопку: его зовут и после вопросов («Завершить вечер?», «Перейти на 6-й уровень?»), а пока вопрос
 // висел, журнал и часы ушли вперёд.
-import { canApply, replayLog } from '@domain/replay.ts';
+// sendAll — несколько записей одним действием (вылет и ребай, вход с оплатой, миграция 020): одна
+// транзакция add_events, один ключ повтора, проверка цепочкой canApplySequence; «Отменить» в тосте
+// отменяет всё действие одной транзакцией void_events. Оплата, записанная вместе со входом или
+// ребаем, отменяется вместе с ним и при отмене из ленты (linkedPayment). Если журнал принял не всё
+// (ребай пришёл после закрытия), кнопка тоста отменяет только непринятое и оплату с ним
+// (rejectedPart), а принятый вылет остаётся.
+import { canApply, canApplySequence, replayLog, type EventDraft } from '@domain/replay.ts';
 import { isShowdownEvent } from '@domain/showdown.ts';
 import type { EveningState, EventPayload, EventType } from '@domain/types.ts';
 import { useCallback, useLayoutEffect, useRef, type ReactElement } from 'react';
-import { retryKeys, useAddEvent, useVoidEvent, type EveningEventRecord } from '../../shared/api';
+import {
+  retryKeys,
+  useAddEvent,
+  useAddEvents,
+  useVoidEvent,
+  useVoidEvents,
+  type EveningEventRecord,
+} from '../../shared/api';
 import { formatRub, formatTime, retryIntent, serverNow } from '../../shared/lib';
 import { haptic } from '../../shared/telegram';
 import { useConfirm, useToast } from '../../shared/ui';
-import { describeEvent, landedQuestion, voidImpact, voidImpactText } from './lib';
+import {
+  describeEvent,
+  landedQuestion,
+  linkedPayment,
+  rejectedPart,
+  rejectedToast,
+  voidImpact,
+  voidImpactText,
+} from './lib';
 import type { EveningModel } from './useEveningModel';
 
 /** Тост «Отменить» висит дольше обычного, но не до закрытия: вылеты идут один за другим. */
@@ -27,10 +48,21 @@ export interface SendOptions {
   /** Кнопка «Отменить» в тосте: обратимое действие не подтверждают, а дают отменить. */
   undo?: boolean;
   /**
+   * Своё действие в тосте вместо «Отменить» (у тоста «Материи» — одна кнопка): «Ребай» после
+   * вылета, пока игрок может докупиться. Получает записанное.
+   */
+  action?: { label: string; onClick: (records: EveningEventRecord[]) => void };
+  /**
    * Проверка намерения по свежему состоянию прямо перед отправкой, после всех вопросов: текст
    * отказа или null. «Уровень вперёд» — уровень не сменился, пока висел вопрос.
    */
   guard?: (state: EveningState) => string | null;
+  /**
+   * Сервер записал, но журнал принял не всё (пришло после закрытия ребаев): тост с причиной и
+   * «Отменить …» уже показан, отправка вернёт null. Повторять нечего — шторку можно закрыть, а не
+   * принимать null за «ответа нет».
+   */
+  onRejected?: () => void;
 }
 
 export interface VoidCopy {
@@ -49,6 +81,14 @@ export interface EveningActions {
     payload?: EventPayload,
     options?: SendOptions,
   ) => Promise<EveningEventRecord | null>;
+  /**
+   * Несколько записей одним действием и одной транзакцией (вылет и ребай, вход с оплатой): записи
+   * или null. Перед отправкой — canApplySequence по свежему журналу.
+   */
+  sendAll: (
+    drafts: readonly EventDraft[],
+    options?: SendOptions,
+  ) => Promise<EveningEventRecord[] | null>;
   /** Отменить событие с подтверждением, где видно, что именно отменяется. */
   voidWithConfirm: (event: EveningEventRecord, copy?: VoidCopy) => Promise<boolean>;
   /** Текст, почему событие сейчас нельзя добавить (или null), — по состоянию этого рендера. */
@@ -65,9 +105,9 @@ export interface EveningActions {
   confirmElement: ReactElement;
 }
 
-/** Что изменится, если отменить событие: что оживёт, что станет «не принято», кончится ли вечер. */
-function voidEffect(model: EveningModel, eventId: number) {
-  return voidImpact(model.evening.format, model.events, eventId, serverNow());
+/** Что изменится, если отменить события: что оживёт, что станет «не принято», кончится ли вечер. */
+function voidEffect(model: EveningModel, eventIds: number | readonly number[]) {
+  return voidImpact(model.evening.format, model.events, eventIds, serverNow());
 }
 
 /** «Ребай: Саша, ребай на 1 000 ₽», 20:15 — запись в тексте подтверждения. */
@@ -85,23 +125,12 @@ function hasSideEffects(impact: ReturnType<typeof voidEffect>): boolean {
   );
 }
 
-const REJECTED_TITLE: Partial<Record<EventType, string>> = {
-  join: 'Вход не принят',
-  rebuy: 'Ребай не принят',
-  bust: 'Вылет не принят',
-  payment: 'Платёж не принят',
-  level_next: 'Переход уровня не принят',
-  level_prev: 'Переход уровня не принят',
-  hand: 'Раздача не принята',
-  finish: 'Завершение не принято',
-  showdown: 'Олл-ин не принят',
-  showdown_close: 'Закрытие олл-ина не принято',
-};
-
 export function useEveningActions(model: EveningModel): EveningActions {
   const { evening, state, nowMs } = model;
   const addEvent = useAddEvent(evening.id);
+  const addEvents = useAddEvents(evening.id);
   const voidEvent = useVoidEvent(evening.id);
+  const voidEvents = useVoidEvents(evening.id);
   const toast = useToast();
   const { confirm, confirmElement } = useConfirm();
   // Тост «Отменить» живёт дольше рендера, в котором создан: читаем свежую модель через ref.
@@ -116,25 +145,49 @@ export function useEveningActions(model: EveningModel): EveningActions {
     [evening.format, state, nowMs],
   );
 
+  /** Отмена одной записи (void_event) или действия целиком (void_events, одна транзакция). */
+  const voidIds = useCallback(
+    async (ids: readonly number[]) => {
+      if (ids.length === 1 && ids[0] !== undefined) await voidEvent.mutateAsync(ids[0]);
+      else await voidEvents.mutateAsync(ids);
+    },
+    [voidEvent, voidEvents],
+  );
+
   const doVoid = useCallback(
-    async (eventId: number, successText = 'Запись отменена') => {
+    async (ids: readonly number[], successText?: string) => {
       haptic.impact('medium');
       try {
-        await voidEvent.mutateAsync(eventId);
-        toast.show(successText);
+        await voidIds(ids);
+        toast.show(successText ?? (ids.length > 1 ? 'Записи отменены' : 'Запись отменена'));
         return true;
       } catch {
         return false; // тост уже показал глобальный обработчик мутаций
       }
     },
-    [voidEvent, toast],
+    [voidIds, toast],
   );
 
-  const voidWithConfirm = useCallback(
-    async (event: EveningEventRecord, copy: VoidCopy = {}) => {
+  /**
+   * Отмена с подтверждением: `event` — главная запись, `extra` — записи того же действия (ребай и
+   * оплата после вылета). Оплата, записанная вместе со входом или ребаем, отменяется вместе с ним.
+   */
+  const voidGroupWithConfirm = useCallback(
+    async (
+      event: EveningEventRecord,
+      extra: readonly EveningEventRecord[],
+      copy: VoidCopy = {},
+    ) => {
       const current = modelRef.current;
-      const line = describeEvent(event, current.nameOf, formatRub, current.evening.format);
-      const impact = voidEffect(current, event.id);
+      const format = current.evening.format;
+      const line = describeEvent(event, current.nameOf, formatRub, format);
+      // Оплата при входе — по каждой отменяемой записи входа или ребая.
+      const group = [event, ...extra.filter((e) => e.id !== event.id && !e.voided)];
+      const paid = group
+        .map((e) => linkedPayment(current.events, e, format))
+        .filter((e): e is EveningEventRecord => e !== null && !group.some((g) => g.id === e.id));
+      const ids = [...group, ...paid].map((e) => e.id);
+      const impact = voidEffect(current, ids);
       const consequence =
         event.type === 'finish'
           ? impact.finishedAfter
@@ -150,26 +203,45 @@ export function useEveningActions(model: EveningModel): EveningActions {
                   : ' Табло покажет раздачу такой, какой она была до этой записи. На игру и деньги олл-ин не влияет.'
                 : ' Таймер и уровень пересчитаются.';
       const impactText = voidImpactText(impact, (e) => quoteEvent(current, e));
+      const others = group.slice(1);
+      const othersText =
+        others.length > 0
+          ? ` Вместе с ней ${others.length > 1 ? 'отменятся' : 'отменится'}: ${others.map((e) => quoteEvent(current, e)).join('; ')}.`
+          : '';
+      const paidText =
+        paid.length > 0
+          ? ` Оплата, записанная вместе ${paid.length > 1 ? 'со входами' : event.type === 'rebuy' ? 'с ребаем' : 'со входом'}, тоже отменится: ${paid
+              .map((e) => quoteEvent(current, e))
+              .join('; ')} — банкир возвращает эти деньги игроку.`
+          : '';
       // Миграция 008: любая правка журнала снимает «Расчёт закрыт».
       const settledText =
         current.evening.status === 'settled' && event.type !== 'finish'
           ? ' Закрытый расчёт откроется — его нужно будет закрыть заново.'
           : '';
+      const many = ids.length > 1;
       const ok = await confirm({
-        title: copy.title ?? 'Отменить запись?',
+        title: copy.title ?? (many ? 'Отменить записи?' : 'Отменить запись?'),
         message:
           (copy.message ??
-            `${line.title}${line.detail ? ` (${line.detail})` : ''}, ${formatTime(event.at)}. Запись останется в ленте зачёркнутой.${consequence}`) +
+            `${line.title}${line.detail ? ` (${line.detail})` : ''}, ${formatTime(event.at)}. ${many ? 'Записи останутся в ленте зачёркнутыми' : 'Запись останется в ленте зачёркнутой'}.${consequence}`) +
+          othersText +
+          paidText +
           (impactText ? ` ${impactText}` : '') +
           settledText,
-        confirmText: copy.confirmText ?? 'Отменить запись',
+        confirmText: copy.confirmText ?? (many ? 'Отменить записи' : 'Отменить запись'),
         cancelText: 'Оставить',
         danger: true,
       });
       if (!ok) return false;
-      return doVoid(event.id, copy.successText);
+      return doVoid(ids, copy.successText);
     },
     [confirm, doVoid],
+  );
+
+  const voidWithConfirm = useCallback(
+    (event: EveningEventRecord, copy: VoidCopy = {}) => voidGroupWithConfirm(event, [], copy),
+    [voidGroupWithConfirm],
   );
 
   /**
@@ -177,22 +249,33 @@ export function useEveningActions(model: EveningModel): EveningActions {
    * записей и не меняет «завершён ли вечер».
    */
   const undo = useCallback(
-    async (eventId: number) => {
+    async (eventIds: readonly number[]) => {
       const current = modelRef.current;
-      const event = current.events.find((e) => e.id === eventId);
-      if (event && hasSideEffects(voidEffect(current, eventId))) {
-        await voidWithConfirm(event);
+      const records = eventIds
+        .map((id) => current.events.find((e) => e.id === id))
+        .filter((e): e is EveningEventRecord => e !== undefined && !e.voided);
+      const [main, ...rest] = records;
+      if (!main) return;
+      if (
+        hasSideEffects(
+          voidEffect(
+            current,
+            records.map((e) => e.id),
+          ),
+        )
+      ) {
+        await voidGroupWithConfirm(main, rest);
         return;
       }
       haptic.impact('light');
       try {
-        await voidEvent.mutateAsync(eventId);
-        toast.show('Запись отменена');
+        await voidIds(records.map((e) => e.id));
+        toast.show(records.length > 1 ? 'Записи отменены' : 'Запись отменена');
       } catch {
         // тост уже показал глобальный обработчик мутаций
       }
     },
-    [voidEvent, toast, voidWithConfirm],
+    [voidIds, toast, voidGroupWithConfirm],
   );
 
   const freshState = useCallback(() => {
@@ -214,6 +297,56 @@ export function useEveningActions(model: EveningModel): EveningActions {
       return again ? null : landed;
     },
     [confirm],
+  );
+
+  /**
+   * Сервер игровые правила не проверяет, а replay судит по серверному `at`: запись, отправленная за
+   * секунду до закрытия ребаев, могла прийти уже после. Принял ли журнал записанное: если нет —
+   * тост с причиной, иначе «Ребай записан» соврал бы, а деньги взяты. Кнопка тоста отменяет только
+   * непринятое и оплату с ним (rejectedPart): вылет, который журнал принял, остаётся. true — что-то
+   * не принято.
+   */
+  const reportRejected = useCallback(
+    (records: readonly EveningEventRecord[], options: SendOptions) => {
+      const current = modelRef.current;
+      const format = current.evening.format;
+      const ids = new Set(records.map((r) => r.id));
+      const events = [...current.events.filter((e) => !ids.has(e.id)), ...records];
+      const after = replayLog(format, events, serverNow());
+      const part = rejectedPart(format, records, after.state.errors);
+      const first = part?.rejected[0];
+      if (!part || !first) return false;
+      const text = rejectedToast(part, formatTime(first.event.at));
+      toast.show(text.title, {
+        tone: 'caution',
+        detail: text.detail,
+        action: {
+          label: text.actionLabel,
+          onClick: () => void undo(part.toVoid.map((e) => e.id)),
+        },
+      });
+      options.onRejected?.();
+      return true;
+    },
+    [toast, undo],
+  );
+
+  /** Тост после записи: «Отменить» (всё действие) или своё действие вызывающего. */
+  const successToast = useCallback(
+    (options: SendOptions, records: EveningEventRecord[]) => {
+      if (!options.success) return;
+      const action = options.action
+        ? { label: options.action.label, onClick: () => options.action?.onClick(records) }
+        : options.undo
+          ? { label: 'Отменить', onClick: () => void undo(records.map((r) => r.id)) }
+          : undefined;
+      toast.show(options.success, {
+        tone: 'positive',
+        detail: options.detail,
+        ...(action ? { durationMs: UNDO_TOAST_MS, action } : {}),
+      });
+    },
+    [toast, undo],
   );
 
   const send = useCallback(
@@ -265,46 +398,86 @@ export function useEveningActions(model: EveningModel): EveningActions {
         return null;
       }
 
-      // Сервер игровые правила не проверяет, а replay судит по серверному `at`: запись, отправленная
-      // за секунду до закрытия ребаев, могла прийти уже после. Проверяем, принял ли её журнал, —
-      // иначе «Ребай записан» соврал бы, а деньги взяты.
-      const current = modelRef.current;
-      const events = [...current.events.filter((e) => e.id !== record.id), record];
-      const after = replayLog(current.evening.format, events, serverNow());
-      const rejected = after.state.errors.find((e) => e.eventId === record.id);
-      if (rejected) {
-        toast.show(`${REJECTED_TITLE[type] ?? 'Запись не принята'}: ${rejected.message}`, {
-          tone: 'caution',
-          detail: `Запись пришла на сервер в ${formatTime(record.at)} и помечена в ленте «Не принято». Если она лишняя — отмени её.`,
-          action: { label: 'Отменить запись', onClick: () => void undo(record.id) },
-        });
+      if (reportRejected([record], options)) return null;
+
+      successToast(options, [record]);
+      return record;
+    },
+    [freshState, confirmIfLanded, toast, addEvent, reportRejected, successToast, evening.id],
+  );
+
+  const sendAll = useCallback(
+    async (drafts: readonly EventDraft[], options: SendOptions = {}) => {
+      if (drafts.length === 0) return [];
+      const problemNow = () => {
+        const fresh = freshState();
+        const chain = canApplySequence(
+          modelRef.current.evening.format,
+          modelRef.current.events,
+          drafts,
+          serverNow(),
+        );
+        if (chain) {
+          // В действии из нескольких записей — какая именно не проходит: «Вход: Саша. Игрок уже в турнире».
+          const draft = drafts[chain.index];
+          if (!draft || drafts.length === 1) return chain.message;
+          const m = modelRef.current;
+          const line = describeEvent(
+            { id: 0, type: draft.type, payload: draft.payload, at: '', voided: false },
+            m.nameOf,
+            formatRub,
+            m.evening.format,
+          );
+          return `${line.title}. ${chain.message}`;
+        }
+        return options.guard?.(fresh) ?? null;
+      };
+      const refuse = (problem: string) => {
+        toast.show(problem, { tone: 'caution', detail: 'Записи не отправлены.' });
+        return null;
+      };
+      const problem = problemNow();
+      if (problem) return refuse(problem);
+
+      // Ключ повтора — на всё действие: сервер выводит из него ключи остальных записей (020), и
+      // повтор после тайм-аута вернёт действие целиком. Дошедшее без ответа — тот же вопрос, что у send.
+      const intent = retryIntent(evening.id, 'batch', drafts);
+      const landed = await confirmIfLanded(intent);
+      if (landed) return [landed];
+      const problemAfter = problemNow();
+      if (problemAfter) return refuse(problemAfter);
+
+      haptic.impact(drafts.some((d) => d.type === 'bust') ? 'heavy' : 'medium');
+      const journal = modelRef.current.events;
+      const clientId = retryKeys.keyFor(intent, Date.now(), (key) =>
+        journal.some((e) => e.clientId === key),
+      );
+
+      let records: EveningEventRecord[];
+      try {
+        records = await addEvents.mutateAsync({ events: drafts, clientId });
+        retryKeys.succeeded(intent);
+      } catch {
+        retryKeys.failed(intent, clientId, Date.now());
         return null;
       }
 
-      if (options.success) {
-        toast.show(options.success, {
-          tone: 'positive',
-          detail: options.detail,
-          ...(options.undo
-            ? {
-                durationMs: UNDO_TOAST_MS,
-                action: { label: 'Отменить', onClick: () => void undo(record.id) },
-              }
-            : {}),
-        });
-      }
-      return record;
+      if (reportRejected(records, options)) return null;
+
+      successToast(options, records);
+      return records;
     },
-    [freshState, confirmIfLanded, toast, addEvent, undo, evening.id],
+    [freshState, confirmIfLanded, toast, addEvents, reportRejected, successToast, evening.id],
   );
 
   return {
     send,
+    sendAll,
     voidWithConfirm,
     check,
     freshState,
     confirmIfLanded,
-    busy: addEvent.isPending || voidEvent.isPending,
+    busy: addEvent.isPending || addEvents.isPending || voidEvent.isPending || voidEvents.isPending,
     confirm,
     confirmElement,
   };

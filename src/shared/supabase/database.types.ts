@@ -47,6 +47,27 @@ export type Database = {
         };
         Relationships: [];
       };
+      cron_heartbeat: {
+        Row: {
+          id: number;
+          last_ok_at: string | null;
+          last_run_at: string | null;
+          updated_at: string;
+        };
+        Insert: {
+          id?: number;
+          last_ok_at?: string | null;
+          last_run_at?: string | null;
+          updated_at?: string;
+        };
+        Update: {
+          id?: number;
+          last_ok_at?: string | null;
+          last_run_at?: string | null;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       evening_events: {
         Row: {
           at: string;
@@ -131,6 +152,7 @@ export type Database = {
           status: string;
           voting_closes_at: string | null;
           voting_posted_at: string | null;
+          voting_reminder_posted_at: string | null;
         };
         Insert: {
           announce_posted_at?: string | null;
@@ -157,6 +179,7 @@ export type Database = {
           status?: string;
           voting_closes_at?: string | null;
           voting_posted_at?: string | null;
+          voting_reminder_posted_at?: string | null;
         };
         Update: {
           announce_posted_at?: string | null;
@@ -183,6 +206,7 @@ export type Database = {
           status?: string;
           voting_closes_at?: string | null;
           voting_posted_at?: string | null;
+          voting_reminder_posted_at?: string | null;
         };
         Relationships: [
           {
@@ -537,8 +561,34 @@ export type Database = {
           isSetofReturn: false;
         };
       };
+      add_events: {
+        Args: { p_client_id?: string; p_evening: string; p_events: Json };
+        Returns: {
+          at: string;
+          client_id: string | null;
+          created_by: string | null;
+          evening_id: string;
+          id: number;
+          payload: NonNullable<Json>;
+          type: string;
+          voided_at: string | null;
+          voided_by: string | null;
+        }[];
+        SetofOptions: {
+          from: '*';
+          to: 'evening_events';
+          isOneToOne: false;
+          isSetofReturn: true;
+        };
+      };
       add_guest: {
-        Args: { p_client_id?: string; p_evening: string; p_name: string; p_stacks?: number };
+        Args: {
+          p_client_id?: string;
+          p_evening: string;
+          p_name: string;
+          p_paid_rub?: number;
+          p_stacks?: number;
+        };
         Returns: string;
       };
       board_state: { Args: { p_token: string }; Returns: Json };
@@ -557,6 +607,7 @@ export type Database = {
         };
         Returns: undefined;
       };
+      cron_last_tick: { Args: Record<PropertyKey, never>; Returns: Json };
       current_player_id: { Args: Record<PropertyKey, never>; Returns: string };
       delete_vote: {
         Args: { p_category: string; p_evening: string; p_voter: string };
@@ -565,6 +616,7 @@ export type Database = {
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean };
       is_banker: { Args: { evening: string }; Returns: boolean };
       is_participant: { Args: { evening: string; player: string }; Returns: boolean };
+      mark_cron_tick: { Args: { p_ok: boolean }; Returns: undefined };
       mark_settled: {
         Args: { p_evening: string; p_last_event_id: number; p_voided_count: number };
         Returns: undefined;
@@ -583,6 +635,7 @@ export type Database = {
       unmark_settled: { Args: { p_evening: string }; Returns: undefined };
       verify_cron_secret: { Args: { p_secret: string }; Returns: boolean };
       void_event: { Args: { p_event: number }; Returns: undefined };
+      void_events: { Args: { p_events: number[] }; Returns: undefined };
     };
     Enums: {
       [_ in never]: never;

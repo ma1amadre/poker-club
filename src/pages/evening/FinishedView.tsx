@@ -1,14 +1,17 @@
 // Итог вечера: победитель, места, очки, призы, нетто, лучший охотник; ссылки на расчёт и
-// голосование; «Твой вечер» игравшему или сделавшему прогноз (EveningRecap). Админу — правка
-// закрытого вечера (отмена записей, возврат вечера в игру).
+// голосование; «Твой вечер» игравшему или сделавшему прогноз (EveningRecap); «Прогнозы вечера» —
+// кто на кого ставил, кто угадал и сколько очков Оракула. Места ведут в карточки игроков. Админу —
+// правка закрытого вечера (отмена записей, возврат вечера в игру).
 import { computeMoney } from '@domain/money.ts';
 import { eveningPoints, eveningScoring } from '@domain/scoring.ts';
 import { isShowdownEvent } from '@domain/showdown.ts';
 import { useState } from 'react';
 import {
   notifyEveningFinished,
+  errorMessage,
   scoringFromSettings,
   useClubHistory,
+  usePredictions,
   useSettings,
 } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
@@ -26,13 +29,16 @@ import {
 import {
   Amount,
   Avatar,
+  Badge,
   Button,
   ButtonLink,
   Card,
+  Icon,
   List,
   ListItem,
   Notice,
   Section,
+  Skeleton,
   Stat,
   Stats,
   useToast,
@@ -41,6 +47,13 @@ import { EveningRecapList } from './EveningRecap';
 import { useEveningRecap } from './useEveningRecap';
 import { bestHunters, orderedPlayers, ordinalPlace, reopenedNotice, totalRebuys } from './lib';
 import { EventFeed, PlayersList } from './parts';
+import {
+  ORACLE_NOTE,
+  oraclePointsText,
+  predictionPickLine,
+  predictionResults,
+  predictionSummary,
+} from './predictions';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
@@ -248,6 +261,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
                   title={
                     <>
                       {nameOf(p.playerId)}
+                      {p.playerId === player?.id && ' (ты)'}
                       {playersById.get(p.playerId)?.is_guest && (
                         <span className="m-small"> · гость</span>
                       )}
@@ -255,6 +269,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
                   }
                   subtitle={parts.join(' · ') || undefined}
                   after={m ? <Amount value={m.netRub} icon /> : undefined}
+                  to={paths.player(p.playerId)}
                 />
               );
             })}
@@ -262,9 +277,18 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         </Section>
       ) : (
         <Section title="Игроки" aside={`${state.aliveCount} в игре`}>
-          <PlayersList state={state} format={format} nameOf={nameOf} playersById={playersById} />
+          <PlayersList
+            state={state}
+            format={format}
+            nameOf={nameOf}
+            playersById={playersById}
+            linkPlayers
+            meId={player?.id}
+          />
         </Section>
       )}
+
+      <EveningPredictions model={model} meId={player?.id ?? null} />
 
       {isAdmin && (
         <Section title="Правка закрытого вечера">
@@ -312,5 +336,87 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         limit={8}
       />
     </>
+  );
+}
+
+/**
+ * «Прогнозы вечера» на экране итога: кто на кого ставил (победитель и первый вылет), кто угадал и
+ * сколько очков Оракула получил. Очки — доменная scorePrediction по журналу вечера. Чужие прогнозы
+ * RLS отдаёт после старта, поэтому здесь видны все. Прогнозов не было — блока нет.
+ */
+function EveningPredictions({ model, meId }: { model: EveningModel; meId: string | null }) {
+  const { evening, state, nameOf, playersById } = model;
+  const predictions = usePredictions(evening.id);
+
+  if (predictions.isPending) {
+    return (
+      <Section title="Прогнозы вечера">
+        <Skeleton height={64} />
+      </Section>
+    );
+  }
+  if (predictions.isError) {
+    return (
+      <Section title="Прогнозы вечера">
+        <Notice
+          tone="critical"
+          title="Прогнозы не загрузились"
+          action={
+            <Button size="sm" onClick={() => void predictions.refetch()}>
+              Повторить
+            </Button>
+          }
+        >
+          {errorMessage(predictions.error)}
+        </Notice>
+      </Section>
+    );
+  }
+
+  const rows = predictionResults(predictions.data, state, nameOf, meId);
+  if (rows.length === 0) return null;
+  const summary = predictionSummary(rows, state, nameOf);
+
+  return (
+    <Section
+      title="Прогнозы вечера"
+      aside={pluralWithNumber(rows.length, ['прогноз', 'прогноза', 'прогнозов'])}
+      footer={ORACLE_NOTE}
+    >
+      <ul className="ev-factlist">
+        <li>
+          <Icon name="trophy" size={16} />
+          <span>{summary.winner}</span>
+        </li>
+        <li>
+          <Icon name="flag" size={16} />
+          <span>{summary.firstOut}</span>
+        </li>
+      </ul>
+      <List aria-label="Прогнозы вечера">
+        {rows.map((row) => {
+          const who = playersById.get(row.playerId);
+          return (
+            <ListItem
+              key={row.playerId}
+              before={<Avatar name={nameOf(row.playerId)} photoUrl={who?.photo_url} size="md" />}
+              title={
+                <>
+                  {nameOf(row.playerId)}
+                  {row.playerId === meId && ' (ты)'}
+                </>
+              }
+              subtitle={predictionPickLine(row, nameOf)}
+              after={
+                <Badge tone={row.points > 0 ? 'positive' : 'neutral'}>
+                  {oraclePointsText(row.points)}
+                </Badge>
+              }
+              to={paths.player(row.playerId)}
+            />
+          );
+        })}
+      </List>
+    </Section>
   );
 }

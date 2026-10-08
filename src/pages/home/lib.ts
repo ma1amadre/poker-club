@@ -5,8 +5,7 @@ import { replay } from '@domain/replay.ts';
 import { sameRank, type StandingRow } from '@domain/season.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import type { EveningEvent, PlayerId, TournamentFormat } from '@domain/types.ts';
-import type { EveningStatus, Player, Rsvp, RsvpStatus } from '../../shared/api';
-import { RSVP_ORDER } from '../../shared/api';
+import type { EveningStatus, Player, Rsvp } from '../../shared/api';
 
 // --- Ближайший вечер -------------------------------------------------------------------------
 
@@ -41,7 +40,7 @@ export function pickUpcoming<T extends UpcomingLike>(
   return fresh ?? announced[announced.length - 1] ?? null;
 }
 
-// --- Состав и прогнозы -----------------------------------------------------------------------
+// --- Состав ----------------------------------------------------------------------------------
 
 export type PlayerLike = Pick<
   Player,
@@ -79,49 +78,6 @@ export function groupRsvps<P extends PlayerLike>(
 
 function byName(a: PlayerLike, b: PlayerLike): number {
   return a.display_name.localeCompare(b.display_name, 'ru') || (a.id < b.id ? -1 : 1);
-}
-
-export interface Candidate<P> {
-  player: P;
-  rsvp: RsvpStatus | null;
-}
-
-/**
- * Кого можно назвать в прогнозе: все активные игроки — сначала постоянные (идут, под вопросом,
- * не ответили, не идут; внутри — по имени), за ними гости по имени. Гость на анонс не отвечает
- * (войти в приложение он не может), поэтому ставить на него можно всегда. Игроки из уже
- * сохранённого прогноза остаются в списке, даже если перестали подходить.
- */
-export function predictionCandidates<P extends PlayerLike>(
-  players: readonly P[],
-  rsvps: readonly RsvpLike[],
-  keepIds: readonly (string | null | undefined)[] = [],
-): Candidate<P>[] {
-  const status = new Map<string, RsvpStatus>();
-  for (const r of rsvps) status.set(r.player_id, r.status);
-  const keep = new Set(keepIds.filter((id): id is string => Boolean(id)));
-  return players
-    .filter((p) => p.is_active || keep.has(p.id))
-    .map((player) => ({ player, rsvp: status.get(player.id) ?? null }))
-    .sort(
-      (a, b) =>
-        Number(a.player.is_guest) - Number(b.player.is_guest) ||
-        (a.player.is_guest ? 0 : RSVP_ORDER[a.rsvp ?? 'none'] - RSVP_ORDER[b.rsvp ?? 'none']) ||
-        byName(a.player, b.player),
-    );
-}
-
-/** Подпись к кандидату в прогнозе: гость — «гость», постоянный — как ответил на анонс. */
-export function candidateHint(candidate: Candidate<PlayerLike>): string {
-  return candidate.player.is_guest ? 'гость' : rsvpHint(candidate.rsvp);
-}
-
-/** Подпись к игроку в прогнозе: как он ответил на анонс. */
-export function rsvpHint(status: RsvpStatus | null): string {
-  if (status === 'yes') return 'идёт';
-  if (status === 'maybe') return 'под вопросом';
-  if (status === 'no') return 'не идёт';
-  return 'без ответа';
 }
 
 /**

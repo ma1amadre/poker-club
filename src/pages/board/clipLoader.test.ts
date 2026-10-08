@@ -68,6 +68,7 @@ describe('голос табло: подгрузка клипов', () => {
     expect(srv.calls).toEqual([['h1', 'h2'], ['h3', 'h4'], ['h5']]);
     expect([...s.clips.keys()].sort()).toEqual(['h1', 'h2', 'h4']);
     expect(loader.missing(H)).toBe(2);
+    expect(H.filter((h) => loader.isMissing(h))).toEqual(['h3', 'h5']);
     expect(loader.due(H, MISSING_RETRY_MS - 1)).toEqual([]);
     expect(loader.due(H, MISSING_RETRY_MS)).toEqual(['h3', 'h5']);
 
@@ -86,6 +87,7 @@ describe('голос табло: подгрузка клипов', () => {
     await board(loader, H, srv.fetchClips, 0, 5_000);
     expect(srv.calls).toHaveLength(1);
     expect(loader.missing(H)).toBe(0); // сбой — не «не озвучено»
+    expect(loader.isMissing('h1')).toBe(false);
 
     await board(loader, H, srv.fetchClips, 5_100, FAILED_RETRY_MS - 100);
     expect(srv.calls).toHaveLength(1);

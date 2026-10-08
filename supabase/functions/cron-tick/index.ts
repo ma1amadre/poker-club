@@ -11,12 +11,17 @@
 //   4) подстраховка notify evening_changed: о переносе, месте, отмене или возврате вечера, чей
 //      анонс уже в группе, если админский вызов после сохранения не дошёл (миграция 008,
 //      notify/changes.ts);
-//   5) пост в день игры за gameday_hours_before до начала объявленного вечера: кто идёт и кто ещё
-//      не ответил (миграция 014, _shared/gameday.ts).
+//   5) пост в день игры за gameday_hours_before до начала объявленного вечера: кто идёт, кто ещё
+//      не ответил и сколько сделано прогнозов (миграция 014, _shared/gameday.ts);
+//   6) напоминание о голосовании за 3 ч до его закрытия: сколько игроков вечера уже проголосовали
+//      (миграция 021, _shared/votingReminder.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
 // Без settings.group_chat_id ничего не постит, но вечер создаёт.
 // Сбой шага или всего вызова — сообщение админу в личку (_shared/alerts.ts, не чаще раза в 6 ч на
 // один и тот же сбой); ответ функции и строки errors от этого не меняются.
+// В конце каждого тика, прошедшего проверку секрета, — отметка в базе (mark_cron_tick, миграция 021):
+// когда тик отработал и когда отработал без ошибок. По ней keepalive в poker-club-ops замечает, что
+// будильник встал (сторож будильника).
 import { adminClient, describeError, errorResponse, json } from '../_shared/admin.ts';
 import { alertAdmin, type AlertKind } from '../_shared/alerts.ts';
 import {
@@ -30,10 +35,18 @@ import {
   decideGamedayPost,
   gamedayHours,
   gamedayRoster,
+  predictionsMade,
   type GamedayPlayerRow,
+  type GamedayPredictionRow,
   type GamedayRsvpRow,
 } from '../_shared/gameday.ts';
-import { announcePost, formatClubDate, gamedayPost, votingPost } from '../_shared/messages.ts';
+import {
+  announcePost,
+  formatClubDate,
+  gamedayPost,
+  votingPost,
+  votingReminderPost,
+} from '../_shared/messages.ts';
 import { postAnnounceChange } from '../notify/changes.ts';
 import {
   EVENING_COLUMNS,
@@ -49,6 +62,13 @@ import {
   type SettingsRow,
   type VoteRow,
 } from '../notify/results.ts';
+import {
+  VOTING_REMINDER_HOURS,
+  decideVotingReminder,
+  turnoutDecision,
+  votingTurnout,
+  type TurnoutPlayerRow,
+} from '../_shared/votingReminder.ts';
 import { holdsSlot, nextGameAt, slotFilter, type SlotEvening } from './schedule.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -60,6 +80,8 @@ const BACKFILL_WINDOW_MS = 3 * 24 * HOUR_MS;
  * void_event снимает отметку поста, и после повторного завершения уйдут «Исправленные итоги».
  */
 const RESULTS_GRACE_MS = 10 * 60 * 1000;
+/** Окно выборки напоминаний о голосовании: закрытие не дальше, чем через столько. */
+const VOTING_REMINDER_WINDOW_MS = VOTING_REMINDER_HOURS * HOUR_MS;
 
 type Db = ReturnType<typeof adminClient>;
 
@@ -76,9 +98,18 @@ interface TickReport {
   gameday: Record<string, PostOutcome | 'fresh_announce' | 'wait_announce'>;
   results: Record<string, PostOutcome>;
   voting: Record<string, PostOutcome | 'no_votes'>;
+  /**
+   * Напоминание о голосовании: posted / already_posted; wait_results — итогов в группе ещё нет;
+   * отмечено без поста: fresh_results (итоги ушли уже за 3 ч до закрытия), too_late, all_voted,
+   * no_voters (_shared/votingReminder.ts).
+   */
+  votingReminder: Record<string, PostOutcome | 'wait_results' | ReminderMark>;
   changes: Record<string, string>;
   errors: string[];
 }
+
+/** Напоминание о голосовании отмечено без поста — почему. */
+type ReminderMark = 'fresh_results' | 'too_late' | 'all_voted' | 'no_voters';
 
 /** Сбой для алерта админу: в ответ функции (его хранит pg_net) не попадает. */
 interface Failure {
@@ -126,6 +157,21 @@ async function secretMatches(db: Db, given: string): Promise<boolean> {
   const { data, error } = await db.rpc('verify_cron_secret', { p_secret: given });
   if (error) throw new Error(`verify_cron_secret: ${describeError(error)}`);
   return data === true;
+}
+
+/**
+ * Отметка тика для сторожа будильника (mark_cron_tick, миграция 021): тик отработал, и — если без
+ * единой ошибки — отработал успешно. Время ставит база (now()), а не функция. Не бросает: отметка не
+ * должна ронять тик, а не записанная отметка сама станет сигналом — keepalive увидит, что она старая.
+ */
+async function markTick(db: Db | null, ok: boolean): Promise<void> {
+  if (!db) return;
+  try {
+    const { error } = await db.rpc('mark_cron_tick', { p_ok: ok });
+    if (error) throw new Error(describeError(error));
+  } catch (err) {
+    console.error(`cron-tick: отметка тика не записана: ${describeError(err)}`);
+  }
 }
 
 const hasGroup = (s: SettingsRow): s is SettingsRow & { group_chat_id: number | string } =>
@@ -298,6 +344,12 @@ async function postGamedayPosts(
         .select('player_id, status, updated_at')
         .eq('evening_id', e.id);
       if (rError) throw new Error(`rsvps: ${describeError(rError)}`);
+      // Только число: содержимое чужих прогнозов до старта скрыто от игроков (RLS predictions).
+      const { data: predictions, error: pError } = await db
+        .from('predictions')
+        .select('winner_id, first_out_id')
+        .eq('evening_id', e.id);
+      if (pError) throw new Error(`predictions: ${describeError(pError)}`);
       const banker = e.banker_id ? all.find((p) => p.id === e.banker_id) : undefined;
       const post = gamedayPost({
         eveningId: e.id,
@@ -307,6 +359,7 @@ async function postGamedayPosts(
         roster: gamedayRoster(all, (rsvps ?? []) as GamedayRsvpRow[]),
         botUsername: s.bot_username,
         nowMs,
+        predictionsMade: predictionsMade((predictions ?? []) as GamedayPredictionRow[]),
       });
       report.gameday[e.id] = await publishOnce(
         db,
@@ -401,6 +454,117 @@ async function postVotingResults(
 }
 
 /**
+ * Шаг 3б: напоминание о голосовании за VOTING_REMINDER_HOURS часа до закрытия — один раз на закрытие
+ * (voting_reminder_posted_at). Отметка без поста, если итоги ушли уже внутри окна, до закрытия
+ * осталось мало, проголосовали все или голосовать некому (decideVotingReminder, turnoutDecision).
+ * Застолбить — только если закрытие голосования то же, что прочитали (отмена finish и новое
+ * завершение между чтением и отметкой сдвигают его, и отметку снимает триггер миграции 021).
+ */
+async function postVotingReminders(
+  db: Db,
+  s: SettingsRow & { group_chat_id: number | string },
+  nowMs: number,
+  report: TickState,
+): Promise<void> {
+  const nowIso = new Date(nowMs).toISOString();
+  const { data, error } = await db
+    .from('evenings')
+    .select(EVENING_COLUMNS)
+    .in('status', ['finished', 'settled'])
+    .is('voting_reminder_posted_at', null)
+    .gt('voting_closes_at', nowIso)
+    .lte('voting_closes_at', new Date(nowMs + VOTING_REMINDER_WINDOW_MS).toISOString())
+    .order('voting_closes_at');
+  if (error) throw new Error(`evenings: ${describeError(error)}`);
+  const statuses: EveningRow['status'][] = ['finished', 'settled'];
+  for (const e of (data ?? []) as unknown as EveningRow[]) {
+    try {
+      const decision = decideVotingReminder(e, nowMs);
+      if (decision === 'none' || !e.voting_closes_at) continue;
+      if (decision === 'wait_results') {
+        report.votingReminder[e.id] = 'wait_results';
+        continue;
+      }
+      const sameClose = { voting_closes_at: e.voting_closes_at };
+      const markOnly = async (why: ReminderMark): Promise<void> => {
+        const claimed = await claimPost(
+          db,
+          e.id,
+          'voting_reminder_posted_at',
+          nowIso,
+          statuses,
+          {},
+          sameClose,
+        );
+        report.votingReminder[e.id] = claimed ? why : 'already_posted';
+      };
+      if (decision !== 'post') {
+        await markOnly(decision);
+        continue;
+      }
+
+      const [joins, players, votes] = await Promise.all([
+        fetchAll<{ payload: { playerId?: unknown } }>((from, to) =>
+          db
+            .from('evening_events')
+            .select('payload')
+            .eq('evening_id', e.id)
+            .eq('type', 'join')
+            .is('voided_at', null)
+            .order('id')
+            .range(from, to),
+        ),
+        fetchAll<TurnoutPlayerRow>((from, to) =>
+          db.from('players').select('id, tg_id, is_active').order('id').range(from, to),
+        ),
+        fetchAll<{ voter_id: string }>((from, to) =>
+          db
+            .from('votes')
+            .select('voter_id')
+            .eq('evening_id', e.id)
+            .order('voter_id')
+            .order('category')
+            .range(from, to),
+        ),
+      ]);
+      const participants = joins
+        .map((j) => j.payload.playerId)
+        .filter((id): id is string => typeof id === 'string');
+      const turnout = votingTurnout(
+        participants,
+        players,
+        votes.map((v) => v.voter_id),
+      );
+      const outcome = turnoutDecision(turnout);
+      if (outcome !== 'post') {
+        await markOnly(outcome);
+        continue;
+      }
+      report.votingReminder[e.id] = await publishOnce(
+        db,
+        e.id,
+        'voting_reminder_posted_at',
+        s.group_chat_id,
+        votingReminderPost({
+          eveningId: e.id,
+          scheduledAt: e.scheduled_at,
+          votingClosesAt: e.voting_closes_at,
+          voted: turnout.voted,
+          eligible: turnout.eligible,
+          botUsername: s.bot_username,
+        }),
+        nowMs,
+        statuses,
+        {},
+        sameClose,
+      );
+    } catch (err) {
+      fail(report, 'cron_voting_reminder', `напоминание ${e.id}`, err, eveningDetail(e));
+    }
+  }
+}
+
+/**
  * Шаг 4: правки объявленных вечеров, о которых группа ещё не знает. Окно — неделя назад: о вечерах,
  * которые давно прошли, писать нечего (decideAnnounceChange их и так пропустит).
  */
@@ -465,6 +629,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     gameday: {},
     results: {},
     voting: {},
+    votingReminder: {},
     changes: {},
     errors: [],
     failures: [],
@@ -503,6 +668,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
       await step('итоги голосования', 'cron_voting', () =>
         postVotingResults(client, s, nowMs, report),
       );
+      // После итогов вечеров: итоги, добитые в этот тик, уже видны как свежие (decideVotingReminder).
+      await step('напоминание о голосовании', 'cron_voting_reminder', () =>
+        postVotingReminders(client, s, nowMs, report),
+      );
     }
   } catch (err) {
     report.errors.push(describeError(err));
@@ -512,6 +681,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { failures, ...body } = report;
   if (body.errors.length > 0) console.error(`cron-tick: ${body.errors.join(' | ')}`);
   await alertFailures(db, failures);
+  await markTick(db, body.errors.length === 0);
   const response: TickReport = body;
   return json(response);
 });

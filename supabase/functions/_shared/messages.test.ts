@@ -1,7 +1,22 @@
-// Тексты постов: заголовок итога вечера и его исправленной версии; анонс и итог — без голов.
+// Тексты постов: заголовок итога вечера и его исправленной версии; анонс и итог — без голов;
+// «Жизнь клуба» в итогах, напоминание о голосовании.
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_FORMAT, type TournamentFormat } from './domain/index.ts';
-import { announcePost, resultsPost, type ResultsPostInput } from './messages.ts';
+import {
+  DEFAULT_FORMAT,
+  eveningClubNews,
+  type EveningClubNews,
+  type TournamentFormat,
+} from './domain/index.ts';
+import { simpleEvening } from './domain/test-utils.ts';
+import {
+  announcePost,
+  clubNewsLines,
+  formatPoints,
+  resultsPost,
+  turnoutText,
+  votingReminderPost,
+  type ResultsPostInput,
+} from './messages.ts';
 
 const base: ResultsPostInput = {
   eveningId: 'e1',
@@ -83,5 +98,286 @@ describe('без баунти «за голову» (убрано 07.10.2026)', 
     expect(text).toContain('💰 Фонд 1 500 ₽ · 3 входа');
     expect(text).toContain('🎯 Лучший охотник: Женя и Саша — по 1 нокауту');
     expect(text).not.toMatch(/голов|баунти/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// «Жизнь клуба» в посте итогов, строка о прогнозах, напоминание о голосовании
+// ---------------------------------------------------------------------------
+
+/** Эмодзи в тексте, кроме мастей ♠️ ♣️ (решение пользователя для новых постов и строк). */
+const foreignEmoji = (text: string): string[] =>
+  [...text.matchAll(/\p{Extended_Pictographic}/gu)]
+    .map((m) => m[0])
+    .filter((e) => e !== '♠' && e !== '♣');
+
+const NAMES = { a: 'Женя', b: 'Саша', c: 'Дима', d: 'Лёша', e: '<Эрдни>' };
+
+const news = (over: Partial<EveningClubNews> = {}): EveningClubNews => ({
+  eveningId: 'e1',
+  predictions: { made: 0, winnerGuessedBy: [], firstOutGuessedBy: [] },
+  records: [],
+  titleChanges: [],
+  season: null,
+  ...over,
+});
+
+const block = (n: EveningClubNews) => clubNewsLines(n, NAMES).map((l) => l.replace(/ /g, ' '));
+
+describe('«Жизнь клуба» в посте итогов', () => {
+  it('рассказывать нечего — блока нет; иначе — заголовок и по строке на тему', () => {
+    expect(clubNewsLines(news(), NAMES)).toEqual([]);
+    const lines = block(
+      news({
+        predictions: { made: 3, winnerGuessedBy: ['b', 'a'], firstOutGuessedBy: ['c'] },
+        records: [
+          {
+            kind: 'biggest_pool',
+            value: 6000,
+            previous: 5000,
+            status: 'new',
+            playerIds: [],
+          },
+        ],
+        titleChanges: [{ title: 'form', from: 'b', to: 'a', victimId: null, eveningId: 'e1' }],
+        season: {
+          seasonKey: '2026-Q4',
+          leaders: [{ playerId: 'a', total: 12.5 }],
+          leadersBefore: ['b'],
+          climbers: [{ playerId: 'c', from: 5, to: 2 }],
+        },
+      }),
+    );
+    expect(lines).toEqual([
+      '',
+      '♣️ <b>Жизнь клуба</b>',
+      'Победителя угадали: Женя и Саша. Первый вылет угадали: Дима.',
+      'Новый рекорд клуба: самый большой фонд — 6 000 ₽ (прежний — 5 000 ₽).',
+      'Звания: «Форма» — Женя (прежде — Саша).',
+      'Сезон: новый лидер — Женя, 12,5 очка; рывок — Дима, с 5-го места на 2-е.',
+    ]);
+    expect(foreignEmoji(lines.join('\n'))).toEqual([]);
+  });
+
+  it('прогнозы: угадан только победитель или только первый вылет; не сбылся ни один', () => {
+    const line = (p: EveningClubNews['predictions']) => block(news({ predictions: p }))[2];
+    expect(line({ made: 2, winnerGuessedBy: ['d'], firstOutGuessedBy: [] })).toBe(
+      'Победителя угадали: Лёша.',
+    );
+    expect(line({ made: 2, winnerGuessedBy: [], firstOutGuessedBy: ['a', 'c'] })).toBe(
+      'Первый вылет угадали: Дима и Женя.',
+    );
+    expect(line({ made: 1, winnerGuessedBy: [], firstOutGuessedBy: [] })).toBe(
+      'Прогноз не сбылся: победителя и первый вылет никто не угадал.',
+    );
+    expect(line({ made: 4, winnerGuessedBy: [], firstOutGuessedBy: [] })).toBe(
+      'Прогнозы не сбылись: победителя и первый вылет никто не угадал.',
+    );
+  });
+
+  it('рекорды: несколько — без прежних значений; вперемешку — пометка «повторён»', () => {
+    const line = (records: EveningClubNews['records']) => block(news({ records }))[2];
+    expect(
+      line([
+        { kind: 'biggest_win', value: 2300, previous: 1800, status: 'new', playerIds: ['a'] },
+        { kind: 'longest_game', value: 200 * 60_000, previous: null, status: 'new', playerIds: [] },
+      ]),
+    ).toBe(
+      'Новые рекорды клуба: крупнейший выигрыш за вечер — Женя, +2 300 ₽; ' +
+        'самая длинная игра — 3 ч 20 мин.',
+    );
+    expect(
+      line([
+        { kind: 'most_kos', value: 4, previous: 3, status: 'new', playerIds: ['c'] },
+        { kind: 'win_streak', value: 3, previous: 3, status: 'equalled', playerIds: ['a', 'b'] },
+      ]),
+    ).toBe(
+      'Рекорды клуба: больше всего нокаутов за вечер — Дима, 4 нокаута; ' +
+        'самая длинная серия побед — Женя и Саша, 3 победы подряд (повторён).',
+    );
+    expect(
+      line([{ kind: 'most_kos', value: 1, previous: 1, status: 'equalled', playerIds: ['d'] }]),
+    ).toBe('Рекорд клуба повторён: больше всего нокаутов за вечер — Лёша, 1 нокаут.');
+  });
+
+  it('звания: «Форма» впервые; Немезиды одного держателя — вместе', () => {
+    const line = block(
+      news({
+        titleChanges: [
+          { title: 'form', from: null, to: 'a', victimId: null, eveningId: 'e1' },
+          { title: 'nemesis', from: null, to: 'c', victimId: 'b', eveningId: 'e1' },
+          { title: 'nemesis', from: 'a', to: 'c', victimId: 'd', eveningId: 'e1' },
+          { title: 'nemesis', from: null, to: 'b', victimId: 'a', eveningId: 'e1' },
+        ],
+      }),
+    )[2];
+    expect(line).toBe(
+      'Звания: «Форма» — Женя; Дима — Немезида игроков Саша и Лёша; Саша — Немезида игрока Женя.',
+    );
+  });
+
+  it('сезон: единоличный лидер, делёж первого места, подъём нескольких', () => {
+    const line = (season: EveningClubNews['season']) => block(news({ season }))[2];
+    expect(
+      line({
+        seasonKey: '2026-Q4',
+        leaders: [{ playerId: 'a', total: 9 }],
+        leadersBefore: ['a', 'b'],
+        climbers: [],
+      }),
+    ).toBe('Сезон: Женя — единоличный лидер, 9 очков.');
+    expect(
+      line({
+        seasonKey: '2026-Q4',
+        leaders: [
+          { playerId: 'a', total: 6 },
+          { playerId: 'b', total: 6 },
+        ],
+        leadersBefore: ['a'],
+        climbers: [],
+      }),
+    ).toBe('Сезон: первое место делят Женя и Саша — по 6 очков.');
+    expect(
+      line({
+        seasonKey: '2026-Q4',
+        leaders: [],
+        leadersBefore: ['a'],
+        climbers: [
+          { playerId: 'c', from: 3, to: 2 },
+          { playerId: 'd', from: 5, to: 4 },
+        ],
+      }),
+    ).toBe('Сезон: рывок на 1 место вверх — Дима и Лёша.');
+  });
+
+  it('имена экранируются; пост итогов ставит блок после ачивок', () => {
+    const lines = clubNewsLines(
+      news({ predictions: { made: 1, winnerGuessedBy: ['e'], firstOutGuessedBy: [] } }),
+      NAMES,
+    );
+    expect(lines[2]).toBe('Победителя угадали: &lt;Эрдни&gt;.');
+    const text = resultsPost({
+      ...base,
+      clubNews: news({ predictions: { made: 1, winnerGuessedBy: ['a'], firstOutGuessedBy: [] } }),
+    }).text;
+    expect(text).toContain('\n\n♣️ <b>Жизнь клуба</b>\nПобедителя угадали: Женя.');
+    expect(resultsPost(base).text).not.toContain('Жизнь клуба');
+
+    // Порядок: ачивки вечера → «Жизнь клуба» → итоги прошедшего сезона (отдельная глава) → голосование.
+    const full = resultsPost({
+      ...base,
+      newAchievements: [
+        { playerId: 'a', code: 'hunter', eveningId: 'e1', seasonKey: null, count: 1 },
+        { playerId: 'b', code: 'champion', eveningId: null, seasonKey: '2026-Q3', count: 1 },
+      ],
+      votingClosesAt: '2026-10-09T21:00:00.000Z',
+      clubNews: news({ predictions: { made: 1, winnerGuessedBy: ['a'], firstOutGuessedBy: [] } }),
+    }).text;
+    const at = (needle: string) => full.indexOf(needle);
+    expect(at('Новые ачивки')).toBeGreaterThan(-1);
+    expect(at('Новые ачивки')).toBeLessThan(at('Жизнь клуба'));
+    expect(at('Жизнь клуба')).toBeLessThan(at('Итоги сезона'));
+    expect(at('Итоги сезона')).toBeLessThan(at('Голосование за руку'));
+  });
+
+  it('из домена: вечер с прогнозом, рекордами и сменой формы', () => {
+    const q4 = (n: number) => `2026-10-${String(n).padStart(2, '0')}T16:00:00.000Z`;
+    const e1 = simpleEvening('e1', q4(1), ['a', 'b', 'c', 'd']);
+    const e2 = simpleEvening('e2', q4(8), ['b', 'a', 'c', 'd'], 'winner');
+    const n = eveningClubNews(
+      {
+        summaries: [e1, e2],
+        excluded: new Set(),
+        predictions: [{ eveningId: 'e2', playerId: 'c', winnerId: 'b', firstOutId: 'd' }],
+        bestN: 10,
+      },
+      'e2',
+    );
+    expect(n).not.toBeNull();
+    const lines = block(n as EveningClubNews);
+    expect(lines[2]).toBe('Победителя угадали: Дима. Первый вылет угадали: Дима.');
+    // Фонд (2 000 ₽) и длина игры повторены — в пост не идут; выигрыш +900 ₽ повторён игроком — идёт.
+    expect(n?.records.map((r) => [r.kind, r.status])).toEqual([
+      ['biggest_win', 'equalled'],
+      ['most_kos', 'new'],
+      ['biggest_pool', 'equalled'],
+      ['longest_game', 'equalled'],
+    ]);
+    expect(lines[3]).toBe(
+      'Рекорды клуба: крупнейший выигрыш за вечер — Саша, +900 ₽ (повторён); ' +
+        'больше всего нокаутов за вечер — Саша, 3 нокаута.',
+    );
+    expect(lines).toContain('Звания: «Форма» — Саша (прежде — Женя).');
+    // Только повторённые рекорды вечера — строки рекордов нет.
+    const quiet = block(
+      news({
+        records: [
+          { kind: 'biggest_pool', value: 2000, previous: 2000, status: 'equalled', playerIds: [] },
+        ],
+      }),
+    );
+    expect(quiet).toEqual([]);
+  });
+});
+
+describe('formatPoints', () => {
+  it('целые и дробные очки', () => {
+    const plainNbsp = (s: string) => s.replace(/ /g, ' ');
+    expect([1, 2, 5, 11, 21, 12.5, 0.5, 1000].map((n) => plainNbsp(formatPoints(n)))).toEqual([
+      '1 очко',
+      '2 очка',
+      '5 очков',
+      '11 очков',
+      '21 очко',
+      '12,5 очка',
+      '0,5 очка',
+      '1 000 очков',
+    ]);
+  });
+});
+
+describe('votingReminderPost', () => {
+  it('время закрытия по Москве, сколько проголосовали, кнопка «Голосовать»', () => {
+    const post = votingReminderPost({
+      eveningId: 'e1',
+      scheduledAt: '2026-10-09T12:00:00.000Z',
+      votingClosesAt: '2026-10-10T15:20:00.000Z',
+      voted: 3,
+      eligible: 7,
+      botUsername: 'poker_club_bot',
+    });
+    expect(post.text.replace(/ /g, ' ')).toBe(
+      [
+        '♠️ <b>Голосование закрывается в 18:20 — проголосовали 3 из 7</b>',
+        'Кто играл и ещё не голосовал — выберите руку, блеф и бэд-бит вечера 9 октября.',
+      ].join('\n'),
+    );
+    expect(post.buttons).toEqual([
+      { text: '♣️ Голосовать', url: 'https://t.me/poker_club_bot?startapp=v_e1' },
+    ]);
+    expect(foreignEmoji(post.text + post.buttons.map((b) => b.text).join(''))).toEqual([]);
+  });
+
+  it('число на 1 — глагол в единственном; никто — так и пишем', () => {
+    expect([0, 1, 2, 11, 21].map((n) => turnoutText(n, 30))).toEqual([
+      'пока никто не проголосовал',
+      'проголосовал 1 из 30',
+      'проголосовали 2 из 30',
+      'проголосовали 11 из 30',
+      'проголосовал 21 из 30',
+    ]);
+  });
+
+  it('без имени бота — без кнопки', () => {
+    expect(
+      votingReminderPost({
+        eveningId: 'e1',
+        scheduledAt: '2026-10-09T12:00:00.000Z',
+        votingClosesAt: '2026-10-10T12:00:00.000Z',
+        voted: 0,
+        eligible: 2,
+        botUsername: null,
+      }).buttons,
+    ).toEqual([]);
   });
 });

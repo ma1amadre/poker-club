@@ -2,7 +2,9 @@
  * Табло для ТВ — регистр Янтарь (всегда тёмный): плакатные заголовки, крупные цифры, разделы через
  * space-9. Единственный градиент — мягкое радиальное свечение accent до 16 % за главным числом
  * (исключение из правил «Материи» именно для Янтаря). Раскладка: телефон вертикально — колонка;
- * от 1024 px в горизонтали — таймер слева, стол и деньги справа (ТВ 1280–1920).
+ * от 1024 px в горизонтали — таймер слева, стол и деньги справа, своя шкала шрифтов ТВ (ниже).
+ * Сигналы без звука (решение клуба: звук — только голос): пауза — на весь блок часов, последняя
+ * минута уровня — цвет цифр, смена уровня — вспышка блока (prefers-reduced-motion — без анимации).
  */
 
 .bd {
@@ -30,6 +32,11 @@
   color: var(--ink-muted);
 }
 
+/* Акцентная строка: сколько стоим, последний уровень, отсчёт до старта, приз победителя. */
+.bd-hot {
+  color: var(--accent);
+}
+
 .bd-head {
   display: flex;
   flex-wrap: wrap;
@@ -45,8 +52,7 @@
   gap: var(--space-3);
 }
 
-.bd-tools .m-badge,
-.bd-clock__head .m-badge {
+.bd-tools .m-badge {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -66,13 +72,34 @@
   justify-items: start;
   gap: var(--space-4);
   min-width: 0;
+  border-radius: var(--m-r-card);
+  /* Контейнер для cqi: блайнды последнего уровня вписываются в ширину колонки (.bd-big--wide). */
+  container-type: inline-size;
+  /* Насколько подложка паузы и вспышка выходят за блок: на телефоне меньше бокового поля. */
+  --bd-halo: var(--space-3);
 }
 
-.bd-clock__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
+/* Пауза — на весь блок: подложка accent-soft вокруг всего блока. Тенью без размытия, а не
+   отступом, — раскладка не прыгает, когда пауза начинается и кончается. */
+.bd-clock--paused {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 var(--bd-halo) var(--accent-soft);
+}
+
+/* Смена уровня — вспышка блока часов (две волны, ~0,7 Гц — далеко от опасных частот мигания). */
+.bd-clock--fresh {
+  animation: bd-level-flash 1500ms var(--ease-exit) 2;
+}
+
+@keyframes bd-level-flash {
+  0% {
+    background-color: var(--accent-5);
+    box-shadow: 0 0 0 var(--bd-halo) var(--accent-5);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 var(--bd-halo) transparent;
+  }
 }
 
 .bd-glow {
@@ -96,8 +123,8 @@
   pointer-events: none;
 }
 
-/* Главное число: m-display регистра, растянутое под экран; табличные цифры, чтобы не прыгало. */
-.bd-time {
+/* Главное число (или слово): m-display регистра, растянутое под экран; табличные цифры. */
+.bd-big {
   font-size: clamp(96px, 26vw, 200px);
   line-height: 0.9;
   font-variant-numeric: tabular-nums;
@@ -106,8 +133,37 @@
   transition: color var(--dur-calm) var(--ease-stage);
 }
 
-.bd-time--paused {
-  color: var(--ink-muted);
+/*
+ * Блайнды последнего уровня шире цифр часов («1 000/2 000») — ступенью мельче и одной строкой,
+ * вписанной в колонку часов: кегль не больше, чем 100cqi / ширина строки в em (--bd-em,
+ * boardView.bigBlinds). Рвать число посреди разряда нельзя: перенос — только после «/» (<wbr>), на
+ * случай браузера без единиц контейнера.
+ */
+.bd-big--wide {
+  font-size: clamp(64px, 17vw, 160px);
+  white-space: normal;
+}
+
+@supports (width: 1cqi) {
+  .bd-big--wide {
+    font-size: min(clamp(64px, 17vw, 160px), calc(100cqi / var(--bd-em, 5)));
+  }
+}
+
+/* Последняя минута уровня: цифры меняют цвет; подпись рядом — цвет не единственный носитель. */
+.bd-clock--final .bd-time,
+.bd-final {
+  color: var(--critical);
+}
+
+.bd-final {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.bd-final .m-icon {
+  flex: none;
 }
 
 .bd-blinds {
@@ -139,6 +195,29 @@
   margin-top: 3px;
 }
 
+/* Последний уровень ребаев — строка крупно и акцентом. */
+.bd-rebuy--hot {
+  color: var(--accent);
+}
+
+.bd-rebuy--hot .m-icon {
+  margin-top: 0.2em;
+}
+
+/* Нижняя строка часов: средний стек и время игры. */
+.bd-bottom {
+  justify-self: stretch;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Последний нокаут: жертва — основным цветом, кто выбил — приглушённо. */
+.bd-ko {
+  font-weight: 600;
+}
+
 /* ---------- Стол и деньги ---------- */
 
 .bd-side {
@@ -150,6 +229,7 @@
 .bd-block {
   display: grid;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .bd-amount {
@@ -165,24 +245,88 @@
   display: inline-grid;
   place-items: center;
   min-width: 32px;
+  font-size: var(--m-body-size);
+  color: var(--ink-muted);
 }
+
+.bd-place-after {
+  color: var(--ink-muted);
+  text-align: right;
+}
+
+/* ---------- Ожидание и итог ---------- */
 
 .bd-wait {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-8);
+  align-items: start;
+}
+
+.bd-wait__main,
+.bd-wait__side,
+.bd-wait__facts {
+  display: grid;
   justify-items: start;
   gap: var(--space-5);
+  min-width: 0;
+}
+
+.bd-wait__side > *,
+.bd-wait__facts > * {
+  width: 100%;
 }
 
 /* Длинное имя победителя («Константинопольский») переносится, а не уезжает за экран. */
-.bd-wait .m-display {
+.bd-headline {
   max-width: 100%;
   overflow-wrap: anywhere;
   hyphens: auto;
 }
 
-.bd-wait .ui-list {
+/* Структура уровней: номер, начало по МСК, блайнды, пометка ребаев. */
+.bd-plan {
   width: 100%;
-  max-width: var(--container-text);
+  border-collapse: collapse;
+  font-size: var(--m-body-size);
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.bd-plan td {
+  padding: var(--space-1) var(--space-4) var(--space-1) 0;
+  border-top: 1px solid var(--line);
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.bd-plan tr:first-child td {
+  border-top: 0;
+}
+
+.bd-plan td:last-child {
+  padding-right: 0;
+  white-space: normal;
+}
+
+/* Крупные блайнды с анте («1 000/2 000 (2 000)») переносятся перед «(анте)» и после «/» (<wbr>),
+   но не внутри числа: одной строкой таблица на телефоне вылезала за экран. */
+.bd-plan td.bd-plan__blinds {
+  white-space: normal;
+}
+
+.bd-plan__blinds {
+  font-family: var(--m-font-mono);
+  color: var(--ink);
+}
+
+.bd-plan__note {
+  font-size: var(--m-small-size);
+  color: var(--accent);
+}
+
+.bd-plan__last-rebuy td {
+  color: var(--accent);
 }
 
 .bd-foot {
@@ -196,56 +340,141 @@
   display: none;
 }
 
-/* ТВ и ноутбук в горизонтали: таймер слева крупно, справа колонка со столом. */
+/*
+ * ТВ и ноутбук в горизонтали. Шкала ТВ: роли «Материи» (--m-*) и шаг отступов переопределены на
+ * экране табло (.bd-screen) в пикселях макета 1920×1080, вписанного в экран (--bd-px): подписи —
+ * 40, строки — 48, заголовки — 60–84, на 1280×720 всё в 2/3, на 4K — вдвое крупнее. Если экран
+ * всё же переполнен (длинный список имён, строки подвала), useFitToScreen уменьшает --bd-fit.
+ * Шапка и подвал — служебные, с дивана их не читают: остаются в размерах регистра.
+ */
 @media (min-width: 1024px) and (orientation: landscape) {
   .bd {
-    grid-template-rows: auto minmax(0, 1fr) auto;
     padding-left: calc(var(--space-7) + var(--pc-safe-left));
     padding-right: calc(var(--space-7) + var(--pc-safe-right));
     gap: var(--space-6);
   }
 
-  /* Табло смотрят с дивана: основной блок — по центру экрана по вертикали. */
-  .bd-main,
-  .bd-wait {
+  /* Шапка, экран, подвал — почти на всю ширину экрана: поля — space-7. Экран сообщения («Табло
+     погасло») остаётся колонкой текста по центру экрана (.bd--message): без этих строк сетки его
+     текст уезжал к нижнему краю. */
+  .bd:not(.bd--message) {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    max-width: none;
+  }
+
+  .bd-head .m-eyebrow {
+    font-size: calc(min(100vw / 1920, 100vh / 1080) * 24);
+  }
+
+  .bd-screen {
+    --bd-px: calc(min(100vw / 1920, 100vh / 1080) * var(--bd-fit, 1));
+    --m-eyebrow-size: calc(var(--bd-px) * 40);
+    --m-small-size: calc(var(--bd-px) * 40);
+    --m-body-size: calc(var(--bd-px) * 48);
+    --m-lede-size: calc(var(--bd-px) * 48);
+    --m-h3-size: calc(var(--bd-px) * 60);
+    --m-h2-size: calc(var(--bd-px) * 84);
+    --m-h1-size: calc(var(--bd-px) * 112);
+    --m-figure-size: calc(var(--bd-px) * 112);
+    --m-display-size: calc(var(--bd-px) * 180);
+    --space-1: calc(var(--bd-px) * 4);
+    --space-2: calc(var(--bd-px) * 8);
+    --space-3: calc(var(--bd-px) * 12);
+    --space-4: calc(var(--bd-px) * 16);
+    --space-5: calc(var(--bd-px) * 24);
+    --space-6: calc(var(--bd-px) * 32);
+    --space-7: calc(var(--bd-px) * 48);
+    --space-8: calc(var(--bd-px) * 64);
+    --space-9: calc(var(--bd-px) * 96);
+    --control-h-lg: calc(var(--bd-px) * 72);
+    /* Табло смотрят с дивана: основной блок — по центру экрана по вертикали. */
     align-self: center;
   }
 
   .bd-main {
-    grid-template-columns: minmax(0, 3fr) minmax(340px, 2fr);
+    grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+    align-items: center;
+    gap: var(--space-7) var(--space-9);
+  }
+
+  .bd-clock {
+    --bd-halo: var(--space-6);
+  }
+
+  .bd-big {
+    font-size: calc(var(--bd-px) * 300);
+  }
+
+  .bd-big--wide {
+    font-size: calc(var(--bd-px) * 220);
+  }
+
+  @supports (width: 1cqi) {
+    .bd-big--wide {
+      font-size: min(calc(var(--bd-px) * 220), calc(100cqi / var(--bd-em, 5)));
+    }
+  }
+
+  .bd-blinds__value {
+    font-size: calc(var(--m-figure-size) * 1.25);
+  }
+
+  /* Иконки строк растут с текстом. */
+  .bd-screen .bd-rebuy .m-icon,
+  .bd-screen .bd-final .m-icon {
+    width: 0.9em;
+    height: 0.9em;
+    margin-top: 0.2em;
+  }
+
+  .bd-final .m-icon {
+    margin-top: 0;
+  }
+
+  /* Плитки стола — по две в ряд (сетка кита по 132 px дала бы пять узких). */
+  .bd-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-5) var(--space-6);
+  }
+
+  /* Строки списков — плотнее: высоту строки задаёт сам 48-пиксельный текст. */
+  .bd-screen .ui-list-item {
+    min-height: 0;
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+
+  .bd-screen .ui-list-item__title {
+    font-size: var(--m-body-size);
+  }
+
+  .bd-place {
+    min-width: calc(var(--bd-px) * 64);
+  }
+
+  .bd-wait {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     align-items: center;
     gap: var(--space-9);
   }
 
-  /* Правая колонка читается с расстояния: текст на ступень крупнее. */
-  .bd-side .m-h3 {
-    font-size: var(--m-h2-size);
-    line-height: 1.1;
-  }
-
-  .bd-side .m-body,
-  .bd-rebuy {
-    font-size: var(--m-lede-size);
-    line-height: var(--m-lede-lh);
-  }
-
-  .bd-side .ui-list-item__title,
-  .bd-amount {
-    font-size: var(--m-h3-size);
-  }
-
-  .bd-time {
-    font-size: clamp(160px, 17vw, 340px);
-  }
-
-  .bd-blinds__value,
-  .bd-blinds__next .m-figure {
-    font-size: calc(var(--m-figure-size) * 1.5);
+  /* Выплаты и стартовый стек — рядом, под структурой уровней. */
+  .bd-wait__facts {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+    gap: var(--space-7);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bd-time {
+  .bd-big {
     transition: none;
+  }
+
+  /* Без анимации: вспышка — неподвижная подсветка блока на те же секунды. */
+  .bd-clock--fresh {
+    animation: none;
+    background-color: var(--accent-4);
+    box-shadow: 0 0 0 var(--bd-halo) var(--accent-4);
   }
 }

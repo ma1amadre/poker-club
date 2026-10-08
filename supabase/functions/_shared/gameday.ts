@@ -159,3 +159,20 @@ export function gamedayRoster(
     .sort(byName);
   return roster;
 }
+
+// ---------------------------------------------------------------------------
+// Прогнозы
+// ---------------------------------------------------------------------------
+
+export interface GamedayPredictionRow {
+  winner_id: string | null;
+  first_out_id: string | null;
+}
+
+/**
+ * Сколько прогнозов сделано — для строки «Прогнозы закрываются со стартом — сделано N». Строка, где
+ * оба поля пусты, — прогноз снят: не считается (как в «Прогнозах вечера» на экране итога).
+ */
+export function predictionsMade(rows: readonly GamedayPredictionRow[]): number {
+  return rows.filter((r) => r.winner_id !== null || r.first_out_id !== null).length;
+}

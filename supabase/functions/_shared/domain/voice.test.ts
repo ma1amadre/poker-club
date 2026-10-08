@@ -121,6 +121,15 @@ describe('фразы', () => {
     expect(PHRASES.resume).toBe('Продолжаем.');
   });
 
+  it('проверка звука и окно ребаев (аудит 07.10.2026) — дословно', () => {
+    expect(PHRASES.voiceOn).toBe('Голос включён.');
+    expect(PHRASES.rebuysLastLevel).toBe('Последний уровень ребаев.');
+    expect(PHRASES.rebuysSoon).toBe('Пять минут до закрытия ребаев.');
+    // Проверка звука — первой в списке: табло подгружает клипы по порядку FIXED_TEXTS.
+    expect(FIXED_TEXTS[0]).toBe(PHRASES.voiceOn);
+    for (const t of FIXED_TEXTS) expect(t).toBe(normalizeSpeech(t));
+  });
+
   it('нокаут: один выбивший, двое, трое, без выбивших, без жертвы', () => {
     expect(knockoutPhrase('Эрдни', ['Саша'])).toBe('Нокаут! Вылетает Эрдни. Выбил Саша.');
     expect(knockoutPhrase('Эрдни', ['Саша', 'Дима'])).toBe(
@@ -266,6 +275,16 @@ describe('варианты объявления', () => {
     ]);
   });
 
+  it('фразы без переменных — один вариант', () => {
+    expect(announcementVariants({ kind: 'voice_on' }, nameOf)).toEqual([['Голос включён.']]);
+    expect(announcementVariants({ kind: 'rebuys_last_level' }, nameOf)).toEqual([
+      ['Последний уровень ребаев.'],
+    ]);
+    expect(announcementVariants({ kind: 'rebuys_soon' }, nameOf)).toEqual([
+      ['Пять минут до закрытия ребаев.'],
+    ]);
+  });
+
   it('уровень с нечитаемым числом — молчим, а не падаем', () => {
     expect(announcementVariants({ kind: 'level', level: level(-5, 10) }, nameOf)).toEqual([]);
   });
@@ -282,7 +301,10 @@ describe('что нужно вечеру и манифест', () => {
     const all: Announcement[] = [
       { kind: 'start', level: DEFAULT_FORMAT.levels[0]! },
       ...DEFAULT_FORMAT.levels.slice(1).map((l): Announcement => ({ kind: 'level', level: l })),
+      { kind: 'voice_on' },
       { kind: 'minute' },
+      { kind: 'rebuys_last_level' },
+      { kind: 'rebuys_soon' },
       { kind: 'rebuys_closed' },
       { kind: 'pause' },
       { kind: 'resume' },
@@ -340,7 +362,7 @@ describe('что нужно вечеру и манифест', () => {
     expect(texts).toContain('Нокаут! Вылетает Женя. Выбил Эрдн+и.');
     expect(texts).toContain('Победитель вечера — Эрдн+и!');
     expect(texts.some((t) => t.includes('Саша') || /[A-Za-z]/.test(t))).toBe(false);
-    // 11 фиксированных + 8 уровней (два одинаковых формата) + 2·4 на игрока + 2 пары.
+    // 14 фиксированных + 8 уровней (два одинаковых формата) + 2·4 на игрока + 2 пары.
     expect(texts).toHaveLength(FIXED_TEXTS.length + 8 + 8 + 2);
   });
 

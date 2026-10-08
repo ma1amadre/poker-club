@@ -4,7 +4,7 @@ import { scorePrediction } from '@domain/predictions.ts';
 import { replay } from '@domain/replay.ts';
 import type { EveningEvent } from '@domain/types.ts';
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
 import {
   errorMessage,
   queryKeys,
@@ -64,7 +64,8 @@ import {
   UNKNOWN_PLAYER,
   upsertRsvp,
 } from './lib';
-import { PredictionSheet } from './PredictionSheet';
+// Блок прогноза — тот же, что на экране вечера (туда ведут кнопки анонса).
+import { PredictionSection } from '../evening/PredictionSection';
 
 type PlayersById = ReadonlyMap<string, Player>;
 
@@ -225,7 +226,7 @@ export function AnnouncedEvening({
           />
         </FieldGroup>
       </Section>
-      <AnnouncedPrediction
+      <PredictionSection
         evening={evening}
         me={me}
         players={players}
@@ -269,96 +270,6 @@ function Going({ groups, meId }: { groups: RsvpGroups<Player>; meId: string }) {
         </p>
       ))}
     </div>
-  );
-}
-
-/** Слот 40 px слева в строке прогноза: аватар выбранного или иконка без подложки. */
-function PickSlot({ player, icon }: { player: Player | null; icon: IconName }) {
-  return (
-    <span className="home-slot">
-      {player ? (
-        <Avatar name={player.display_name} photoUrl={player.photo_url} size="lg" />
-      ) : (
-        <Icon name={icon} size={20} />
-      )}
-    </span>
-  );
-}
-
-function AnnouncedPrediction({
-  evening,
-  me,
-  players,
-  playersById,
-  rsvps,
-}: {
-  evening: Evening;
-  me: Player;
-  players: readonly Player[];
-  playersById: PlayersById;
-  rsvps: readonly Rsvp[];
-}) {
-  const predictions = usePredictions(evening.id);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const mine = predictions.data?.find((p) => p.player_id === me.id) ?? null;
-  const winner = mine?.winner_id ? (playersById.get(mine.winner_id) ?? null) : null;
-  const firstOut = mine?.first_out_id ? (playersById.get(mine.first_out_id) ?? null) : null;
-  const open = () => setSheetOpen(true);
-
-  return (
-    <Section
-      title="Прогноз"
-      footer="Чужие прогнозы откроются со стартом таймера — тогда же приём прогнозов закроется."
-    >
-      {predictions.isPending ? (
-        <Skeleton height={112} />
-      ) : predictions.isError ? (
-        <Notice
-          tone="critical"
-          title="Прогноз не загрузился"
-          action={
-            <Button size="sm" onClick={() => void predictions.refetch()}>
-              Повторить
-            </Button>
-          }
-        >
-          {errorMessage(predictions.error)}
-        </Notice>
-      ) : (
-        <>
-          <List aria-label="Мой прогноз">
-            <ListItem
-              before={<PickSlot player={winner} icon="trophy" />}
-              title="Кто выиграет"
-              subtitle={winner?.display_name ?? 'Не выбран'}
-              after={<span className="m-mono">3 очка</span>}
-              onClick={open}
-              chevron
-            />
-            <ListItem
-              before={<PickSlot player={firstOut} icon="flag" />}
-              title="Кто вылетит первым"
-              subtitle={firstOut?.display_name ?? 'Не выбран'}
-              after={<span className="m-mono">2 очка</span>}
-              onClick={open}
-              chevron
-            />
-          </List>
-          <Button variant={mine ? 'secondary' : 'primary'} block onClick={open}>
-            {mine ? 'Изменить прогноз' : 'Сделать прогноз'}
-          </Button>
-        </>
-      )}
-      {sheetOpen && (
-        <PredictionSheet
-          evening={evening}
-          players={players}
-          rsvps={rsvps}
-          current={mine}
-          onClose={() => setSheetOpen(false)}
-        />
-      )}
-    </Section>
   );
 }
 

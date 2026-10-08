@@ -8,6 +8,10 @@
 // уходит молча новым ключом: «Запись уже в журнале» — не записывать или записать ещё одного
 // (confirmIfLanded). Вписанное имя уже есть в клубе — подсказка посадить того же человека одной
 // кнопкой, а не заводить дубль.
+// «Оплачено сразу» (по умолчанию выключено) — у каждого, кого сажают этим нажатием, и у гостя
+// вместе со входом пишется платёж на сумму взноса. Отмеченные садятся одним действием
+// (add_events, миграция 020): все входы и платежи ложатся вместе или не ложатся вовсе, повтор после
+// тайм-аута — тем же ключом. Гость с оплатой — add_guest с p_paid_rub, тоже одной транзакцией.
 import { entryAmounts } from '@domain/money.ts';
 import { useState } from 'react';
 import {
@@ -26,8 +30,9 @@ import {
   normalizeGuestName,
   seatButtonLabel,
   seatCandidates,
+  seatDrafts,
 } from './lib';
-import { StacksPicker } from './StacksPicker';
+import { PaidNowCheckbox, StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
@@ -59,10 +64,20 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
   const [guestError, setGuestError] = useState<string | null>(null);
   const [seating, setSeating] = useState(false);
   const [stacks, setStacks] = useState(1);
+  const [paid, setPaid] = useState(false);
   const [seatingMatch, setSeatingMatch] = useState(false);
   // Вопрос «Запись уже в журнале» для гостя: шторка не закрывается, кнопки ждут ответа.
   const [guestAsking, setGuestAsking] = useState(false);
-  const entryRub = entryAmounts(model.evening.format, stacks).rub;
+  const format = model.evening.format;
+  const entryRub = entryAmounts(format, stacks).rub;
+  /** Подробности тоста посадки: сумма при ×k и оплата. */
+  const seatDetail = (many: boolean): string | undefined =>
+    [
+      stacks > 1 ? `${many ? 'Вход у каждого' : 'Вход'} — ${formatRub(entryRub)}.` : null,
+      paid ? `Оплачено сразу${many ? ' у каждого' : ''}.` : null,
+    ]
+      .filter(Boolean)
+      .join(' ') || undefined;
   const match = nameMatchNotice(nameMatches(players, model.state, guestName));
 
   // Регистрация открыта? Проверяем доменом на «новом» игроке — тот же canApply, что у join.
@@ -85,28 +100,16 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
 
   const seat = async () => {
     setSeating(true);
-    let seated = 0;
-    for (const id of selected) {
-      // Состояние в замыкании не знает о только что записанных join — сервер и replay проверят.
-      const record = await actions.send('join', entryPayload(id, stacks));
-      if (!record) break;
-      seated += 1;
-    }
+    // Одно действие: все входы (и платежи, если «Оплачено сразу») — вместе или ничего.
+    const seated = selected.length;
+    const records = await actions.sendAll(seatDrafts(format, selected, stacks, paid));
     setSeating(false);
-    if (seated > 0) {
-      toast.show(
-        `За стол ${seated === 1 ? 'сел' : 'сели'} ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}`,
-        {
-          tone: 'positive',
-          detail:
-            stacks > 1
-              ? `${seated === 1 ? 'Вход' : 'Вход у каждого'} — ${formatRub(entryRub)}.`
-              : undefined,
-        },
-      );
-    }
-    if (seated === selected.length) onClose();
-    else setSelected(selected.slice(seated));
+    if (!records) return;
+    toast.show(
+      `За стол ${seated === 1 ? 'сел' : 'сели'} ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}`,
+      { tone: 'positive', detail: seatDetail(seated > 1) },
+    );
+    onClose();
   };
 
   const submitGuest = async () => {
@@ -117,7 +120,10 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     }
     setGuestError(null);
     setGuestAsking(true);
-    const landed = await actions.confirmIfLanded(guestRetryIntent(model.evening.id, name, stacks));
+    const paidRub = paid ? entryRub : undefined;
+    const landed = await actions.confirmIfLanded(
+      guestRetryIntent(model.evening.id, name, stacks, paidRub),
+    );
     setGuestAsking(false);
     if (landed) {
       // Гость уже сел прошлым нажатием, банкир не стал заводить второго.
@@ -126,13 +132,10 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
       return;
     }
     try {
-      await addGuest.mutateAsync({ name, stacks });
+      await addGuest.mutateAsync({ name, stacks, paidRub });
       setGuestName('');
       setStacks(1);
-      toast.show(`Гость ${name} за столом`, {
-        tone: 'positive',
-        detail: stacks > 1 ? `Вход — ${formatRub(entryRub)}.` : undefined,
-      });
+      toast.show(`Гость ${name} за столом`, { tone: 'positive', detail: seatDetail(false) });
     } catch {
       // тост с причиной показал глобальный обработчик мутаций
     }
@@ -141,17 +144,16 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
   // Вписанное имя уже есть в клубе: посадить того же человека, а не заводить нового гостя.
   const seatMatch = async (playerId: string) => {
     setSeatingMatch(true);
-    const record = await actions.send('join', entryPayload(playerId, stacks));
+    const record = paid
+      ? await actions.sendAll(seatDrafts(format, [playerId], stacks, true))
+      : await actions.send('join', entryPayload(playerId, stacks));
     setSeatingMatch(false);
     if (!record) return;
     const name = players.find((p) => p.id === playerId)?.display_name ?? 'Игрок';
     setGuestName('');
     setStacks(1);
     setSelected((ids) => ids.filter((id) => id !== playerId));
-    toast.show(`${name} за столом`, {
-      tone: 'positive',
-      detail: stacks > 1 ? `Вход — ${formatRub(entryRub)}.` : undefined,
-    });
+    toast.show(`${name} за столом`, { tone: 'positive', detail: seatDetail(false) });
   };
 
   const busy = seating || seatingMatch || guestAsking || addGuest.isPending;
@@ -193,7 +195,16 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
           value={stacks}
           onChange={setStacks}
           label="Вход"
-          note="Сумма — для всех отмеченных и для гостя; кто входит на другую, того посади отдельно."
+          note="Сумма и оплата — для всех отмеченных и для гостя; кто входит иначе, того посади отдельно."
+          disabled={Boolean(closedReason) || busy}
+        />
+        <PaidNowCheckbox
+          format={format}
+          checked={paid}
+          onChange={setPaid}
+          kind="entry"
+          stacks={stacks}
+          many={selected.length > 1}
           disabled={Boolean(closedReason) || busy}
         />
         {candidates.length > 0 ? (

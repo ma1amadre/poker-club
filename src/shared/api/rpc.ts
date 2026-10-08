@@ -1,5 +1,6 @@
 // Запись через RPC (security definer, права проверяют сами — см. 003_rpc.sql). Таблицы
 // evening_events, rsvps, predictions, votes напрямую не пишутся: RLS это запрещает.
+import type { EventDraft } from '@domain/replay.ts';
 import type { EventPayload, EventType } from '@domain/types.ts';
 import type { VoteCategory } from '@domain/votes.ts';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
@@ -87,6 +88,59 @@ export async function addEvent({
   // событие — его `at` о часах ничего не говорит.
   if (Date.parse(record.at) >= t0 - 60_000) addClockSample(record.at, t0, t1);
   return record;
+}
+
+export interface AddEventsInput {
+  eveningId: string;
+  /** Записи одного действия по порядку: вылет и ребай, вход и оплата (только join/rebuy/bust/payment). */
+  events: readonly EventDraft[];
+  /**
+   * Ключ повтора действия (миграция 020): у первой записи — он сам, у i-й сервер выводит свой
+   * (`derived_client_id`). Повтор тем же ключом вернёт уже записанное действие целиком.
+   */
+  clientId?: string;
+}
+
+/**
+ * Несколько записей журнала одним действием и одной транзакцией (add_events, миграция 020): лягут
+ * все или ни одной. Перед вызовом страница проверяет цепочку доменной canApplySequence.
+ */
+export async function addEvents({
+  eveningId,
+  events,
+  clientId,
+}: AddEventsInput): Promise<EveningEventRecord[]> {
+  const t0 = Date.now();
+  const { data, error } = await writeRpc((signal) =>
+    supabase
+      .rpc('add_events', {
+        p_evening: eveningId,
+        p_events: events.map((e) => ({ type: e.type, payload: e.payload })),
+        ...(clientId ? { p_client_id: clientId } : {}),
+      })
+      .abortSignal(signal),
+  );
+  const t1 = Date.now();
+  if (error) throw toError(error);
+  const records = (data ?? []).map(toEventRecord);
+  if (records.length !== events.length)
+    throw new Error('Сервер вернул не все записи действия. Обнови экран и проверь ленту.');
+  // `at` ставит сервер — замер часов, как у add_event (повтор по ключу вернёт старое время).
+  const first = records[0];
+  if (first && Date.parse(first.at) >= t0 - 60_000) addClockSample(first.at, t0, t1);
+  return records;
+}
+
+/**
+ * Отменить несколько записей одного вечера одной транзакцией (void_events, миграция 020): тост
+ * «Отменить» после «Вылет и ребай», отмена входа вместе с его оплатой.
+ */
+export async function voidEvents(eventIds: readonly number[]): Promise<void> {
+  const { error } = await writeRpc(
+    (signal) => supabase.rpc('void_events', { p_events: [...eventIds] }).abortSignal(signal),
+    'Ответа нет — проверь ленту: если записи не зачёркнуты, отмени ещё раз',
+  );
+  if (error) throw toError(error);
 }
 
 /** Отменить событие (пометка voided, история сохраняется). Отмена finish возвращает вечер в live. */
@@ -343,12 +397,15 @@ export async function mergePlayers(guestId: string, targetId: string): Promise<M
  * (миграция 015, 1..10). Права как у add_event для join: банкир вечера или админ. Возвращает id
  * нового игрока. Стандартный вход уходит без p_stacks — как до 015. `clientId` — ключ повтора
  * (миграция 019): повтор после потерянного ответа вернёт уже посаженного гостя, второго не будет.
+ * `paidRub` — «Оплачено сразу» (миграция 020): платёж гостя на эту сумму тем же вызовом; сумму
+ * считает домен (prepaidPayment).
  */
 export async function addGuest(
   eveningId: string,
   name: string,
   stacks = 1,
   clientId?: string,
+  paidRub?: number,
 ): Promise<string> {
   const { data, error } = await writeRpc((signal) =>
     supabase
@@ -357,6 +414,7 @@ export async function addGuest(
         p_name: name,
         ...(stacks > 1 ? { p_stacks: stacks } : {}),
         ...(clientId ? { p_client_id: clientId } : {}),
+        ...(paidRub !== undefined ? { p_paid_rub: paidRub } : {}),
       })
       .abortSignal(signal),
   );
@@ -421,6 +479,45 @@ export function useAddEvent(eveningId: string) {
   });
 }
 
+/** Несколько записей одним действием (add_events) в журнал вечера `eveningId`. */
+export function useAddEvents(eveningId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: Omit<AddEventsInput, 'eveningId'>) => addEvents({ ...input, eveningId }),
+    onSuccess: (records) => {
+      queryClient.setQueryData<EveningEventRecord[]>(queryKeys.eveningEvents(eveningId), (old) =>
+        old ? [...old, ...records.filter((r) => !old.some((e) => e.id === r.id))] : old,
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
+  });
+}
+
+/** Отменить несколько записей вечера `eveningId` одной транзакцией (void_events). */
+export function useVoidEvents(eveningId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (eventIds: readonly number[]) => voidEvents(eventIds),
+    onSuccess: (_void, eventIds) => {
+      const at = new Date().toISOString();
+      queryClient.setQueryData<EveningEventRecord[]>(queryKeys.eveningEvents(eveningId), (old) =>
+        old?.map((e) => (eventIds.includes(e.id) ? { ...e, voided: true, voidedAt: at } : e)),
+      );
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningEvents(eveningId) });
+      invalidateEvening(queryClient, eveningId);
+    },
+  });
+}
+
 export function useVoidEvent(eveningId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -442,9 +539,23 @@ export function useVoidEvent(eveningId: string) {
   });
 }
 
-/** Намерение «этот гость с этой кратностью» — ключ повтора add_guest (регистр имени не важен). */
-export function guestRetryIntent(eveningId: string, name: string, stacks = 1): string {
-  return retryIntent(eveningId, 'guest', { name: name.toLowerCase(), stacks });
+/**
+ * Намерение «этот гость с этой кратностью» (и, если «Оплачено сразу», с этой оплатой) — ключ
+ * повтора add_guest (регистр имени не важен). Без оплаты строка та же, что до миграции 020.
+ */
+export function guestRetryIntent(
+  eveningId: string,
+  name: string,
+  stacks = 1,
+  paidRub?: number,
+): string {
+  return retryIntent(
+    eveningId,
+    'guest',
+    paidRub === undefined
+      ? { name: name.toLowerCase(), stacks }
+      : { name: name.toLowerCase(), stacks, paidRub },
+  );
 }
 
 export function useAddGuest(eveningId: string) {
@@ -458,8 +569,17 @@ export function useAddGuest(eveningId: string) {
   return useMutation({
     // Ключ повтора — по намерению «имя + кратность»: тот же гость, нажатый ещё раз после ошибки или
     // тайм-аута, уходит с прежним ключом, и сервер вернёт уже посаженного (миграция 019).
-    mutationFn: async ({ name, stacks = 1 }: { name: string; stacks?: number }) => {
-      const intent = guestRetryIntent(eveningId, name, stacks);
+    mutationFn: async ({
+      name,
+      stacks = 1,
+      paidRub,
+    }: {
+      name: string;
+      stacks?: number;
+      /** «Оплачено сразу»: платёж гостя на эту сумму тем же вызовом (миграция 020). */
+      paidRub?: number;
+    }) => {
+      const intent = guestRetryIntent(eveningId, name, stacks, paidRub);
       // Гость с этим ключом уже в журнале на экране — новый гость с тем же именем, а не повтор
       // (дошедшую без ответа попытку SeatSheet до этого показывает и переспрашивает).
       const journal = queryClient.getQueryData<EveningEventRecord[]>(
@@ -469,7 +589,7 @@ export function useAddGuest(eveningId: string) {
         Boolean(journal?.some((e) => e.clientId === key)),
       );
       try {
-        const id = await addGuest(eveningId, name, stacks, clientId);
+        const id = await addGuest(eveningId, name, stacks, clientId, paidRub);
         retryKeys.succeeded(intent);
         return id;
       } catch (error) {

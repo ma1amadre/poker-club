@@ -3,21 +3,28 @@
 // каждому), переключателя дележа нет — второй тап добавляет, а не молча заменяет первого. «Никто /
 // не знаю» — отдельная кнопка. В хедз-апе соперник отмечен заранее. Ребай — с выбором кратности
 // (×1 по умолчанию). Нокаут — только статистика, денег за голову нет.
+// Пока игрок может докупиться, в шторке вылета — «Вылет и ребай ×k» одной кнопкой (одно действие,
+// одна транзакция add_events), а в тосте после простого вылета — «Ребай» (открывает эту же шторку
+// ребая). «Оплачено сразу» у ребая — платёж на сумму взноса тем же действием (по умолчанию выключено).
 import { entryAmounts } from '@domain/money.ts';
+import { canApplySequence } from '@domain/replay.ts';
 import type { PlayerState } from '@domain/types.ts';
 import { useState } from 'react';
 import { formatNumber, formatRub, joinNames, NBSP, plural } from '../../shared/lib';
 import { Button, FieldGroup, Notice, PlayerPicker, Sheet } from '../../shared/ui';
 import {
   bustButtonLabel,
+  bustRebuyDrafts,
+  bustRebuyLabel,
   entryPayload,
   initialKillers,
   killersHint,
   playerLine,
   possibleKillers,
+  rebuyDrafts,
   rebuyWindow,
 } from './lib';
-import { StacksPicker } from './StacksPicker';
+import { PaidNowCheckbox, StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
@@ -29,6 +36,8 @@ export interface PlayerSheetProps {
   onClose: () => void;
   model: EveningModel;
   actions: EveningActions;
+  /** «Ребай» в тосте после вылета: открыть шторку ребая этого игрока. */
+  onRebuy?: (playerId: string) => void;
 }
 
 export function PlayerSheet({ player, ...rest }: PlayerSheetProps) {
@@ -41,6 +50,7 @@ function PlayerSheetInner({
   onClose,
   model,
   actions,
+  onRebuy,
 }: Omit<PlayerSheetProps, 'player'> & { player: PlayerState }) {
   const { state, nameOf, playersById, evening } = model;
   const name = nameOf(player.playerId);
@@ -53,14 +63,16 @@ function PlayerSheetInner({
   const [killers, setKillers] = useState<string[]>(() => initialKillers(state, player.playerId));
   const [unknown, setUnknown] = useState(false);
   const [stacks, setStacks] = useState(1);
-  const [sending, setSending] = useState(false);
+  const [paid, setPaid] = useState(false);
+  // Какое действие уходит: спиннер — на нажатой кнопке, остальные кнопки гаснут.
+  const [sending, setSending] = useState<'bust' | 'bust_rebuy' | 'rebuy' | null>(null);
   // Своя попытка не получила ответа (ошибка, тайм-аут): если запись всё же появится в журнале, это,
   // скорее всего, она, а не второе устройство.
   const [unanswered, setUnanswered] = useState(false);
   const format = evening.format;
   const rebuyAmounts = entryAmounts(format, stacks);
   // Пока идёт своя отправка, статус меняет наша же запись — это не «чужая» правка.
-  const overtaken = !sending && (mode === 'bust') !== current.alive;
+  const overtaken = sending === null && (mode === 'bust') !== current.alive;
 
   const alive = possibleKillers(state, current.playerId).map((id) => ({
     id,
@@ -78,33 +90,91 @@ function PlayerSheetInner({
   // Ребаи вот-вот закроются: запись, отправленная сейчас, может прийти на сервер уже после.
   const win = rebuyWindow(format, state);
   const closingSoon = win.kind === 'open' && win.msLeft !== null && win.msLeft < REBUY_EDGE_MS;
+  // Докупится ли игрок сразу после этого вылета: цепочка «вылет → ребай» по правилам replay (вылет
+  // может сам сменить уровень и закрыть ребаи, лимит ребаев мог кончиться).
+  const rebuyAfterBust =
+    mode === 'bust' &&
+    canApplySequence(
+      format,
+      model.events,
+      bustRebuyDrafts(format, { playerId: current.playerId, by: [] }, 1, false),
+      model.nowMs,
+    ) === null;
 
-  const bust = async () => {
-    setSending(true);
-    const record = await actions.send('bust', bustPayload, {
-      success: `Вылет записан: ${name}`,
-      detail:
-        by.length === 0
-          ? 'Кто выбил — не указано.'
-          : `${by.length > 1 ? 'Выбивают' : 'Выбивает'} ${joinNames(by.map(nameOf))}.`,
-      undo: true,
+  const killersDetail =
+    by.length === 0
+      ? 'Кто выбил — не указано.'
+      : `${by.length > 1 ? 'Выбивают' : 'Выбивает'} ${joinNames(by.map(nameOf))}.`;
+  // «Ребай на 1 000 ₽ оплачен сразу.» / «Ребай оплачен сразу: 500 ₽.» / «Ребай на 1 000 ₽.»
+  const rebuySum = formatRub(rebuyAmounts.rub);
+  const rebuyDetail = paid
+    ? stacks > 1
+      ? `Ребай на ${rebuySum} оплачен сразу.`
+      : `Ребай оплачен сразу: ${rebuySum}.`
+    : stacks > 1
+      ? `Ребай на ${rebuySum}.`
+      : '';
+
+  /**
+   * Отправка из шторки. Записано — шторка закрывается. Записано, но журнал принял не всё (ребай
+   * пришёл после закрытия) — тоже: тост уже объяснил, что принято, а что нет, повторять нечего, и
+   * «Вылет уже записан… первая попытка дошла» здесь было бы неправдой. Иначе (отказ до отправки,
+   * ошибка, тайм-аут) шторка остаётся, а запись, которая появится в журнале, — скорее всего, своя.
+   */
+  const run = async (
+    kind: NonNullable<typeof sending>,
+    act: (onRejected: () => void) => Promise<unknown>,
+  ) => {
+    setSending(kind);
+    const outcome = { rejected: false };
+    const done = await act(() => {
+      outcome.rejected = true;
     });
-    setSending(false);
-    if (record) onClose();
+    setSending(null);
+    if (done || outcome.rejected) onClose();
     else setUnanswered(true);
   };
 
-  const rebuy = async () => {
-    setSending(true);
-    const record = await actions.send('rebuy', rebuyPayload, {
-      success: `Ребай записан: ${name}`,
-      detail: stacks > 1 ? `Ребай на ${formatRub(rebuyAmounts.rub)}.` : undefined,
-      undo: true,
-    });
-    setSending(false);
-    if (record) onClose();
-    else setUnanswered(true);
+  const bust = () => {
+    const playerId = current.playerId;
+    return run('bust', (onRejected) =>
+      actions.send('bust', bustPayload, {
+        success: `Вылет записан: ${name}`,
+        detail: killersDetail,
+        undo: true,
+        // Пока игрок может докупиться, в тосте — «Ребай» (у тоста одна кнопка). Ошибочный вылет
+        // отменяется «Отменить последнее» в пульте или из ленты.
+        action:
+          onRebuy && rebuyAfterBust
+            ? { label: 'Ребай', onClick: () => onRebuy(playerId) }
+            : undefined,
+        onRejected,
+      }),
+    );
   };
+
+  const bustAndRebuy = () =>
+    run('bust_rebuy', (onRejected) =>
+      actions.sendAll(bustRebuyDrafts(format, bustPayload, stacks, paid), {
+        success: `Вылет и ребай: ${name}`,
+        detail: [killersDetail, rebuyDetail].filter(Boolean).join(' '),
+        undo: true,
+        onRejected,
+      }),
+    );
+
+  const rebuy = () =>
+    run('rebuy', (onRejected) => {
+      const options = {
+        success: `Ребай записан: ${name}`,
+        detail: rebuyDetail || undefined,
+        undo: true,
+        onRejected,
+      };
+      return paid
+        ? actions.sendAll(rebuyDrafts(format, current.playerId, stacks, true), options)
+        : actions.send('rebuy', rebuyPayload, options);
+    });
 
   const line = playerLine(current, format);
   const description = [current.alive ? 'В игре' : 'Вне игры', line].filter(Boolean).join(' · ');
@@ -130,20 +200,33 @@ function PlayerSheetInner({
       <Sheet
         open
         onClose={onClose}
-        dismissible={!sending}
+        dismissible={sending === null}
         title={`Вылет: ${name}`}
         description={description}
         actions={
-          <Button
-            variant="primary"
-            block
-            icon="user-x"
-            loading={sending}
-            disabled={!ready || Boolean(bustProblem)}
-            onClick={() => void bust()}
-          >
-            {bustButtonLabel(by.length, unknown)}
-          </Button>
+          <>
+            <Button
+              variant="primary"
+              block
+              icon="user-x"
+              loading={sending === 'bust'}
+              disabled={sending !== null || !ready || Boolean(bustProblem)}
+              onClick={() => void bust()}
+            >
+              {bustButtonLabel(by.length, unknown)}
+            </Button>
+            {rebuyAfterBust && (
+              <Button
+                block
+                icon="refresh-cw"
+                loading={sending === 'bust_rebuy'}
+                disabled={sending !== null || !ready || Boolean(bustProblem)}
+                onClick={() => void bustAndRebuy()}
+              >
+                {bustRebuyLabel(stacks)}
+              </Button>
+            )}
+          </>
         }
       >
         <div className="ev-sheet-body">
@@ -180,6 +263,34 @@ function PlayerSheetInner({
           >
             Никто / не знаю, кто выбил
           </Button>
+          {rebuyAfterBust && (
+            <div className="ev-rebuy-now">
+              {/* Та же гонка, что у шторки ребая: вылет придёт вовремя, а ребай — уже после. */}
+              {closingSoon && (
+                <Notice tone="caution" title="Ребаи закрываются">
+                  Осталось меньше {Math.ceil(REBUY_EDGE_MS / 1000)} секунд. «Вылет и ребай» может
+                  прийти на сервер уже после закрытия — тогда вылет запишется, а ребай журнал не
+                  примет, и об этом появится сообщение.
+                </Notice>
+              )}
+              <StacksPicker
+                format={format}
+                value={stacks}
+                onChange={setStacks}
+                label="Ребай"
+                note="Для «Вылет и ребай»: игрок сразу докупается и остаётся за столом."
+                disabled={sending !== null}
+              />
+              <PaidNowCheckbox
+                format={format}
+                checked={paid}
+                onChange={setPaid}
+                kind="rebuy"
+                stacks={stacks}
+                disabled={sending !== null}
+              />
+            </div>
+          )}
         </div>
       </Sheet>
     );
@@ -189,7 +300,7 @@ function PlayerSheetInner({
     <Sheet
       open
       onClose={onClose}
-      dismissible={!sending}
+      dismissible={sending === null}
       title={name}
       description={description}
       actions={
@@ -198,7 +309,7 @@ function PlayerSheetInner({
             variant="primary"
             block
             icon="refresh-cw"
-            loading={sending}
+            loading={sending === 'rebuy'}
             onClick={() => void rebuy()}
           >
             Записать ребай
@@ -224,7 +335,7 @@ function PlayerSheetInner({
               value={stacks}
               onChange={setStacks}
               label="Ребай"
-              disabled={sending}
+              disabled={sending !== null}
             />
             <p className="m-body">
               Ещё {formatRub(rebuyAmounts.rub)} банкиру и {formatNumber(rebuyAmounts.chips)}
@@ -233,6 +344,14 @@ function PlayerSheetInner({
               стол.
               {current.rebuys > 0 ? ` Ребаев у игрока: ${current.rebuys}.` : ''}
             </p>
+            <PaidNowCheckbox
+              format={format}
+              checked={paid}
+              onChange={setPaid}
+              kind="rebuy"
+              stacks={stacks}
+              disabled={sending !== null}
+            />
           </>
         )}
       </div>

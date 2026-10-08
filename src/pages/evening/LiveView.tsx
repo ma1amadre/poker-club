@@ -3,12 +3,15 @@
 // Пока на табло олл-ин, его панель (руки, стол, шансы, ауты) — первой на экране у всех.
 // У того, кто ведёт пульт, экран не гаснет (Screen Wake Lock; нельзя — подсказка отключить
 // автоблокировку), а закрытие Mini App Telegram переспрашивает: пульт — не место для случайного свайпа.
-import { computeMoney } from '@domain/money.ts';
+// У игрока, который пульт не ведёт, вверху — «Ты за столом» (статус, входы, нокауты, баланс с
+// банкиром), в списке — «(ты)», строки ведут в карточки игроков.
+import { computeMoney, paymentsFromEvents } from '@domain/money.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
 import type { PlayerState } from '@domain/types.ts';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { notifyEveningFinished, useRsvps } from '../../shared/api';
+import { useAuth } from '../../shared/auth';
 import {
   formatBlinds,
   formatNumber,
@@ -47,12 +50,13 @@ import {
   levelLabel,
   levelMovedText,
   levelNextClosesRebuys,
+  mySeat,
   rebuysClosingText,
   rebuyText,
   rebuyWindow,
   triggerProgress,
 } from './lib';
-import { EventFeed, PlayersList } from './parts';
+import { EventFeed, MySeatCard, PlayersList } from './parts';
 import { PlayerSheet } from './PlayerSheet';
 import { SeatSheet } from './SeatSheet';
 import { ShowdownSheet } from './ShowdownSheet';
@@ -76,6 +80,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
   const format = evening.format;
   const navigate = useNavigate();
   const toast = useToast();
+  const { player: me } = useAuth();
   const rsvps = useRsvps(canControl ? evening.id : undefined).data ?? [];
   const [selected, setSelected] = useState<PlayerState | null>(null);
   const [seatOpen, setSeatOpen] = useState(false);
@@ -96,6 +101,20 @@ export function LiveView({ model, actions }: LiveViewProps) {
     state.aliveCount === 1 ? state.joinOrder.find((id) => state.players[id]?.alive) : undefined;
   const money = computeMoney(format, state);
   const owedRub = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
+  const payments = paymentsFromEvents(events);
+  const paidRub = payments.reduce((s, p) => s + p.amountRub, 0);
+  // «Ты за столом» — тому, кто играет и не ведёт пульт (у банкира и админа наверху пульт).
+  const seat = !canControl && me ? mySeat(format, state, model.applied, payments, me.id) : null;
+
+  // «Ребай» в тосте после вылета: шторка ребая по свежему журналу (тост живёт дольше рендера).
+  const openRebuy = (playerId: string) => {
+    const fresh = actions.freshState().players[playerId];
+    if (fresh && !fresh.alive) setSelected(fresh);
+    else if (fresh)
+      toast.show(`${nameOf(playerId)} уже в игре`, {
+        detail: 'Ребай уже записан или вылет отменён — проверь ленту.',
+      });
+  };
 
   const undoTarget = lastUndoable(events);
 
@@ -210,6 +229,8 @@ export function LiveView({ model, actions }: LiveViewProps) {
           }
         />
       )}
+
+      {seat && <MySeatCard seat={seat} />}
 
       <Card>
         <div className="ev-clock" aria-live="off">
@@ -408,7 +429,8 @@ export function LiveView({ model, actions }: LiveViewProps) {
             Открыть расчёт
           </ButtonLink>
           <p className="m-small">
-            Взносы за вечер — {formatRub(owedRub)}. Платежи банкиру записываются в расчёте.
+            Взносы за вечер — {formatRub(owedRub)}, у банкира — {formatRub(paidRub)}. Платежи
+            записываются в расчёте или сразу при входе и ребае («Оплачено сразу»).
           </p>
         </div>
       )}
@@ -425,6 +447,8 @@ export function LiveView({ model, actions }: LiveViewProps) {
             nameOf={nameOf}
             playersById={playersById}
             onSelect={canControl ? setSelected : undefined}
+            linkPlayers={!canControl}
+            meId={me?.id}
           />
         ) : (
           <p className="m-small">За столом пока никого.</p>
@@ -446,6 +470,7 @@ export function LiveView({ model, actions }: LiveViewProps) {
             onClose={() => setSelected(null)}
             model={model}
             actions={actions}
+            onRebuy={openRebuy}
           />
           <SeatSheet
             open={seatOpen}

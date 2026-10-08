@@ -6,10 +6,12 @@ import {
   isSettled,
   payouts,
   paymentsFromEvents,
+  prepaidPayment,
   settlement,
   type MoneyTable,
+  type Payment,
 } from './money.ts';
-import { replay } from './replay.ts';
+import { readStacks, replay, replayLog } from './replay.ts';
 import { journal, prng } from './test-utils.ts';
 import type { EveningEvent, EveningState, PlayerId, TournamentFormat } from './types.ts';
 
@@ -677,5 +679,66 @@ describe('перебор: все маленькие вечера на трёх �
     // Перебор действительно большой и с ребаями ×3.
     expect(leaves).toBe(8 * 2820);
     expect(sawTripleRebuy).toBeGreaterThan(1000);
+  });
+});
+
+describe('«Оплачено сразу»: платёж на взнос тем же действием, что и вход', () => {
+  it('сумма — взнос входа или ребая кратности k', () => {
+    expect(prepaidPayment(F, 'A')).toEqual({ playerId: 'A', amountRub: 500 });
+    expect(prepaidPayment(F, 'A', 3)).toEqual({ playerId: 'A', amountRub: 1500 });
+    expect(prepaidPayment({ ...F, buyInRub: 333 }, 'B', 10)).toEqual({
+      playerId: 'B',
+      amountRub: 3330,
+    });
+  });
+
+  /** Платёж к каждому принятому входу и ребаю журнала — как если бы все платили сразу. */
+  const prepaidAll = (fmt: TournamentFormat, events: readonly EveningEvent[], nowMs: number) =>
+    replayLog(fmt, events, nowMs)
+      .applied.filter((e) => e.type === 'join' || e.type === 'rebuy')
+      .map((e): Payment => {
+        const id = (e.payload as { playerId: PlayerId }).playerId;
+        return prepaidPayment(fmt, id, readStacks(e.payload) ?? 1);
+      });
+
+  it('ручной вечер: по ходу игры все в расчёте, после финала банкир должен только призовые', () => {
+    const j = journal().join('A', 'B', 'C');
+    j.joinStacks('D', 2);
+    j.start();
+    j.wait(10).bust('D', ['A']);
+    j.rebuy('D', 3);
+    j.wait(10).bust('C', ['B']);
+    j.wait(10).bust('D', ['A']);
+    j.wait(10).bust('B', ['A']);
+    const open = replay(F, j.events, j.now());
+    const paidOpen = prepaidAll(F, j.events, j.now());
+    expect(sum(paidOpen.map((p) => p.amountRub))).toBe(open.prizePoolRub); // 500·3 + 1000 + 1500
+    expect(open.prizePoolRub).toBe(4000);
+    expect(isSettled(settlement(computeMoney(F, open), paidOpen))).toBe(true);
+
+    j.finish();
+    const s = replay(F, j.events, j.now());
+    const m = computeMoney(F, s);
+    const t = settlement(m, prepaidAll(F, j.events, j.now()));
+    expect(t.A).toMatchObject({ paidRub: 500, remainingRub: -2800, status: 'awaits' }); // 70 %
+    expect(t.B).toMatchObject({ paidRub: 500, remainingRub: -1200, status: 'awaits' }); // 30 %
+    expect(t.C).toMatchObject({ paidRub: 500, remainingRub: 0, status: 'settled' });
+    expect(t.D).toMatchObject({ paidRub: 2500, remainingRub: 0, status: 'settled' });
+  });
+
+  it('на 1000 сгенерированных вечерах: оплата сразу закрывает взносы, остаток — минус приз', () => {
+    const cov = newCoverage();
+    for (let seed = 7001; seed <= 8000; seed++) {
+      const { fmt, s, j } = randomEvening(seed, cov);
+      const paid = prepaidAll(fmt, j.events, j.now());
+      const m = computeMoney(fmt, s);
+      expect(sum(paid.map((p) => p.amountRub)), `seed ${seed}`).toBe(s.prizePoolRub);
+      const t = settlement(m, paid);
+      for (const id of s.joinOrder) {
+        expect((t[id]?.remainingRub ?? NaN) + (m[id]?.prizeRub ?? 0), `seed ${seed} ${id}`).toBe(0);
+      }
+      // Банкир раздаёт ровно то, что собрал: сумма остатков — минус фонд.
+      expect(sum(Object.values(t).map((r) => r.remainingRub))).toBe(-s.prizePoolRub);
+    }
   });
 });

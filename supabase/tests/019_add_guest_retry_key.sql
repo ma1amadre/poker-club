@@ -136,13 +136,13 @@ select pg_temp.check(:'g3_again' = :'g3',
 reset role;
 
 -- ===========================================================================
--- 5. Права и сигнатура
+-- 5. Права и сигнатура (с миграции 020 — ещё и p_paid_rub: (uuid, text, integer, uuid, integer))
 -- ===========================================================================
 select pg_temp.check(
-  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid)', 'execute')
-  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid)', 'execute')
-  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid)', 'execute'),
-  'add_guest(uuid, text, integer, uuid): authenticated и service_role, не anon');
+  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
+  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
+  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute'),
+  'add_guest(uuid, text, integer, uuid, integer): authenticated и service_role, не anon');
 select pg_temp.check(
   to_regprocedure('public.add_guest(uuid, text, integer)') is null
   and to_regprocedure('public.add_guest(uuid, text)') is null,

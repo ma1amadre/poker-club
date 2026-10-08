@@ -1,4 +1,6 @@
-// Вечер в анонсе: формат, кто идёт, свой ответ; у банкира и админа — сбор стола и старт.
+// Вечер в анонсе: формат, кто идёт, свой ответ и прогноз; у банкира и админа — сбор стола и старт.
+// Сюда ведут кнопки анонса и поста в день игры: анонс зовёт ответить и сделать прогноз, поэтому
+// блок прогноза (тот же, что на главной) стоит сразу под ответом «иду».
 import { useState } from 'react';
 import {
   type Rsvp,
@@ -6,6 +8,7 @@ import {
   RSVP_ORDER,
   RSVP_STATUS_META,
   type RsvpStatus,
+  usePlayers,
   useRsvps,
   useSetRsvp,
 } from '../../shared/api';
@@ -28,6 +31,7 @@ import {
 import { eventPlayerId, rsvpSegmentValue } from './lib';
 import { FormatSummary, PlayersList } from './parts';
 import { PayoutSheet } from './PayoutSheet';
+import { PredictionSection } from './PredictionSection';
 import { SeatSheet } from './SeatSheet';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -41,6 +45,8 @@ export interface AnnouncedViewProps {
 
 export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
   const { evening, state, nameOf, playersById, canControl } = model;
+  const { player: me } = useAuth();
+  const players = usePlayers().data ?? [];
   const rsvpsQuery = useRsvps(evening.id);
   const rsvps = rsvpsQuery.data ?? [];
   const [seatOpen, setSeatOpen] = useState(false);
@@ -94,6 +100,7 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
               label="За столом"
               onSelect={(p) => unseat(p.playerId)}
               chevron={false}
+              meId={me?.id}
             />
           ) : (
             <p className="m-small">
@@ -137,11 +144,23 @@ export function AnnouncedView({ model, actions }: AnnouncedViewProps) {
             nameOf={nameOf}
             playersById={playersById}
             label="За столом"
+            linkPlayers
+            meId={me?.id}
           />
         </Section>
       )}
 
       <MyRsvp eveningId={evening.id} rsvps={rsvps} loaded={rsvpsQuery.isSuccess} />
+
+      {me && !me.is_guest && (
+        <PredictionSection
+          evening={evening}
+          me={me}
+          players={players}
+          playersById={playersById}
+          rsvps={rsvps}
+        />
+      )}
 
       <Section
         title="Кто идёт"

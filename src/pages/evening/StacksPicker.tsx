@@ -1,9 +1,10 @@
 // Кратность входа или ребая на пульте банкира: ×1 по умолчанию, до ×10. Сумма и фишки видны
-// сразу — банкир сверяет их с деньгами в руке. Весь взнос идёт в фонд.
+// сразу — банкир сверяет их с деньгами в руке. Весь взнос идёт в фонд. Рядом — «Оплачено сразу»:
+// вместе с входом или ребаем пишется платёж на сумму взноса (PaidNowCheckbox).
 import { MAX_ENTRY_STACKS, type TournamentFormat } from '@domain/types.ts';
 import { haptic } from '../../shared/telegram';
-import { FieldGroup, IconButton } from '../../shared/ui';
-import { stacksAmountText } from './lib';
+import { Checkbox, FieldGroup, IconButton } from '../../shared/ui';
+import { prepaidHint, stacksAmountText } from './lib';
 
 export interface StacksPickerProps {
   format: TournamentFormat;
@@ -52,5 +53,46 @@ export function StacksPicker({
         />
       </div>
     </FieldGroup>
+  );
+}
+
+export interface PaidNowCheckboxProps {
+  format: TournamentFormat;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  /** Что оплачивается: вход (посадка) или ребай. */
+  kind: 'entry' | 'rebuy';
+  /** Кратность — сумма платежа в подсказке. */
+  stacks: number;
+  /** Посадка нескольких: у каждого свой платёж. */
+  many?: boolean;
+  disabled?: boolean;
+}
+
+/**
+ * «Оплачено сразу»: по умолчанию выключено. Применяется вместе с главной кнопкой шторки, поэтому
+ * Checkbox, а не Switch (у Switch «Материи» — мгновенный эффект).
+ */
+export function PaidNowCheckbox({
+  format,
+  checked,
+  onChange,
+  kind,
+  stacks,
+  many,
+  disabled,
+}: PaidNowCheckboxProps) {
+  return (
+    <Checkbox
+      className="ev-paid"
+      label="Оплачено сразу"
+      description={prepaidHint(format, kind, stacks, many)}
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => {
+        haptic.selection();
+        onChange(event.currentTarget.checked);
+      }}
+    />
   );
 }

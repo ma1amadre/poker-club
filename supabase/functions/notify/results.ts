@@ -5,12 +5,15 @@ import {
   computeAchievements,
   computeMoney,
   diffAchievements,
+  eveningClubNews,
+  hasClubNews,
   replay,
   scorePrediction,
   seasonKey,
   summarize,
   voteResults,
   type Achievement,
+  type EveningClubNews,
   type EveningEvent,
   type EveningSummary,
   type EventPayload,
@@ -62,6 +65,8 @@ export interface EveningRow {
   gameday_posted_at: string | null;
   results_posted_at: string | null;
   voting_posted_at: string | null;
+  /** Напоминание о голосовании ушло или не понадобилось (миграция 021). */
+  voting_reminder_posted_at: string | null;
   /** > 0 — итог уже публиковался и устарел (отмена finish или правка): пост «Исправленные итоги». */
   results_revision: number;
   /** Что группа знает о вечере из постов бота (миграция 008, _shared/announce.ts). */
@@ -74,7 +79,7 @@ export interface EveningRow {
 
 // Одной строкой-литералом: из конкатенации supabase-js не выводит тип строк select.
 export const EVENING_COLUMNS =
-  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, gameday_posted_at, results_posted_at, voting_posted_at, results_revision, announce_snapshot, cancel_reason, scoring';
+  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, gameday_posted_at, results_posted_at, voting_posted_at, voting_reminder_posted_at, results_revision, announce_snapshot, cancel_reason, scoring';
 
 interface PlayerRow {
   id: string;
@@ -372,6 +377,7 @@ export async function buildResultsPost(
   const lastMs = events.reduce((m, e) => Math.max(m, Date.parse(e.at) || 0), 0);
   const state = replay(evening.format, events, lastMs);
   const money = computeMoney(evening.format, state);
+  const clubNews = clubNewsOf(history, evening.id, guests, settings.season_best_n);
 
   return resultsPost({
     eveningId: evening.id,
@@ -389,7 +395,42 @@ export async function buildResultsPost(
     nowMs,
     botUsername: settings.bot_username,
     corrected: corrected || evening.results_revision > 0,
+    clubNews,
   });
+}
+
+/**
+ * «Жизнь клуба» вечера для поста итогов: угаданные прогнозы, рекорды, звания, сдвиг в сезоне —
+ * из уже загруженной истории (loadHistory). Блок — дополнение: если подсчёт упал, пост итогов
+ * уходит без него (ошибка — в лог), а не застревает.
+ */
+export function clubNewsOf(
+  history: ClubHistory,
+  eveningId: string,
+  guests: ReadonlySet<PlayerId>,
+  bestN: number,
+): EveningClubNews | null {
+  try {
+    const news = eveningClubNews(
+      {
+        summaries: history.summaries,
+        excluded: guests,
+        predictions: history.predictions.map((p) => ({
+          eveningId: p.evening_id,
+          playerId: p.player_id,
+          winnerId: p.winner_id,
+          firstOutId: p.first_out_id,
+        })),
+        bestN,
+        bestNBySeason: history.bestNBySeason,
+      },
+      eveningId,
+    );
+    return hasClubNews(news) ? news : null;
+  } catch (error) {
+    console.error(`«Жизнь клуба» вечера ${eveningId} не посчитана: ${describeError(error)}`);
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +442,11 @@ export async function buildResultsPost(
 // между отметкой и отправкой пост потеряется; дубль в группе хуже.
 
 export type PostColumn =
-  'announce_posted_at' | 'gameday_posted_at' | 'results_posted_at' | 'voting_posted_at';
+  | 'announce_posted_at'
+  | 'gameday_posted_at'
+  | 'results_posted_at'
+  | 'voting_posted_at'
+  | 'voting_reminder_posted_at';
 
 /**
  * statuses — дополнительно требовать статус вечера (итоги — только у завершённого).

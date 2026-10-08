@@ -11,24 +11,35 @@
 // - Объявления — voiceStep по кадрам раз в секунду; первый кадр — точка отсчёта, так что история
 //   вечера при открытии не зачитывается. Пока голос выключен, кадры и память сказанного идут, но
 //   в очередь ничего не попадает — после включения звучит только новое.
+// - Проверка звука: голос заработал (нажатие кнопки, первое нажатие пульта после перезагрузки,
+//   звук проснулся) — «Голос включён.». Клип может ещё грузиться: ждём его до HELLO_WAIT_MS, не
+//   пришёл (фраза не озвучена, нет сети) — молчим, как с любой неозвученной фразой.
+// - Чего не хватает (gaps): имена, фразы уровней и фиксированные фразы, которых сервер не нашёл, —
+//   для подвала табло (voiceGapNotes): имя пропадёт из фразы, остальное табло пропустит.
 import {
   announcementVariants,
   clipHash,
   eveningVoiceTexts,
+  FIXED_TEXTS,
+  levelTexts,
   normalizeSpeech,
   speakableName,
   VOICE_ID,
+  type Announcement,
 } from '@domain/voice.ts';
 import type { EveningEvent, EveningState } from '@domain/types.ts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchVoiceClips, VOICE_CLIPS_CHUNK, type BoardState } from '../../shared/api';
 import { voiceFrame, voiceStep, type VoiceFrame } from './announcer';
+import { NO_VOICE_GAPS, type VoiceGaps } from './boardView';
 import { ClipLoader } from './clipLoader';
 import { base64Bytes, isVoiceToggleGesture, VoicePlayer, voiceSupported } from './voicePlayer';
 
 const PREF_KEY = 'poker-club:board-voice';
 /** Как часто проверять, не пора ли догрузить клипы (повторы — по срокам ClipLoader). */
 const LOAD_CHECK_MS = 5_000;
+/** Сколько ждать клип «Голос включён.» после включения: позже проверка звука уже не к месту. */
+const HELLO_WAIT_MS = 15_000;
 
 function readPref(): boolean {
   try {
@@ -51,8 +62,8 @@ export type VoiceStatus = 'unsupported' | 'off' | 'needs_tap' | 'on';
 export interface BoardVoice {
   /** off — выключен; needs_tap — включён, но браузер ждёт нажатия; on — говорит. */
   status: VoiceStatus;
-  /** Сколько нужных этому вечеру фраз ещё не озвучено (нет в базе). */
-  missing: number;
+  /** Чего голосу не хватает на этом вечере (сервер ответил, а клипа нет). */
+  gaps: VoiceGaps;
   /** Нажатие кнопки: включить (и разбудить звук) или выключить. */
   press: () => void;
 }
@@ -138,7 +149,10 @@ export function useBoardVoice({ token, data, state, applied, nowMs }: Args): Boa
   // пришедшее за это время подхватит следующая проверка.
   // Загрузчик живёт вместе со своим проигрывателем (StrictMode в dev пересоздаёт проигрыватель).
   const loaderRef = useRef<{ player: VoicePlayer; loader: ClipLoader } | null>(null);
-  const [missing, setMissing] = useState(0);
+  const [gaps, setGaps] = useState<VoiceGaps>(NO_VOICE_GAPS);
+  // Что считать пробелом: имена игроков вечера, фразы уровней формата, фиксированные фразы.
+  const players = data.players;
+  const format = data.format;
   const loadTick = Math.floor(nowMs / LOAD_CHECK_MS);
   useEffect(() => {
     if (!enabled) return;
@@ -156,15 +170,38 @@ export function useBoardVoice({ token, data, state, applied, nowMs }: Args): Boa
     if (due.length === 0) return;
     void loader
       .load(due, (chunk) => fetchVoiceClips(token, VOICE_ID, chunk), VOICE_CLIPS_CHUNK, Date.now)
-      .then(() => setMissing(loader.missing(hashes())));
-  }, [enabled, token, textsKey, hashVersion, loadTick, getPlayer]);
+      .then(() => {
+        const isMissing = (text: string) => {
+          const h = hashOf.current.get(normalizeSpeech(text));
+          return h !== undefined && loader.isMissing(h);
+        };
+        const next: VoiceGaps = {
+          names: players
+            .filter((p) => {
+              const name = names.get(p.id);
+              return name !== null && name !== undefined && isMissing(name);
+            })
+            .map((p) => p.display_name),
+          levels: levelTexts(format).filter(isMissing).length,
+          phrases: FIXED_TEXTS.filter(isMissing).length,
+        };
+        setGaps((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      });
+  }, [enabled, token, textsKey, hashVersion, loadTick, getPlayer, players, names, format]);
 
   // --- Объявления -----------------------------------------------------------------------------
+  // Проверка звука: голос заработал — ждём клип «Голос включён.» (см. шапку).
+  const on = supported && enabled && running;
+  const helloUntil = useRef<number | null>(null);
+  useEffect(() => {
+    helloUntil.current = on ? Date.now() + HELLO_WAIT_MS : null;
+  }, [on]);
+
   // Шаг детектора — на каждом кадре, и при выключенном голосе: память сказанного (уровень,
   // минута, ребаи) должна идти вместе с вечером.
   const prevFrame = useRef<{ eveningId: string; frame: VoiceFrame } | null>(null);
   useEffect(() => {
-    const frame = voiceFrame(data.events, { state, applied }, nowMs);
+    const frame = voiceFrame(data.format, data.events, { state, applied }, nowMs);
     const prev = prevFrame.current;
     if (!prev || prev.eveningId !== data.evening.id) {
       prevFrame.current = { eveningId: data.evening.id, frame };
@@ -175,16 +212,23 @@ export function useBoardVoice({ token, data, state, applied, nowMs }: Args): Boa
     const player = playerRef.current;
     if (!enabled || !player?.running) return;
     const hashFor = (text: string) => hashOf.current.get(normalizeSpeech(text));
-    for (const announcement of say) {
+    // Первый вариант, все клипы которого загружены; нет такого — false (объявление пропадает).
+    const speak = (announcement: Announcement): boolean => {
       const variants = announcementVariants(announcement, (id) => names.get(id) ?? null);
       for (const clips of variants) {
         const hashes = clips.map(hashFor);
         if (hashes.every((h): h is string => h !== undefined && player.has(h))) {
           player.enqueue(hashes);
-          break;
+          return true;
         }
       }
+      return false;
+    };
+    const hello = helloUntil.current;
+    if (hello !== null) {
+      if (Date.now() > hello || speak({ kind: 'voice_on' })) helloUntil.current = null;
     }
+    for (const announcement of say) speak(announcement);
     // state/applied — новый объект на каждый рендер; лишний прогон сравнит одинаковые кадры и
     // промолчит.
   }, [nowMs, data, state, applied, enabled, names]);
@@ -217,5 +261,5 @@ export function useBoardVoice({ token, data, state, applied, nowMs }: Args): Boa
       : running
         ? 'on'
         : 'needs_tap';
-  return { status, missing: enabled ? missing : 0, press };
+  return { status, gaps: enabled ? gaps : NO_VOICE_GAPS, press };
 }

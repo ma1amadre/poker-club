@@ -5,11 +5,17 @@
 // в рантайме функций не гарантированы, а часовые пояса нужны и так (сезоны домена на них же).
 import {
   ACHIEVEMENT_META,
+  RECORD_META,
+  TITLE_META,
   VOTE_CATEGORIES,
   VOTE_CATEGORY_META,
   type Achievement,
+  type EveningClubNews,
   type MoneyTable,
   type PlayerId,
+  type RecordBreak,
+  type RecordKind,
+  type TitleChange,
   type TournamentFormat,
   type VoteCategory,
   type VoteResult,
@@ -161,6 +167,28 @@ function countPhrase(
 function joinNames(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? '';
   return `${names.slice(0, -1).join(', ')} и ${names[names.length - 1]}`;
+}
+
+/** Очки: «1 очко», «12 очков», «12,5 очка» (дробное — всегда «очка»). */
+export function formatPoints(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  if (Number.isInteger(rounded)) {
+    return `${formatInt(rounded)}${NBSP}${plural(rounded, ['очко', 'очка', 'очков'])}`;
+  }
+  const [whole = '0', fraction = ''] = String(Math.abs(rounded)).split('.');
+  const sign = rounded < 0 ? MINUS : '';
+  return `${sign}${formatInt(Number(whole))},${fraction}${NBSP}очка`;
+}
+
+/** «3 ч 20 мин» — как длина игры в приложении (formatDuration во фронте). */
+export function formatDuration(ms: number): string {
+  const totalMinutes = Math.floor(Math.max(0, ms) / 60_000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0 && minutes === 0) return 'меньше минуты';
+  if (hours === 0) return `${minutes}${NBSP}мин`;
+  if (minutes === 0) return `${hours}${NBSP}ч`;
+  return `${hours}${NBSP}ч ${minutes}${NBSP}мин`;
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +369,17 @@ export interface GamedayPostInput {
   botUsername: string | null;
   /** «Сегодня» / «завтра» — относительно этого момента, по Москве. */
   nowMs: number;
+  /** Сколько прогнозов на вечер уже сделано (непустые строки predictions, predictionsMade). */
+  predictionsMade: number;
+}
+
+/**
+ * Строка о прогнозах в посте дня игры: прогноз принимается, пока вечер объявлен (set_prediction),
+ * то есть до старта таймера. Сколько сделано — без содержимого: чужие прогнозы до старта скрыты (RLS).
+ */
+export function predictionsLine(made: number): string {
+  const n = Math.max(0, Math.trunc(made));
+  return `Прогнозы закрываются со стартом — ${n > 0 ? `сделано ${n}` : 'пока ни одного'}.`;
 }
 
 /** Сколько московских календарных дней от nowMs до iso: 0 — сегодня, 1 — завтра. */
@@ -392,7 +431,8 @@ const GAMEDAY_TRIM_ORDER: readonly GamedayList[] = ['no', 'maybe', 'pending', 'y
 
 /**
  * Пост в день игры: когда и где, банкир, кто идёт, под вопросом, не идёт и кто из постоянных
- * игроков ещё не ответил (с упоминанием). Нет места или банкира — так и пишем. Из эмодзи — только масти:
+ * игроков ещё не ответил (с упоминанием), в конце — сколько сделано прогнозов (predictionsLine). Нет
+ * места или банкира — так и пишем. Из эмодзи — только масти:
  * ♠️ в заголовке и ♣️ на кнопке (решение пользователя), строки списков — чистый текст.
  *
  * Длина. В «Ещё не ответили» попадают все активные постоянные игроки, а tg-auth заводит игрока на
@@ -458,6 +498,7 @@ export function gamedayPost(input: GamedayPostInput): Post {
           : maybe
             ? 'Кто под вопросом — отметьтесь, идёте ли.'
             : PLANS_LINE,
+      predictionsLine(input.predictionsMade),
     );
     return lines.join('\n');
   };
@@ -503,6 +544,8 @@ export interface ResultsPostInput {
   nowMs: number; // «голосование открыто до …» пишем, только если оно ещё не закрылось
   /** Итог уже публиковался и был исправлен (отмена finish или правка журнала админом). */
   corrected?: boolean;
+  /** «Жизнь клуба» (домен — eveningClubNews); нет или рассказывать нечего — блока нет. */
+  clubNews?: EveningClubNews | null;
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -512,22 +555,33 @@ const titleOf = (a: Achievement): string => escapeHtml(ACHIEVEMENT_META[a.code]?
 /** Сезонные ачивки — по порядку важности, а не по алфавиту кодов. */
 const SEASON_ORDER: readonly Achievement['code'][] = ['champion', 'rebuy_king', 'iron_chair'];
 
+/** Ачивки вечера — строкой на игрока. */
+function eveningAchievementLines(
+  list: readonly Achievement[],
+  names: Record<PlayerId, string>,
+): string[] {
+  const name = (id: PlayerId): string => escapeHtml(names[id] ?? 'Игрок');
+  const evening = list.filter((a) => a.seasonKey === null);
+  if (evening.length === 0) return [];
+  return [
+    '',
+    '🏅 <b>Новые ачивки</b>',
+    ...evening.map(
+      (a) => `• ${name(a.playerId)} — «${titleOf(a)}»${a.count > 1 ? ` ×${a.count}` : ''}`,
+    ),
+  ];
+}
+
 /**
- * Блок ачивок: ачивки вечера — строкой на игрока, сезонные (их приносит первый вечер нового
- * квартала) — отдельным блоком «итоги сезона», по званию со списком игроков.
+ * Сезонные ачивки (их приносит первый вечер нового квартала) — отдельным блоком «итоги сезона»,
+ * по званию со списком игроков. В посте — после всего, что касается самого вечера.
  */
-function achievementLines(list: readonly Achievement[], names: Record<PlayerId, string>): string[] {
+function seasonAchievementLines(
+  list: readonly Achievement[],
+  names: Record<PlayerId, string>,
+): string[] {
   const name = (id: PlayerId): string => escapeHtml(names[id] ?? 'Игрок');
   const lines: string[] = [];
-
-  const evening = list.filter((a) => a.seasonKey === null);
-  if (evening.length > 0) {
-    lines.push('', '🏅 <b>Новые ачивки</b>');
-    for (const a of evening) {
-      lines.push(`• ${name(a.playerId)} — «${titleOf(a)}»${a.count > 1 ? ` ×${a.count}` : ''}`);
-    }
-  }
-
   const seasons = [...new Set(list.map((a) => a.seasonKey).filter((k): k is string => k !== null))];
   for (const key of seasons.sort()) {
     const inSeason = list.filter((a) => a.seasonKey === key);
@@ -543,6 +597,161 @@ function achievementLines(list: readonly Achievement[], names: Record<PlayerId, 
     }
   }
   return lines;
+}
+
+// ---------------------------------------------------------------------------
+// «Жизнь клуба» в посте итогов: прогнозы, рекорды, звания, сезон — по строке на тему
+// ---------------------------------------------------------------------------
+// Что рассказывать, считает домен (eveningClubNews); здесь только текст. Обращение — к группе, о
+// людях — без рода: «Победителя угадали: Саша», «Звания: «Форма» — Саша». Из эмодзи — только масти
+// (решение пользователя для новых постов и строк): ♣️ в заголовке блока.
+
+/** Ключ сортировки по имени без локали (как в посте дня игры): регистр и «ё». */
+const nameKey = (name: string): string => name.trim().toLowerCase().replace(/ё/g, 'е');
+
+/** Значение рекорда: «+2 300 ₽», «6 000 ₽», «4 нокаута», «3 победы подряд», «3 ч 20 мин». */
+export function recordValue(kind: RecordKind, value: number): string {
+  switch (kind) {
+    case 'biggest_win':
+      return value > 0 ? `+${formatRub(value)}` : formatRub(value);
+    case 'biggest_pool':
+      return formatRub(value);
+    case 'longest_game':
+      return formatDuration(value);
+    case 'most_kos':
+      return `${value}${NBSP}${plural(value, ['нокаут', 'нокаута', 'нокаутов'])}`;
+    case 'win_streak':
+      return `${value}${NBSP}${plural(value, ['победа', 'победы', 'побед'])} подряд`;
+  }
+}
+
+const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+
+/**
+ * Строка рекордов: «Новый рекорд клуба: самый большой фонд — 6 000 ₽ (прежний — 5 000 ₽).»
+ * Несколько — через «;», без прежних значений (их показывает вкладка «Рекорды»); вперемешку новые и
+ * повторённые — «Рекорды клуба: …», у повторённых пометка «(повторён)».
+ */
+function recordsLine(records: readonly RecordBreak[], name: (id: PlayerId) => string): string {
+  const allNew = records.every((r) => r.status === 'new');
+  const allEqualled = records.every((r) => r.status === 'equalled');
+  const single = records.length === 1;
+  const label = allNew
+    ? single
+      ? 'Новый рекорд клуба'
+      : 'Новые рекорды клуба'
+    : allEqualled
+      ? single
+        ? 'Рекорд клуба повторён'
+        : 'Повторены рекорды клуба'
+      : 'Рекорды клуба';
+  const parts = records.map((r) => {
+    const who = r.playerIds.length > 0 ? `${joinNames(r.playerIds.map(name))}, ` : '';
+    const was =
+      single && r.status === 'new' && r.previous !== null
+        ? ` (прежний — ${recordValue(r.kind, r.previous)})`
+        : '';
+    const mark = !allNew && !allEqualled && r.status === 'equalled' ? ' (повторён)' : '';
+    return `${lowerFirst(RECORD_META[r.kind].title)} — ${who}${recordValue(r.kind, r.value)}${was}${mark}`;
+  });
+  return `${label}: ${parts.join('; ')}.`;
+}
+
+/**
+ * Строка званий: «Звания: «Форма» — Саша (прежде — Дима); Дима — Немезида игрока Лёша.» Немезиды
+ * одного держателя — вместе: «Дима — Немезида игроков Саша и Лёша».
+ */
+function titlesLine(changes: readonly TitleChange[], name: (id: PlayerId) => string): string {
+  const parts: string[] = [];
+  const form = changes.find((t) => t.title === 'form');
+  if (form) {
+    const before = form.from !== null ? ` (прежде — ${name(form.from)})` : '';
+    parts.push(`«${TITLE_META.form.title}» — ${name(form.to)}${before}`);
+  }
+  const victimsBy = new Map<PlayerId, PlayerId[]>();
+  for (const t of changes) {
+    if (t.title !== 'nemesis' || t.victimId === null) continue;
+    victimsBy.set(t.to, [...(victimsBy.get(t.to) ?? []), t.victimId]);
+  }
+  for (const [holder, victims] of victimsBy) {
+    const whom = `${victims.length > 1 ? 'игроков' : 'игрока'} ${joinNames(victims.map(name))}`;
+    parts.push(`${name(holder)} — ${TITLE_META.nemesis.title} ${whom}`);
+  }
+  return `Звания: ${parts.join('; ')}.`;
+}
+
+/** Строка сезона: новый лидер (или делёж первого места) и самый большой подъём в таблице. */
+function seasonLine(
+  season: NonNullable<EveningClubNews['season']>,
+  name: (id: PlayerId) => string,
+): string {
+  const parts: string[] = [];
+  const [leader] = season.leaders;
+  if (leader && season.leaders.length === 1) {
+    parts.push(
+      season.leadersBefore.includes(leader.playerId)
+        ? `${name(leader.playerId)} — единоличный лидер, ${formatPoints(leader.total)}`
+        : `новый лидер — ${name(leader.playerId)}, ${formatPoints(leader.total)}`,
+    );
+  } else if (leader) {
+    parts.push(
+      `первое место делят ${joinNames(season.leaders.map((l) => name(l.playerId)))} — ` +
+        `по ${formatPoints(leader.total)}`,
+    );
+  }
+  const [climb] = season.climbers;
+  if (climb && season.climbers.length === 1) {
+    parts.push(`рывок — ${name(climb.playerId)}, с ${climb.from}-го места на ${climb.to}-е`);
+  } else if (climb) {
+    const by = climb.from - climb.to;
+    parts.push(
+      `рывок на ${by} ${plural(by, ['место', 'места', 'мест'])} вверх — ` +
+        joinNames(season.climbers.map((c) => name(c.playerId))),
+    );
+  }
+  return `Сезон: ${parts.join('; ')}.`;
+}
+
+/**
+ * Блок «Жизнь клуба» поста итогов: заголовок и до четырёх строк — прогнозы, рекорды, звания, сезон.
+ * Строка темы — только если в ней есть что сказать; нечего во всех — блока нет (пустой массив).
+ */
+export function clubNewsLines(news: EveningClubNews, names: Record<PlayerId, string>): string[] {
+  const name = (id: PlayerId): string => escapeHtml(names[id] ?? 'Игрок');
+  const byName = (ids: readonly PlayerId[]): string =>
+    joinNames(
+      [...ids]
+        .sort((a, b) => {
+          const x = nameKey(names[a] ?? '');
+          const y = nameKey(names[b] ?? '');
+          return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
+        })
+        .map(name),
+    );
+
+  const lines: string[] = [];
+  const p = news.predictions;
+  if (p.made > 0) {
+    const guessed = [
+      p.winnerGuessedBy.length > 0 && `Победителя угадали: ${byName(p.winnerGuessedBy)}.`,
+      p.firstOutGuessedBy.length > 0 && `Первый вылет угадали: ${byName(p.firstOutGuessedBy)}.`,
+    ].filter((s): s is string => typeof s === 'string');
+    lines.push(
+      guessed.length > 0
+        ? guessed.join(' ')
+        : `${p.made === 1 ? 'Прогноз не сбылся' : 'Прогнозы не сбылись'}: ` +
+            'победителя и первый вылет никто не угадал.',
+    );
+  }
+  // Повторённый рекорд вечера (фонд, длина игры) — не новость: фонд повторяется всякий раз, когда
+  // играет столько же человек без ребаев. Повторённый рекорд игрока — история, его оставляем.
+  const records = news.records.filter(
+    (r) => r.status === 'new' || RECORD_META[r.kind].scope === 'player',
+  );
+  if (records.length > 0) lines.push(recordsLine(records, name));
+  if (news.titleChanges.length > 0) lines.push(titlesLine(news.titleChanges, name));
+  if (news.season) lines.push(seasonLine(news.season, name));
+  return lines.length > 0 ? ['', '♣️ <b>Жизнь клуба</b>', ...lines] : [];
 }
 
 export function resultsPost(input: ResultsPostInput): Post {
@@ -589,7 +798,9 @@ export function resultsPost(input: ResultsPostInput): Post {
     lines.push(`🎯 Лучший охотник: ${joinNames(hunters)} — ${kos}`);
   }
 
-  lines.push(...achievementLines(input.newAchievements, input.names));
+  lines.push(...eveningAchievementLines(input.newAchievements, input.names));
+  if (input.clubNews) lines.push(...clubNewsLines(input.clubNews, input.names));
+  lines.push(...seasonAchievementLines(input.newAchievements, input.names));
 
   let buttons: UrlButton[] = [];
   // Итоги, добитые cron-tick после закрытия голосования, не зовут голосовать «до вчера».
@@ -649,6 +860,43 @@ export function votingPost(input: VotingPostInput): Post | null {
       `⭐ Победители номинаций получают ачивку «${ACHIEVEMENT_META.star.title}».`,
     ].join('\n'),
     buttons: appButton(input.botUsername, '♥️ Смотреть голоса', `v_${input.eveningId}`),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Напоминание о голосовании (cron-tick, за 3 ч до закрытия; когда — _shared/votingReminder.ts)
+// ---------------------------------------------------------------------------
+
+export interface VotingReminderPostInput {
+  eveningId: string;
+  scheduledAt: string;
+  votingClosesAt: string;
+  /** Сколько игроков вечера уже проголосовали хотя бы в одной номинации. */
+  voted: number;
+  /** Сколько игроков вечера могут голосовать (votingTurnout). */
+  eligible: number;
+  botUsername: string | null;
+}
+
+/**
+ * «проголосовали 3 из 7», «проголосовал 1 из 7» (число на 1 — глагол в единственном),
+ * «пока никто не проголосовал».
+ */
+export function turnoutText(voted: number, eligible: number): string {
+  if (voted <= 0) return 'пока никто не проголосовал';
+  const one = voted % 10 === 1 && voted % 100 !== 11;
+  return `${one ? 'проголосовал' : 'проголосовали'} ${voted} из ${eligible}`;
+}
+
+/** Из эмодзи — только масти (решение пользователя для новых постов): ♠️ в заголовке, ♣️ на кнопке. */
+export function votingReminderPost(input: VotingReminderPostInput): Post {
+  return {
+    text: [
+      `♠️ <b>Голосование закрывается в ${formatClubTime(input.votingClosesAt)} — ` +
+        `${turnoutText(input.voted, input.eligible)}</b>`,
+      `Кто играл и ещё не голосовал — выберите руку, блеф и бэд-бит вечера ${formatClubDate(input.scheduledAt)}.`,
+    ].join('\n'),
+    buttons: appButton(input.botUsername, '♣️ Голосовать', `v_${input.eveningId}`),
   };
 }
 
