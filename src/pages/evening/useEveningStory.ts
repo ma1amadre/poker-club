@@ -3,6 +3,7 @@
 // eveningStory. Итог вечера сводится из того же журнала, что на экране (а не берётся из истории
 // клуба: история на чужом устройстве после правки админом может отставать), и подменяет собой
 // этот вечер в истории — месть, рекорды и лидер сезона считаются по экрану.
+import type { Achievement } from '@domain/achievements.ts';
 import { allInsFromApplied, type AllIn } from '@domain/allins.ts';
 import { eveningStory, type StoryItem } from '@domain/story.ts';
 import { summarize, type EveningSummary } from '@domain/summary.ts';
@@ -24,10 +25,15 @@ export interface EveningStoryState {
   pending: boolean;
 }
 
+/**
+ * `shown` — ачивки, которые экран уже показывает зрителю в «Твоём вечере» (eveningRecap.newAchievements):
+ * строки сюжета о них не повторяются (у остальных зрителей они остаются).
+ */
 export function useEveningStory(
   model: Pick<EveningModel, 'evening' | 'events' | 'applied' | 'state'>,
   history: { data: ClubHistory | undefined; isPending: boolean },
   settings: Settings | null | undefined,
+  shown?: readonly Achievement[],
 ): EveningStoryState {
   const { evening, events, applied, state } = model;
   const allIns = useMemo(() => allInsFromApplied(applied), [applied]);
@@ -59,6 +65,8 @@ export function useEveningStory(
       allIns,
       swings,
       excluded: club?.excluded ?? new Set(),
+      // Тренировка ачивок не даёт (в историю клуба не входит).
+      training,
       club:
         club && !training
           ? {
@@ -71,8 +79,9 @@ export function useEveningStory(
               bestNBySeason: club.bestNBySeason,
             }
           : undefined,
+      shownAchievements: shown,
     });
-  }, [summary, allIns, swings, club, training]);
+  }, [summary, allIns, swings, club, training, shown]);
 
   return { allIns, items, pending: oddsPending || (!training && history.isPending) };
 }

@@ -40,11 +40,16 @@ describe('строки сюжета', () => {
     expect(plain(storyLine(swing, nameOf, 'b'))).toBe(
       'Женя забирает олл-ин с 13 % до флопа; фаворит — ты, 87 %.',
     );
-    const revenge: StoryItem = { kind: 'revenge', playerId: 'a', nemesisId: 'b' };
+    const revenge: StoryItem = {
+      kind: 'revenge',
+      playerId: 'a',
+      nemesisId: 'b',
+      achievement: true,
+    };
     expect(storyLine(revenge, nameOf)).toBe('Месть Немезиде: Женя выбивает игрока Саша.');
     expect(storyLine(revenge, nameOf, 'a')).toBe('Месть Немезиде: ты выбиваешь игрока Саша.');
     expect(storyLine(revenge, nameOf, 'b')).toBe('Месть Немезиде: Женя выбивает тебя.');
-    expect(storyLine({ kind: 'phoenix', playerId: 'a' }, nameOf, 'a')).toBe(
+    expect(storyLine({ kind: 'phoenix', playerId: 'a', achievement: true }, nameOf, 'a')).toBe(
       'Феникс вечера — ты: первый вылет и победа.',
     );
     expect(
@@ -144,12 +149,37 @@ describe('«На кону» на экране', () => {
       ),
     ).toBe('Ты — в одной победе от ачивки «Хет-трик».');
     expect(
-      stakeLine(
-        { kind: 'enemy_step', playerId: 'b', victimId: 'a', kos: 4, target: 5 },
-        nameOf,
-        'a',
+      plain(
+        stakeLine(
+          { kind: 'enemy_step', playerId: 'b', victimId: 'a', kos: 4, target: 5, level: 1 },
+          nameOf,
+          'a',
+        ),
       ),
-    ).toBe('Саша — в одном нокауте от ачивки «Заклятый враг» (цель — ты).');
+    ).toBe('Саша — в одном нокауте от ачивки «Заклятый враг I» (цель — ты).');
+    expect(
+      plain(
+        stakeLine(
+          { kind: 'enemy_step', playerId: 'a', victimId: 'c', kos: 9, target: 10, level: 2 },
+          nameOf,
+          'a',
+        ),
+      ),
+    ).toBe('Ты — в одном нокауте от ачивки «Заклятый враг II» (цель — Дима).');
+    expect(stakeLine({ kind: 'king_step', championIds: ['a'] }, nameOf, 'a')).toBe(
+      'Нокаут действующего чемпиона принесёт ачивку «Охота на короля» (чемпион — ты).',
+    );
+    expect(stakeLine({ kind: 'king_step', championIds: ['a', 'b'] }, nameOf)).toBe(
+      'Нокаут действующего чемпиона принесёт ачивку «Охота на короля» (чемпионы — Женя и Саша).',
+    );
+    expect(stakeLine({ kind: 'revenge_step', playerId: 'a', nemesisId: 'b' }, nameOf, 'b')).toBe(
+      'Женя — в одном нокауте от ачивки «Месть» (Немезида — ты).',
+    );
+    expect(
+      plain(
+        stakeLine({ kind: 'star_step', playerId: 'c', stars: 4, target: 5, level: 2 }, nameOf, 'c'),
+      ),
+    ).toBe('Ты — в одной звезде от ачивки «Звезда вечера II».');
     expect(plain(stakeLine({ kind: 'first_blood' }, nameOf))).toBe(
       'Первый нокаут в истории клуба принесёт ачивку «Первая кровь».',
     );

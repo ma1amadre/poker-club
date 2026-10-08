@@ -3,7 +3,13 @@
 // вечера — в shared/lib/voting (их использует и главная).
 import type { AllIn, AllInSwing } from '@domain/allins.ts';
 import type { PlayerId } from '@domain/types.ts';
-import { VOTE_CATEGORIES, voteResults, type VoteCategory } from '@domain/votes.ts';
+import {
+  STAR_MIN_VOTES,
+  starWinner,
+  VOTE_CATEGORIES,
+  voteResults,
+  type VoteCategory,
+} from '@domain/votes.ts';
 import { formatClock, formatDuration } from '../../shared/lib/format';
 
 /** Предел подписи к голосу: check (char_length(caption) <= 200) в таблице votes. */
@@ -32,6 +38,11 @@ export interface CategoryResult<V> {
   winners: NomineeResult<V>[];
   /** Остальные номинанты по убыванию голосов. */
   others: NomineeResult<V>[];
+  /**
+   * Кому номинация даёт «Звезду вечера» по правилу домена (starWinner: единственный лидер, от
+   * STAR_MIN_VOTES голосов); null — никому. Гость звезду не получает — это решает winnerBadge.
+   */
+  star: PlayerId | null;
 }
 
 /** Итоги по каждой номинации: победители и счёт — из voteResults, к ним — сами голоса. */
@@ -61,9 +72,39 @@ export function categoryResults<V extends VoteLike>(
       total: Object.values(counts).reduce((sum, n) => sum + n, 0),
       winners: winners.map(nominee),
       others,
+      star: starWinner(results[category]),
     };
   }
   return out;
+}
+
+export interface WinnerBadge {
+  label: string;
+  /** Номинация дала победителю «Звезду вечера». */
+  star: boolean;
+  /** Почему звезды нет; null — звезда есть. */
+  note: string | null;
+}
+
+/**
+ * Пометка победителя номинации на экране итогов: «Звезда вечера», «Ничья» или «Победитель» без
+ * звезды — с причиной (решение клуба 08.10.2026: звезда — единственному лидеру, от 2 голосов).
+ */
+export function winnerBadge(
+  result: Pick<CategoryResult<unknown>, 'winners' | 'star'>,
+  nomineeId: PlayerId,
+  isGuest: boolean,
+): WinnerBadge {
+  if (result.winners.length > 1)
+    return { label: 'Ничья', star: false, note: 'при ничьей звезды вечера нет' };
+  if (result.star !== nomineeId)
+    return {
+      label: 'Победитель',
+      star: false,
+      note: `звезда вечера — от ${STAR_MIN_VOTES} голосов`,
+    };
+  if (isGuest) return { label: 'Победитель', star: false, note: 'гостю звезда вечера не положена' };
+  return { label: 'Звезда вечера', star: true, note: null };
 }
 
 // --- Фото к голосу ---------------------------------------------------------------------------

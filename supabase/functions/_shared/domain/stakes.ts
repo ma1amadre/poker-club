@@ -1,21 +1,38 @@
-// «На кону»: что может случиться на объявленном вечере — кто в одном шаге от ачивки, какие рекорды
-// клуба досягаемы и расклад сезона перед игрой. Всё выводится из итогов прошедших вечеров и прогнозов
-// по тем же правилам, что computeAchievements и recordsTable (пороги — ACHIEVEMENT_THRESHOLDS); тексты
-// собирают карточка анонса (src/shared/lib/stakes.ts) и пост в день игры (_shared/messages.ts).
+// «На кону»: что может случиться на объявленном вечере — кто в одном шаге от ачивки или её уровня,
+// какие рекорды клуба досягаемы и расклад сезона перед игрой. Всё выводится из итогов прошедших
+// вечеров, прогнозов и звёзд по тем же правилам, что computeAchievements и recordsTable (пороги —
+// ACHIEVEMENT_THRESHOLDS, ACHIEVEMENT_LEVELS); тексты собирают карточка анонса
+// (src/shared/lib/stories.ts) и пост в день игры (_shared/messages.ts).
 //
 // Что считается «в шаге»:
 // - «Хет-трик»: две победы подряд в вечерах, где игрок играл (серии не перекрываются, как у ачивки) —
 //   третья даст ачивку; заодно — рекорд клуба по серии побед, если победа его побьёт или повторит
 //   (серия после неё — от трёх побед);
-// - «Заклятый враг»: 4 нокаута одного и того же соперника — пятый даст ачивку (только если оба могут
-//   прийти);
+// - «Заклятый враг»: до порога уровня (5, 10, 15) не хватает одного нокаута того же соперника (только
+//   если оба могут прийти);
 // - «Первая кровь»: в клубе ещё не было нокаута — первый нокаут вечера даст ачивку;
+// - «Охота на короля»: действующий чемпион (чемпион прошлого сезона) может прийти, и есть кому на него
+//   охотиться впервые — постоянный игрок без этой ачивки;
+// - «Месть»: Немезида игрока может прийти, а «Мести» у игрока ещё не было;
+// - «Звезда вечера»: до уровня II или III не хватает одной звезды (звезда — по голосованию вечера);
 // - рекорд фонда: ответившие «иду» уже без ребаев дают фонд не меньше рекорда;
 // - «Оракул»: два угаданных победителя подряд — угадать третьего.
+// Ачивки, которые даёт сама игра вечера («Охотник», «Камбэк», «Феникс», «Чистая победа»), в «На кону»
+// не попадают: они возможны у каждого в каждом вечере — это не шаг, а условие.
 // Кто может прийти — постоянные игроки, кроме ответивших «не иду» (гостей в списке нет: ачивок и
 // рекордов игрока у них не бывает). «Оракул» — у всех переданных игроков: прогноз делают и те, кто не
 // играет.
-import { ACHIEVEMENT_THRESHOLDS, chronological, type AchievementInput } from './achievements.ts';
+import {
+  ACHIEVEMENT_THRESHOLDS,
+  chronological,
+  computeAchievements,
+  levelFor,
+  levelThreshold,
+  reigningChampionsFor,
+  titles,
+  type AchievementCode,
+  type AchievementInput,
+} from './achievements.ts';
 import { recordsTable } from './records.ts';
 import { roundPoints } from './scoring.ts';
 import { sameRank, seasonKey, seasonStandings, type StandingRow } from './season.ts';
@@ -30,10 +47,23 @@ export type StakeItem =
       streak: number;
       record: 'new' | 'equal' | null;
     }
-  /** Ещё нокаут victimId даст «Заклятого врага». */
-  | { kind: 'enemy_step'; playerId: PlayerId; victimId: PlayerId; kos: number; target: number }
+  /** Ещё нокаут victimId даст «Заклятого врага» уровня level (target — его порог). */
+  | {
+      kind: 'enemy_step';
+      playerId: PlayerId;
+      victimId: PlayerId;
+      kos: number;
+      target: number;
+      level: number;
+    }
   /** Первый нокаут в истории клуба ещё впереди. */
   | { kind: 'first_blood' }
+  /** Действующий чемпион может прийти: его нокаут даст «Охоту на короля». */
+  | { kind: 'king_step'; championIds: PlayerId[] }
+  /** Немезида игрока может прийти: её нокаут даст первую «Месть». */
+  | { kind: 'revenge_step'; playerId: PlayerId; nemesisId: PlayerId }
+  /** Ещё одна звезда даст «Звезду вечера» уровня level (II или III). */
+  | { kind: 'star_step'; playerId: PlayerId; stars: number; target: number; level: number }
   /** «Иду» уже дают фонд не меньше рекорда клуба. */
   | {
       kind: 'pool_record';
@@ -72,7 +102,10 @@ export interface EveningStakes {
 export type StakesInput = Pick<
   AchievementInput,
   'summaries' | 'excluded' | 'predictions' | 'bestN' | 'bestNBySeason'
->;
+> & {
+  /** Звёзды вечера по закрытым голосованиям; нет — шагов к «Звезде вечера» не будет. */
+  stars?: AchievementInput['stars'];
+};
 
 /** Постоянный игрок клуба (активный, не гость) и его ответ на анонс; null — не ответил. */
 export interface StakesPlayer {
@@ -103,10 +136,16 @@ function rank(item: StakeItem): number {
       return 2;
     case 'first_blood':
       return 3;
-    case 'pool_record':
+    case 'king_step':
       return 4;
-    case 'oracle_step':
+    case 'star_step':
       return 5;
+    case 'pool_record':
+      return 6;
+    case 'revenge_step':
+      return 7;
+    case 'oracle_step':
+      return 8;
   }
 }
 
@@ -143,12 +182,22 @@ function seasonStakes(input: StakesInput, key: string): SeasonStakes {
 
 /**
  * «На кону» перед вечером: шаги к ачивкам и рекордам по важности (рекорд серии → «Хет-трик» →
- * «Заклятый враг» → «Первая кровь» → рекорд фонда → «Оракул»; внутри вида — по id игрока) и расклад
- * сезона вечера. input.summaries — только прошедшие вечера (объявленного среди них нет).
+ * «Заклятый враг» → «Первая кровь» → «Охота на короля» → «Звезда вечера» → рекорд фонда → «Месть» →
+ * «Оракул»; внутри вида — по id игрока) и расклад сезона вечера. «Месть» — ниже фонда: Немезида
+ * есть почти у каждого, и в посте дня игры (две строки) она вытесняла бы рекорд клуба.
+ * input.summaries — только прошедшие вечера (объявленного среди них нет).
  */
 export function eveningStakes(input: StakesInput, opts: StakesOptions): EveningStakes {
   const T = ACHIEVEMENT_THRESHOLDS;
   const evenings = chronological(input.summaries);
+  const key = seasonKey(opts.eveningDate);
+  const earned = computeAchievements({
+    ...input,
+    stars: input.stars ?? [],
+    currentSeasonKey: key,
+  });
+  const has = (playerId: PlayerId, code: AchievementCode): boolean =>
+    earned.some((a) => a.playerId === playerId && a.code === code);
   const regulars = opts.players.filter((p) => !input.excluded.has(p.playerId));
   // Кто может прийти: не «не иду» и не болельщик на этот вечер.
   const expected = new Set(
@@ -184,26 +233,52 @@ export function eveningStakes(input: StakesInput, opts: StakesOptions): EveningS
       items.push({ kind: 'win_step', playerId: id, hatTrick, streak: after, record });
   }
 
-  // «Заклятый враг»: пятый нокаут одного и того же соперника; оба могут прийти.
+  // «Заклятый враг»: до порога уровня — один нокаут того же соперника; оба могут прийти.
   const pairs = new Map<string, number>();
   for (const s of evenings)
     for (const [killer, victim] of s.koPairs)
       pairs.set(`${killer}|${victim}`, (pairs.get(`${killer}|${victim}`) ?? 0) + 1);
-  for (const [key, kos] of [...pairs].sort((a, b) => byId(a[0], b[0]))) {
-    if (kos !== T.swornEnemyKos - 1) continue;
-    const [killer = '', victim = ''] = key.split('|');
+  for (const [pair, kos] of [...pairs].sort((a, b) => byId(a[0], b[0]))) {
+    const level = levelFor('sworn_enemy', kos + 1);
+    if (level === levelFor('sworn_enemy', kos)) continue;
+    const [killer = '', victim = ''] = pair.split('|');
     if (expected.has(killer) && expected.has(victim))
       items.push({
         kind: 'enemy_step',
         playerId: killer,
         victimId: victim,
         kos,
-        target: T.swornEnemyKos,
+        target: levelThreshold('sworn_enemy', level) ?? kos + 1,
+        level,
       });
   }
 
   if (!evenings.some((s) => s.busts.some((b) => b.by.length > 0)))
     items.push({ kind: 'first_blood' });
+
+  // «Охота на короля»: действующий чемпион может прийти, и есть кому охотиться впервые.
+  const kings = reigningChampionsFor(input, key).filter((id) => expected.has(id));
+  if (kings.some((king) => [...expected].some((id) => id !== king && !has(id, 'king_hunt'))))
+    items.push({ kind: 'king_step', championIds: [...kings].sort(byId) });
+
+  // «Месть»: своя Немезида может прийти, «Мести» ещё не было.
+  const { nemesis } = titles(input);
+  for (const id of [...expected].sort(byId)) {
+    const target = nemesis[id];
+    if (target && expected.has(target) && !has(id, 'revenge'))
+      items.push({ kind: 'revenge_step', playerId: id, nemesisId: target });
+  }
+
+  // «Звезда вечера»: до уровня II или III — одна звезда (первая — не шаг: её может взять каждый).
+  const stars = new Map<PlayerId, number>();
+  for (const a of earned)
+    if (a.code === 'star') stars.set(a.playerId, (stars.get(a.playerId) ?? 0) + a.count);
+  for (const id of [...expected].sort(byId)) {
+    const n = stars.get(id) ?? 0;
+    const level = levelFor('star', n + 1);
+    if (level >= 2 && level > levelFor('star', n))
+      items.push({ kind: 'star_step', playerId: id, stars: n, target: n + 1, level });
+  }
 
   const poolRecord =
     recordsTable(evenings, { excluded: input.excluded }).find((r) => r.kind === 'biggest_pool')
@@ -247,6 +322,6 @@ export function eveningStakes(input: StakesInput, opts: StakesOptions): EveningS
           rank(a.item) - rank(b.item) || byId(playerOf(a.item), playerOf(b.item)) || a.i - b.i,
       )
       .map((x) => x.item),
-    season: seasonStakes(input, seasonKey(opts.eveningDate)),
+    season: seasonStakes(input, key),
   };
 }

@@ -79,7 +79,7 @@ function input(extra: Partial<ClubFeedInput> = {}): ClubFeedInput {
     summaries: [f3, f1, f2],
     excluded: new Set(['X', 'Y']),
     predictions,
-    stars: [{ eveningId: 'f2', category: 'hand', winners: ['B'] }],
+    stars: [{ eveningId: 'f2', category: 'hand', playerId: 'B', votes: 2 }],
     bestN: 10,
     currentSeasonKey: '2026-Q4',
     evenings: [
@@ -109,6 +109,9 @@ describe('лента «В клубе»', () => {
       'record:longest_game:f3',
       'record:most_kos:f3',
       'record:win_streak:f3',
+      // B выигрывает без ребаев и выбивает A — чемпиона Q3 (id с целью ачивки).
+      'achievement:clean_win:B:f3',
+      'achievement:king_hunt:B:f3:A',
       'title:nemesis:A:f3',
       'title:nemesis:C:f3',
       // Моменты f2 — в момент закрытия голосования.
@@ -121,6 +124,8 @@ describe('лента «В клубе»', () => {
       'record:biggest_win:f2',
       'record:longest_game:f2',
       'record:most_kos:f2',
+      'achievement:clean_win:B:f2',
+      'achievement:king_hunt:B:f2:A',
       'title:form::f2',
       // Сезонные ачивки Q3 — в конце сезона.
       'achievement:champion:A:2026-Q3',
@@ -129,6 +134,7 @@ describe('лента «В клубе»', () => {
       'achievement:iron_chair:C:2026-Q3',
       // f1 — первый вечер клуба: без рекордов.
       'result:f1',
+      'achievement:clean_win:A:f1',
       'achievement:first_blood:A:f1',
       'title:form::f1',
     ]);
@@ -234,6 +240,8 @@ describe('моменты', () => {
         caption: 'Каре',
         photoPath: 'f2/c.jpg',
         noteBy: 'C',
+        // Единственный лидер с двумя голосами — «Звезда вечера I», первая у B.
+        star: { level: 1, first: true },
       },
       {
         at: '2026-10-09T21:00:00.000Z',
@@ -245,6 +253,8 @@ describe('моменты', () => {
         caption: null,
         photoPath: null,
         noteBy: null,
+        // Ничья — звезды нет.
+        star: null,
       },
       {
         at: '2026-10-09T21:00:00.000Z',
@@ -256,6 +266,7 @@ describe('моменты', () => {
         caption: null,
         photoPath: null,
         noteBy: null,
+        star: null,
       },
     ]);
     // До закрытия голосования f2 моментов нет.
@@ -263,6 +274,53 @@ describe('моменты', () => {
     // Голосование f3 закрылось — его момент выше.
     const later = clubMoments(input(), { nowMs: Date.parse('2026-10-22T00:00:00.000Z') });
     expect(later[0]).toMatchObject({ eveningId: 'f3', nomineeId: 'B', caption: 'Секрет' });
+  });
+
+  it('звезда: один голос — момент есть, звезды нет; гость-лидер — без звезды; уровень растёт', () => {
+    const one: MomentVote = {
+      eveningId: 'f3',
+      voterId: 'A',
+      category: 'hand',
+      nomineeId: 'B',
+      caption: null,
+      photoPath: null,
+    };
+    const later = Date.parse('2026-10-22T00:00:00.000Z');
+    // f3 — один голос за B: момент есть, звезды нет.
+    expect(
+      clubMoments(input({ votes: [...votes.filter((v) => v.eveningId !== 'f3'), one] }), {
+        nowMs: later,
+      })[0],
+    ).toMatchObject({ eveningId: 'f3', nomineeId: 'B', votes: 1, star: null });
+    // Гость X — единственный лидер с двумя голосами: момент есть, звезды нет ни у кого.
+    const guest: MomentVote[] = ['A', 'B'].map((voterId) => ({
+      eveningId: 'f2',
+      voterId,
+      category: 'badbeat',
+      nomineeId: 'X',
+      caption: null,
+      photoPath: null,
+    }));
+    const withGuest = clubMoments(input({ votes: [...votes, ...guest] }), { nowMs: NOW });
+    expect(withGuest.find((m) => m.category === 'badbeat')).toMatchObject({
+      nomineeId: 'X',
+      votes: 2,
+      star: null,
+    });
+    // Вторая звезда B в f3 — уровень по-прежнему I, не «впервые».
+    const second: MomentVote[] = ['A', 'C'].map((voterId) => ({
+      eveningId: 'f3',
+      voterId,
+      category: 'bluff',
+      nomineeId: 'B',
+      caption: null,
+      photoPath: null,
+    }));
+    const m3 = clubMoments(input({ votes: [...votes, ...second] }), { nowMs: later });
+    expect(m3.find((m) => m.eveningId === 'f3' && m.category === 'bluff')?.star).toEqual({
+      level: 1,
+      first: false,
+    });
   });
 
   it('без фото — подпись; при равенстве — более ранний голос', () => {

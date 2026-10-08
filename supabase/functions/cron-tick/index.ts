@@ -62,6 +62,7 @@ import {
   postEveningResults,
   publishOnce,
   claimPost,
+  eveningStarLevels,
   scoringConfig,
   stakesOf,
   votesOf,
@@ -392,7 +393,15 @@ async function postGamedayPosts(
         }
       }
       const stakes = history
-        ? stakesOf(history, e, all, (rsvps ?? []) as GamedayRsvpRow[], s.season_best_n, seated)
+        ? stakesOf(
+            history,
+            e,
+            all,
+            (rsvps ?? []) as GamedayRsvpRow[],
+            s.season_best_n,
+            seated,
+            nowMs,
+          )
         : null;
       const post = gamedayPost({
         eveningId: e.id,
@@ -445,6 +454,22 @@ async function backfillResults(db: Db, nowMs: number, report: TickState): Promis
   }
 }
 
+/** Уровни «Звезды вечера» для поста итогов голосования; подсчёт упал — без уровней (в лог). */
+function starLevelsOf(
+  history: ClubHistory | null,
+  eveningId: string,
+  guests: ReadonlySet<string>,
+  nowMs: number,
+): ReturnType<typeof eveningStarLevels> | undefined {
+  if (!history) return undefined;
+  try {
+    return eveningStarLevels(history, eveningId, guests, nowMs);
+  } catch (err) {
+    console.error(`Уровни «Звезды вечера» ${eveningId} не посчитаны: ${describeError(err)}`);
+    return undefined;
+  }
+}
+
 /** Шаг 3: итоги голосования по вечерам, где оно закрылось. Без голосов — только отметка. */
 async function postVotingResults(
   db: Db,
@@ -465,7 +490,15 @@ async function postVotingResults(
   const evenings = (data ?? []) as unknown as EveningRow[];
   if (evenings.length === 0) return;
 
-  const { names } = await loadPlayerNames(db);
+  const { names, guests } = await loadPlayerNames(db);
+  // Уровни «Звезды вечера» — по истории клуба (одна загрузка на шаг). Дополнение: история не
+  // загрузилась — пост уходит со звёздами, но без «нового уровня» (ошибка в лог).
+  let history: ClubHistory | null = null;
+  try {
+    history = await loadHistory(db, scoringConfig(s));
+  } catch (err) {
+    console.error(`Итоги голосования: история клуба не загрузилась — ${describeError(err)}`);
+  }
   for (const e of evenings) {
     try {
       const { data: votes, error: vError } = await db
@@ -479,6 +512,8 @@ async function postVotingResults(
         names,
         results: voteResults(votesOf((votes ?? []) as VoteRow[])),
         botUsername: s.bot_username,
+        guests,
+        starLevels: starLevelsOf(history, e.id, guests, nowMs),
       });
       if (post) {
         report.voting[e.id] = await publishOnce(

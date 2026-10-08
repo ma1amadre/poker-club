@@ -11,6 +11,9 @@ const STAKE_ICON: Record<StakeKind, IconName> = {
   win_step: 'trophy',
   enemy_step: 'shield',
   first_blood: 'zap',
+  king_step: 'crosshair',
+  revenge_step: 'shield',
+  star_step: 'star',
   pool_record: 'coins',
   oracle_step: 'eye',
 };

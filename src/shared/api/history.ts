@@ -1,12 +1,12 @@
 // История клуба: все завершённые вечера, сведённые доменом в EveningSummary, плюс всё, что нужно
 // рейтингу, «Оракулу», залу славы и ачивкам. Считается на клиенте тем же кодом, что и на сервере
 // (supabase/functions/_shared/domain) — поэтому числа в приложении и в постах бота совпадают.
-import type { AchievementInput, StarAward } from '@domain/achievements.ts';
+import { starAwards, type AchievementInput, type StarAward } from '@domain/achievements.ts';
 import { scorePrediction, type ScoredPrediction } from '@domain/predictions.ts';
 import { seasonKey, type SeasonBestN } from '@domain/season.ts';
 import { summarize, type EveningSummary } from '@domain/summary.ts';
 import type { PlayerId } from '@domain/types.ts';
-import { VOTE_CATEGORIES, voteResults } from '@domain/votes.ts';
+import { voteResults } from '@domain/votes.ts';
 import { useQuery } from '@tanstack/react-query';
 import { serverNow } from '../lib/serverClock';
 import { supabase } from '../supabase';
@@ -41,7 +41,7 @@ export interface ClubHistory {
   votesByEvening: Map<string, VoteRow[]>;
   /** Оценённые прогнозы по всем завершённым вечерам — вход oracleStandings и ачивки «Оракул». */
   predictionScores: ScoredPrediction[];
-  /** Победители номинаций по вечерам с закрытым голосованием. */
+  /** «Звёзды вечера» по закрытым голосованиям (starAwards домена: единственный лидер, от 2 голосов). */
   stars: StarAward[];
   players: Player[];
   settings: Settings | null;
@@ -186,16 +186,13 @@ export async function fetchClubHistory(nowMs: number = serverNow()): Promise<Clu
   }
 
   // Звёзды — только по закрытым голосованиям: до закрытия RLS отдаёт лишь свои голоса,
-  // и «победитель» по ним был бы случайным.
+  // и «победитель» по ним был бы случайным. Кому звезда — правило домена (starAwards).
   const stars: StarAward[] = [];
   for (const evening of evenings) {
     if (!evening.voting_closes_at || Date.parse(evening.voting_closes_at) > nowMs) continue;
     if (!summaryById.has(evening.id)) continue;
     const results = voteResults((votesByEvening.get(evening.id) ?? []).map(toDomainVote));
-    for (const category of VOTE_CATEGORIES) {
-      const winners = results[category].winners;
-      if (winners.length > 0) stars.push({ eveningId: evening.id, category, winners });
-    }
+    stars.push(...starAwards(evening.id, results));
   }
 
   const excluded = new Set(players.filter((p) => p.is_guest).map((p) => p.id));

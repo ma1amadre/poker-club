@@ -22,6 +22,22 @@ export interface VoteResult {
   counts: Record<PlayerId, number>;
 }
 
+/** «Звезда вечера» — только с этим числом голосов и больше (решение клуба 08.10.2026). */
+export const STAR_MIN_VOTES = 2;
+
+/**
+ * Кому номинация даёт «Звезду вечера»: единственному лидеру голосования, если у него не меньше
+ * STAR_MIN_VOTES голосов; ничья или один голос — никому (решение клуба 08.10.2026). Гостей здесь
+ * не отсеиваем: гость-лидер звезду не получает, но и второму месту она не переходит —
+ * computeAchievements просто не выдаёт её гостю.
+ */
+export function starWinner(result: VoteResult | undefined): PlayerId | null {
+  if (!result || result.winners.length !== 1) return null;
+  const [winner] = result.winners;
+  if (winner === undefined) return null;
+  return (result.counts[winner] ?? 0) >= STAR_MIN_VOTES ? winner : null;
+}
+
 export function voteResults(votes: readonly Vote[]): Record<VoteCategory, VoteResult> {
   const result = {} as Record<VoteCategory, VoteResult>;
   for (const cat of VOTE_CATEGORIES) result[cat] = { winners: [], counts: {} };

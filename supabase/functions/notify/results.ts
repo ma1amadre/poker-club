@@ -14,6 +14,8 @@ import {
   scorePrediction,
   seasonKey,
   spectatesEvening,
+  starAchievements,
+  starAwards as eveningStarAwards,
   summarize,
   voteResults,
   type Achievement,
@@ -31,7 +33,6 @@ import {
   type StoryItem,
   type TournamentFormat,
   type Vote,
-  type VoteCategory,
 } from '../_shared/domain/index.ts';
 import { resultsPost, type Post } from '../_shared/messages.ts';
 import { sendMessage } from '../_shared/telegram.ts';
@@ -292,31 +293,53 @@ export function votesOf(rows: readonly VoteRow[]): Vote[] {
   return rows.map((v) => ({ voterId: v.voter_id, category: v.category, nomineeId: v.nominee_id }));
 }
 
-/** «Звёзды» — только по закрытым голосованиям: пока голосование идёт, лидер может смениться. */
-function starAwards(
+/**
+ * «Звёзды вечера» — только по закрытым голосованиям: пока голосование идёт, лидер может смениться.
+ * Кому звезда — правило домена (starAwards: единственный лидер номинации от 2 голосов).
+ */
+export function starAwards(
   history: ClubHistory,
   nowMs: number,
-  include: (eveningId: string) => boolean,
+  include: (eveningId: string) => boolean = () => true,
 ): StarAward[] {
   const awards: StarAward[] = [];
   for (const [id, e] of history.evenings) {
     if (!include(id) || !e.voting_closes_at || Date.parse(e.voting_closes_at) > nowMs) continue;
     const results = voteResults(votesOf(history.votes.filter((v) => v.evening_id === id)));
-    for (const [category, r] of Object.entries(results) as [
-      VoteCategory,
-      { winners: PlayerId[] },
-    ][]) {
-      if (r.winners.length > 0) awards.push({ eveningId: id, category, winners: r.winners });
-    }
+    awards.push(...eveningStarAwards(id, results));
   }
   return awards;
 }
 
 /**
- * Новые ачивки, которые принёс вечер: разница между историей без него и с ним.
+ * Уровень «Звезды вечера» у получивших звезду в вечере eveningId (после его голосования) — для поста
+ * итогов голосования: «новый уровень». Голосование вечера должно быть уже закрыто к nowMs.
+ */
+export function eveningStarLevels(
+  history: ClubHistory,
+  eveningId: string,
+  guests: ReadonlySet<PlayerId>,
+  nowMs: number,
+): Record<PlayerId, { level: number; first: boolean }> {
+  const out: Record<PlayerId, { level: number; first: boolean }> = {};
+  const rows = starAchievements({
+    summaries: history.summaries,
+    excluded: guests,
+    stars: starAwards(history, nowMs),
+  });
+  for (const a of rows)
+    if (a.eveningId === eveningId) out[a.playerId] = { level: a.level, first: a.first };
+  return out;
+}
+
+/**
+ * Новые ачивки, которые принёс вечер: разница между историей без него и с ним — строки самого вечера
+ * (с уровнем и «впервые на уровне») и сезонные.
  * «Текущий сезон» до вечера — сезон последнего из остальных вечеров, после — сезон «сейчас»:
  * так сезонные ачивки (чемпион, ребай-король, железный стул) прошедшего квартала попадают
  * в пост первого вечера нового квартала, а не теряются (по времени их никто не объявляет).
+ * Строки других вечеров отсеиваются: исправленный итог старого вечера сдвигает пороги в
+ * последующих («Заклятый враг» берёт уровень вечером раньше или позже), но это не новости этого поста.
  */
 export function newAchievementsFor(
   history: ClubHistory,
@@ -354,7 +377,9 @@ export function newAchievementsFor(
     bestNBySeason: history.bestNBySeason,
     currentSeasonKey: nowSeason,
   });
-  return diffAchievements(before, after);
+  return diffAchievements(before, after).filter(
+    (a) => a.eveningId === eveningId || a.seasonKey !== null,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +496,7 @@ export function stakesOf(
   rsvps: readonly { player_id: string; status: string }[],
   bestN: number,
   seated: ReadonlySet<string> = new Set(),
+  nowMs: number = Date.now(),
 ): EveningStakes | null {
   try {
     const guests = new Set(players.filter((p) => p.is_guest).map((p) => p.id));
@@ -484,6 +510,8 @@ export function stakesOf(
         summaries: history.summaries,
         excluded: guests,
         predictions: scoredPredictions(history, () => true),
+        // Звёзды — по закрытым к посту голосованиям: шаг к уровню «Звезды вечера».
+        stars: starAwards(history, nowMs),
         bestN,
         bestNBySeason: history.bestNBySeason,
       },

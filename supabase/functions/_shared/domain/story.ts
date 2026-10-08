@@ -5,15 +5,22 @@
 // (_shared/messages.ts) — о людях в настоящем времени, без рода.
 //
 // Где показывается и что видно:
-// - экран итога в приложении — всё (история клуба есть);
+// - экран итога в приложении — всё (история клуба есть), кроме строк об ачивках зрителя, которые
+//   уже стоят у него в «Твоём вечере» (shownAchievements);
 // - табло — только то, что видно из журнала самого вечера (club не передаётся): табло без входа
 //   видит только свой вечер, поэтому месть, рекорд и лидер сезона там не считаются;
-// - пост итогов (forPost) — без рекордов и лидера сезона (они уже в «Жизни клуба») и без победы
-//   после ребаев, если за неё выдана ачивка «Камбэк» (она уже в «Новых ачивках»).
+// - пост итогов (forPost) — без рекордов и лидера сезона (они уже в «Жизни клуба») и без строк, за
+//   которые выдана ачивка — «Месть», «Феникс», «Камбэк» (они уже в «Новых ачивках»).
+//
+// Ачивки (achievement у revenge, phoenix, comeback): строка рассказывает то же, за что
+// computeAchievements выдаёт ачивку, — тем же правилом (revengesIn, ACHIEVEMENT_LEVELS). Гость и
+// тренировочный вечер ачивок не получают (тренировка в историю клуба не входит).
 import {
-  ACHIEVEMENT_THRESHOLDS,
   chronological,
+  levelFor,
+  revengesIn,
   titles,
+  type Achievement,
   type AchievementInput,
 } from './achievements.ts';
 import { allInSwing, bestSwing, type AllIn, type AllInEquity, type AllInSwing } from './allins.ts';
@@ -28,15 +35,15 @@ export const STORY_MAX_ITEMS = 4;
 export type StoryItem =
   /** Самая невероятная победа в олл-ине вечера. */
   | { kind: 'swing'; swing: AllInSwing }
-  /** Игрок выбил свою Немезиду (звание до этого вечера). */
-  | { kind: 'revenge'; playerId: PlayerId; nemesisId: PlayerId }
+  /** Игрок выбил свою Немезиду (звание до этого вечера); achievement — выдана «Месть». */
+  | { kind: 'revenge'; playerId: PlayerId; nemesisId: PlayerId; achievement: boolean }
   /** Рекорд клуба, установленный или повторённый вечером (как в «Жизни клуба»). */
   | { kind: 'record'; record: RecordBreak }
   /** Первое место сезона сменилось: leaders — кто на нём теперь, leadersBefore — кто был. */
   | { kind: 'season_leader'; leaders: SeasonLeader[]; leadersBefore: PlayerId[] }
-  /** Первый вылет вечера — и победа (вернулся ребаем). */
-  | { kind: 'phoenix'; playerId: PlayerId }
-  /** Победа после ребаев; achievement — за неё выдана ачивка «Камбэк». */
+  /** Первый вылет вечера — и победа (вернулся ребаем); achievement — выдан «Феникс». */
+  | { kind: 'phoenix'; playerId: PlayerId; achievement: boolean }
+  /** Победа после ребаев; achievement — за неё выдана ачивка «Камбэк» (от 2 ребаев). */
   | { kind: 'comeback'; playerId: PlayerId; rebuys: number; achievement: boolean };
 
 export type StoryKind = StoryItem['kind'];
@@ -52,8 +59,10 @@ export interface StoryInput {
   summary: EveningSummary;
   /** Олл-ины этого вечера (eveningAllIns). */
   allIns: readonly AllIn[];
-  /** Гости: «Камбэк» им не выдаётся. */
+  /** Гости: ачивок им не выдаётся. */
   excluded: ReadonlySet<PlayerId>;
+  /** Тренировочный вечер (миграция 023): ачивок за него нет — achievement у всех строк false. */
+  training?: boolean;
   /** История клуба; нет — только то, что видно из журнала вечера (табло). */
   club?: StoryClub;
   /** Шансы олл-ина (по умолчанию — движок; клиент подставляет кеш табло). */
@@ -62,37 +71,74 @@ export interface StoryInput {
   swings?: ReadonlyMap<string, AllInSwing>;
   /**
    * Сюжет для поста итогов: без того, что пост говорит другими блоками, — рекордов и лидера сезона
-   * («Жизнь клуба») и победы после ребаев с ачивкой «Камбэк» («Новые ачивки»). Отсев — до предела
-   * строк, чтобы место выбывших заняли следующие по важности.
+   * («Жизнь клуба») и строк с ачивкой — «Месть», «Феникс», «Камбэк» («Новые ачивки»). Отсев — до
+   * предела строк, чтобы место выбывших заняли следующие по важности.
    */
   forPost?: boolean;
+  /**
+   * Ачивки, которые экран уже показывает другим блоком: «Твой вечер» — строки computeAchievements
+   * этого вечера у зрителя. Строки сюжета о них (storyAchievement) не повторяются: у зрителя «Месть»
+   * не стоит дважды, у остальных — остаётся. Отсев — до предела строк, как у forPost.
+   */
+  shownAchievements?: readonly Pick<Achievement, 'playerId' | 'code' | 'targetId'>[];
+}
+
+/** Ачивка, за которую выдана строка сюжета (achievement), — или null: строка ачивку не даёт. */
+export function storyAchievement(
+  item: StoryItem,
+): Pick<Achievement, 'playerId' | 'code' | 'targetId'> | null {
+  switch (item.kind) {
+    case 'revenge':
+      return item.achievement
+        ? { playerId: item.playerId, code: 'revenge', targetId: item.nemesisId }
+        : null;
+    case 'phoenix':
+    case 'comeback':
+      return item.achievement ? { playerId: item.playerId, code: item.kind, targetId: null } : null;
+    case 'swing':
+    case 'record':
+    case 'season_leader':
+      return null;
+  }
+}
+
+/** Ачивку строки уже показывает другой блок экрана (StoryInput.shownAchievements). */
+function shownElsewhere(item: StoryItem, shown: StoryInput['shownAchievements']): boolean {
+  const a = storyAchievement(item);
+  return (
+    a !== null &&
+    (shown ?? []).some(
+      (s) => s.playerId === a.playerId && s.code === a.code && s.targetId === a.targetId,
+    )
+  );
 }
 
 /** Строка, которую пост итогов уже говорит другим блоком (см. StoryInput.forPost). */
 export function toldElsewhereInPost(item: StoryItem): boolean {
-  return (
-    item.kind === 'record' ||
-    item.kind === 'season_leader' ||
-    (item.kind === 'comeback' && item.achievement)
-  );
+  switch (item.kind) {
+    case 'record':
+    case 'season_leader':
+      return true;
+    case 'revenge':
+    case 'phoenix':
+    case 'comeback':
+      return item.achievement;
+    case 'swing':
+      return false;
+  }
 }
 
-function revenges(summary: EveningSummary, club: StoryClub): StoryItem[] {
+function revenges(summary: EveningSummary, club: StoryClub, awards: boolean): StoryItem[] {
   const evenings = chronological(club.summaries);
   const index = evenings.findIndex((s) => s.eveningId === summary.eveningId);
   const before = index === -1 ? evenings : evenings.slice(0, index);
   const { nemesis } = titles({ summaries: before, excluded: club.excluded });
-  const seen = new Set<string>();
-  const out: StoryItem[] = [];
-  for (const b of summary.busts) {
-    for (const killer of b.by) {
-      const key = `${killer}|${b.victim}`;
-      if (seen.has(key) || nemesis[killer] !== b.victim) continue;
-      seen.add(key);
-      out.push({ kind: 'revenge', playerId: killer, nemesisId: b.victim });
-    }
-  }
-  return out;
+  // Немезида бывает только у постоянного игрока и только постоянный — так что «Месть» выдана всем.
+  return revengesIn(summary, (id) => nemesis[id] ?? null).map((r) => ({
+    kind: 'revenge',
+    ...r,
+    achievement: awards && !club.excluded.has(r.playerId),
+  }));
 }
 
 /** Порядок строк: чем выше — тем главнее. */
@@ -133,21 +179,25 @@ export function eveningStory(input: StoryInput): StoryItem[] {
   const swing = bestSwing(input.allIns, swings);
   if (swing) items.push({ kind: 'swing', swing });
 
+  // Ачивки за вечер: не гостю и не на тренировке.
+  const awards = !input.training;
   const winner = summary.places[0];
   if (winner !== undefined) {
     const rebuys = summary.rebuys[winner] ?? 0;
-    if (summary.firstBustPlayerId === winner) items.push({ kind: 'phoenix', playerId: winner });
+    const awarded = awards && !input.excluded.has(winner);
+    if (summary.firstBustPlayerId === winner)
+      items.push({ kind: 'phoenix', playerId: winner, achievement: awarded });
     else if (rebuys > 0)
       items.push({
         kind: 'comeback',
         playerId: winner,
         rebuys,
-        achievement: !input.excluded.has(winner) && rebuys >= ACHIEVEMENT_THRESHOLDS.comebackRebuys,
+        achievement: awarded && levelFor('comeback', rebuys) > 0,
       });
   }
 
   if (club) {
-    items.push(...revenges(summary, club));
+    items.push(...revenges(summary, club, awards));
     const news = eveningClubNews({ ...club, predictions: [] }, summary.eveningId);
     // Как в «Жизни клуба»: повторённый рекорд вечера (фонд, длина игры) — не новость.
     for (const record of news?.records ?? [])
@@ -164,6 +214,7 @@ export function eveningStory(input: StoryInput): StoryItem[] {
 
   return items
     .filter((item) => !input.forPost || !toldElsewhereInPost(item))
+    .filter((item) => !shownElsewhere(item, input.shownAchievements))
     .map((item, i) => ({ item, i }))
     .sort((a, b) => rank(a.item) - rank(b.item) || a.i - b.i)
     .slice(0, STORY_MAX_ITEMS)

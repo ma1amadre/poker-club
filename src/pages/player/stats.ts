@@ -1,7 +1,14 @@
 // Чистые вычисления карточки игрока поверх итогов вечеров (EveningSummary). Очки, места, нетто
 // и нокауты за вечер посчитаны доменом в summarize — здесь они только собираются по игроку:
 // хронология, накопленный нетто для графика, форма, личные встречи, ачивки для показа.
-import { ACHIEVEMENT_META, type Achievement, type AchievementCode } from '@domain/achievements.ts';
+import {
+  ACHIEVEMENT_CODES,
+  ACHIEVEMENT_META,
+  achievementTitle,
+  levelCount,
+  type Achievement,
+  type AchievementCode,
+} from '@domain/achievements.ts';
 import { payouts } from '@domain/money.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import type { PlayerId } from '@domain/types.ts';
@@ -133,11 +140,20 @@ export function nemesisOf(
 
 export interface AchievementView {
   code: AchievementCode;
+  /** Название; у уровневой полученной — с уровнем игрока: «Охотник II». */
   title: string;
   description: string;
   /** Сколько раз получена (сумма count по вечерам и сезонам); 0 — ещё нет. */
   count: number;
-  /** Дата последнего вечера, где получена (для вечерних ачивок). */
+  /** Уровень игрока — наибольший из выдач; 0 — ещё нет. У ачивок без уровней — 0 или 1. */
+  level: number;
+  /** Сколько уровней у ачивки (1 — без уровней). */
+  levels: number;
+  /**
+   * Дата последнего вечера, где получена (для вечерних ачивок); у уровневых — последняя выдача на
+   * уровне игрока: карточка пишет дату рядом с правилом этого уровня («5 и больше нокаутов за вечер
+   * · 27 августа»), и выдача уровня ниже её не сдвигает.
+   */
   lastDate: string | null;
   /** Последний сезон, где получена (для сезонных: ребай-король, железный стул, чемпион). */
   lastSeasonKey: string | null;
@@ -145,7 +161,7 @@ export interface AchievementView {
 
 /**
  * Ачивки игрока для показа: все коды из ACHIEVEMENT_META в их порядке, у каждой — сколько раз
- * получена и когда в последний раз. Сами ачивки считает computeAchievements домена.
+ * получена, наибольший уровень и когда в последний раз. Сами ачивки считает computeAchievements.
  */
 export function achievementsForPlayer(
   all: readonly Achievement[],
@@ -153,13 +169,15 @@ export function achievementsForPlayer(
   dateOf: (eveningId: string) => string | undefined,
 ): AchievementView[] {
   const views = new Map<AchievementCode, AchievementView>();
-  for (const code of Object.keys(ACHIEVEMENT_META) as AchievementCode[]) {
+  for (const code of ACHIEVEMENT_CODES) {
     const meta = ACHIEVEMENT_META[code];
     views.set(code, {
       code,
       title: meta.title,
       description: meta.description,
       count: 0,
+      level: 0,
+      levels: levelCount(code),
       lastDate: null,
       lastSeasonKey: null,
     });
@@ -170,7 +188,17 @@ export function achievementsForPlayer(
     if (!v) continue;
     v.count += a.count;
     const date = a.eveningId ? dateOf(a.eveningId) : undefined;
-    if (date && (!v.lastDate || Date.parse(date) > Date.parse(v.lastDate))) v.lastDate = date;
+    if (a.level > v.level) {
+      v.level = a.level;
+      v.title = achievementTitle(a.code, a.level);
+      // Новый наибольший уровень: дата — только его выдач.
+      v.lastDate = date ?? null;
+    } else if (
+      a.level === v.level &&
+      date &&
+      (!v.lastDate || Date.parse(date) > Date.parse(v.lastDate))
+    )
+      v.lastDate = date;
     if (a.seasonKey && (!v.lastSeasonKey || a.seasonKey > v.lastSeasonKey))
       v.lastSeasonKey = a.seasonKey;
   }

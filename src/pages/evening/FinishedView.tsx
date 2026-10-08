@@ -87,7 +87,8 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
     player?.id,
     events,
   );
-  const story = useEveningStory(model, history, settings);
+  // Ачивки из «Твоего вечера» сюжет не повторяет (только пока карточка «Твой вечер» на экране).
+  const story = useEveningStory(model, history, settings, recap?.recap.newAchievements);
   const money = computeMoney(format, state);
   // Очки — по правилам, зафиксированным при завершении вечера (evenings.scoring), а не текущим.
   const points = eveningPoints(

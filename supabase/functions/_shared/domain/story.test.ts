@@ -1,6 +1,8 @@
 // «Сюжет вечера»: что попадает в строки, в каком порядке, что видит табло (без истории клуба) и что
-// остаётся для поста итогов (без рекордов, лидера сезона и «Камбэка» — их пост говорит другими блоками).
+// остаётся для поста итогов (без рекордов, лидера сезона и строк с ачивкой — «Месть», «Феникс»,
+// «Камбэк»: их пост говорит другими блоками). Ачивки строк — те же, что выдаёт computeAchievements.
 import { describe, expect, it } from 'vitest';
+import { computeAchievements } from './achievements.ts';
 import { eveningAllIns } from './allins.ts';
 import { DEFAULT_FORMAT } from './format.ts';
 import { DEFAULT_SCORING } from './scoring.ts';
@@ -82,7 +84,12 @@ describe('сюжет вечера', () => {
         favoritePct: 87,
       },
     });
-    expect(story[1]).toEqual({ kind: 'revenge', playerId: 'A', nemesisId: 'B' });
+    expect(story[1]).toEqual({
+      kind: 'revenge',
+      playerId: 'A',
+      nemesisId: 'B',
+      achievement: true,
+    });
     expect(story[2]).toMatchObject({
       kind: 'record',
       record: { kind: 'most_kos', status: 'new', value: 3, playerIds: ['A'] },
@@ -101,8 +108,68 @@ describe('сюжет вечера', () => {
     ]);
   });
 
-  it('пост итогов: без рекордов и лидера сезона — место занимают следующие строки', () => {
-    expect(eveningStory({ ...input, forPost: true }).map((s) => s.kind)).toEqual([
+  it('пост итогов: без рекордов, лидера сезона и строк с ачивкой — остаётся олл-ин', () => {
+    // Месть и феникс — ачивки «Месть» и «Феникс», они уже в «Новых ачивках».
+    expect(eveningStory({ ...input, forPost: true }).map((s) => s.kind)).toEqual(['swing']);
+  });
+
+  it('строки с ачивкой совпадают с computeAchievements этого вечера', () => {
+    const awarded = computeAchievements({
+      ...club(),
+      predictions: [],
+      stars: [],
+      currentSeasonKey: '2026-Q4',
+    }).filter((a) => a.eveningId === 'e2');
+    expect(
+      awarded.filter((a) => a.code === 'revenge').map((a) => [a.playerId, a.targetId]),
+    ).toEqual([['A', 'B']]);
+    expect(awarded.filter((a) => a.code === 'phoenix').map((a) => a.playerId)).toEqual(['A']);
+    const story = eveningStory(input);
+    expect(story.filter((s) => s.kind === 'revenge' || s.kind === 'phoenix')).toEqual([
+      { kind: 'revenge', playerId: 'A', nemesisId: 'B', achievement: true },
+    ]);
+    // Феникс — пятый по важности и в четыре строки экрана не попал; в сюжете без истории он есть.
+    expect(eveningStory({ ...input, club: undefined })).toContainEqual({
+      kind: 'phoenix',
+      playerId: 'A',
+      achievement: true,
+    });
+  });
+
+  it('экран: строки об ачивках зрителя из «Твоего вечера» не повторяются, место занимают следующие', () => {
+    // «Твой вечер» A — строки computeAchievements этого вечера у A («Месть», «Феникс», «Охотник»…).
+    const mine = computeAchievements({
+      ...club(),
+      predictions: [],
+      stars: [],
+      currentSeasonKey: '2026-Q4',
+    }).filter((a) => a.eveningId === 'e2' && a.playerId === 'A');
+    expect(mine.map((a) => a.code)).toEqual(expect.arrayContaining(['revenge', 'phoenix']));
+    // У A ни «Мести», ни «Феникса» в сюжете — они в «Твоём вечере»; место мести занял рекорд вечера.
+    const forA = eveningStory({ ...input, shownAchievements: mine });
+    expect(forA.map((s) => s.kind)).toEqual(['swing', 'record', 'season_leader', 'record']);
+    expect(forA.some((s) => s.kind === 'revenge' || s.kind === 'phoenix')).toBe(false);
+    // Другой зритель (B — Немезида, которую выбили): строка о мести A остаётся.
+    const forB = computeAchievements({
+      ...club(),
+      predictions: [],
+      stars: [],
+      currentSeasonKey: '2026-Q4',
+    }).filter((a) => a.eveningId === 'e2' && a.playerId === 'B');
+    expect(eveningStory({ ...input, shownAchievements: forB })).toEqual(eveningStory(input));
+    // Цель «Мести» — часть ачивки: «Месть» A другой Немезиде строку не прячет.
+    expect(
+      eveningStory({
+        ...input,
+        shownAchievements: [{ playerId: 'A', code: 'revenge', targetId: 'C' }],
+      }).map((s) => s.kind),
+    ).toContain('revenge');
+  });
+
+  it('тренировка: ачивок нет — строки те же, в посте их не прячут', () => {
+    const training = eveningStory({ ...input, training: true });
+    expect(training.filter((s) => 'achievement' in s && s.achievement)).toEqual([]);
+    expect(eveningStory({ ...input, training: true, forPost: true }).map((s) => s.kind)).toEqual([
       'swing',
       'revenge',
       'phoenix',
@@ -184,7 +251,7 @@ describe('победа после ребаев и «феникс»', () => {
     ).toHaveLength(1);
   });
 
-  it('первый вылет и победа — «феникс» вместо победы после ребаев', () => {
+  it('первый вылет и победа — «феникс» (ачивка) вместо победы после ребаев', () => {
     const phoenix = playEvening(
       'p1',
       day(8),
@@ -197,8 +264,18 @@ describe('победа после ребаев и «феникс»', () => {
       ],
     );
     expect(eveningStory({ summary: phoenix, allIns: [], excluded: new Set() })).toEqual([
-      { kind: 'phoenix', playerId: 'A' },
+      { kind: 'phoenix', playerId: 'A', achievement: true },
     ]);
+    expect(eveningStory({ summary: phoenix, allIns: [], excluded: new Set(['A']) })).toEqual([
+      { kind: 'phoenix', playerId: 'A', achievement: false },
+    ]);
+    // В посте «Феникс» — в «Новых ачивках»; у гостя строка остаётся.
+    expect(
+      eveningStory({ summary: phoenix, allIns: [], excluded: new Set(), forPost: true }),
+    ).toEqual([]);
+    expect(
+      eveningStory({ summary: phoenix, allIns: [], excluded: new Set(['A']), forPost: true }),
+    ).toHaveLength(1);
   });
 
   it('победа без ребаев и без олл-инов — сюжета нет', () => {

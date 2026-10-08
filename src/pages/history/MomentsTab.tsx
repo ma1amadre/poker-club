@@ -10,6 +10,7 @@ import {
   formatWeekdayDate,
   paths,
   pluralWithNumber,
+  starNote,
 } from '../../shared/lib';
 import {
   AllInList,
@@ -148,6 +149,7 @@ function MomentRow({
   const name = nameOf(moment.nomineeId);
   const meta = [pluralWithNumber(moment.votes, VOTES_FORMS)];
   if (moment.tie) meta.push('ничья');
+  if (moment.star) meta.push(starNote(moment.star));
   if (moment.noteBy) {
     const what =
       moment.caption && moment.photoPath ? 'подпись и фото' : moment.caption ? 'подпись' : 'фото';

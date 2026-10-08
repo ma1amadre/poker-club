@@ -3,7 +3,7 @@
 // allIns.ts); здесь только текст. О людях — в настоящем времени и без рода; если речь о самом
 // игроке (meId), — на «ты»: «Ты забираешь олл-ин с 13 % до флопа». Табло meId не передаёт.
 // Те же истории в постах бота — _shared/messages.ts (к группе, без «ты»).
-import { ACHIEVEMENT_META } from '@domain/achievements.ts';
+import { ACHIEVEMENT_META, achievementTitle } from '@domain/achievements.ts';
 import type { AllIn, AllInSwing } from '@domain/allins.ts';
 import { standingPlace } from '@domain/recap.ts';
 import type { Street } from '@domain/showdown.ts';
@@ -118,10 +118,27 @@ export function stakeLine(item: StakeItem, nameOf: NameOf, meId?: string | null)
     case 'enemy_step':
       return (
         `${capitalize(w.name(item.playerId))} — в одном нокауте от ачивки ` +
-        `«${ACHIEVEMENT_META.sworn_enemy.title}» (цель — ${w.name(item.victimId)}).`
+        `«${achievementTitle('sworn_enemy', item.level)}» (цель — ${w.name(item.victimId)}).`
       );
     case 'first_blood':
       return `Первый нокаут в истории клуба принесёт ачивку «${ACHIEVEMENT_META.first_blood.title}».`;
+    case 'king_step': {
+      const many = item.championIds.length > 1;
+      return (
+        `Нокаут действующего чемпиона принесёт ачивку «${ACHIEVEMENT_META.king_hunt.title}» ` +
+        `(${many ? 'чемпионы' : 'чемпион'} — ${joinNames(item.championIds.map(w.name))}).`
+      );
+    }
+    case 'revenge_step':
+      return (
+        `${capitalize(w.name(item.playerId))} — в одном нокауте от ачивки ` +
+        `«${ACHIEVEMENT_META.revenge.title}» (Немезида — ${w.name(item.nemesisId)}).`
+      );
+    case 'star_step':
+      return (
+        `${capitalize(w.name(item.playerId))} — в одной звезде от ачивки ` +
+        `«${achievementTitle('star', item.level)}».`
+      );
     case 'pool_record':
       return (
         `Идут ${item.going} — фонд ещё до ребаев ${item.status === 'new' ? 'побьёт' : 'повторит'} ` +

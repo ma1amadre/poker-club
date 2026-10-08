@@ -2,9 +2,14 @@
 // «4 из 5», место в сезоне, подпись). Счётчики и правила считает домен, здесь только слова и
 // раскладка по группам. Подписи на «ты» — только на своей карточке; на чужой — нейтрально.
 // Имена не склоняем (падежей у произвольного имени нет) — конструкции с тире и двоеточием.
+// У уровневых ачивок строка — о следующем уровне: «Охотник II», «3 из 4».
 import {
   ACHIEVEMENT_META,
   ACHIEVEMENT_THRESHOLDS,
+  achievementTitle,
+  isLeveled,
+  levelThreshold,
+  SEASONAL_ACHIEVEMENTS,
   type AchievementCode,
 } from '@domain/achievements.ts';
 import type { AchievementProgress } from '@domain/progress.ts';
@@ -14,19 +19,17 @@ import {
   joinNames,
   kosCount,
   NBSP,
+  plural,
   pluralWithNumber,
   winsCount,
 } from '../../shared/lib';
 
 /** Сезонные ачивки: их дают за каждый завершённый сезон, прогресс — по текущему. */
-export const SEASONAL_CODES: ReadonlySet<AchievementCode> = new Set([
-  'iron_chair',
-  'rebuy_king',
-  'champion',
-]);
+export const SEASONAL_CODES: ReadonlySet<AchievementCode> = SEASONAL_ACHIEVEMENTS;
 
 export interface ProgressView {
   code: AchievementCode;
+  /** Название; у уровневых — следующего уровня: «Охотник II». */
   title: string;
   /** Полоса Progress: value из max с подписью «4 из 5»; null — полосы нет. */
   bar: { value: number; max: number; text: string } | null;
@@ -48,11 +51,19 @@ export interface ProgressViewOptions {
 }
 
 const REBUY_FORMS = ['ребай', 'ребая', 'ребаев'] as const;
+/** Родительный падеж: «после 1 и больше ребая», «после 2 и больше ребаев». */
+const REBUY_GEN_FORMS = ['ребая', 'ребаев', 'ребаев'] as const;
 const PREDICTION_FORMS = ['прогноз', 'прогноза', 'прогнозов'] as const;
 const TIMES_FORMS = ['раз', 'раза', 'раз'] as const;
+const STAR_FORMS = ['звезда', 'звезды', 'звёзд'] as const;
 
 function countBar(current: number, target: number): ProgressView['bar'] {
   return { value: Math.min(current, target), max: target, text: `${current} из${NBSP}${target}` };
+}
+
+/** «до «Охотник II»» — к какому уровню счётчик (у уровневых). */
+function nextTitle(p: AchievementProgress): string {
+  return achievementTitle(p.code, p.nextLevel);
 }
 
 function hintFor(p: AchievementProgress, { isMe, self, nameOf }: ProgressViewOptions): string {
@@ -62,22 +73,33 @@ function hintFor(p: AchievementProgress, { isMe, self, nameOf }: ProgressViewOpt
   const left = Math.max(0, target - c);
   const names = (ids: readonly PlayerId[] | undefined) =>
     joinNames((ids ?? []).map((id) => (isMe && id === self ? 'ты' : nameOf(id))));
+  // Куда растёт счётчик: к первому уровню — «до ачивки», дальше — «до «Охотник II»».
+  const next = p.level > 0 ? `«${nextTitle(p)}»` : null;
 
   switch (p.code) {
     case 'first_blood':
       return isMe
-        ? 'Первого нокаута в клубе ещё не было — выбей кого-нибудь первым'
+        ? 'Первого нокаута в клубе ещё не было — выбей кого-нибудь, и ачивка твоя'
         : 'Первого нокаута в клубе ещё не было';
     case 'hunter':
-      if (c === 0)
-        return isMe ? `Выбей ${T.hunterKos} игроков за один вечер` : 'Нокаутов пока не было';
+      if (c === 0) return isMe ? `Выбей ${target} игроков за один вечер` : 'Нокаутов пока не было';
       return isMe
-        ? `Лучший вечер — ${kosCount(c)}, нужно ${T.hunterKos} за вечер`
+        ? `Лучший вечер — ${kosCount(c)}, ${next ? `для ${next} ` : ''}нужно ${target} за вечер`
         : `Лучший вечер — ${kosCount(c)}`;
-    case 'comeback':
+    case 'comeback': {
+      const rebuys = levelThreshold('comeback', p.nextLevel ?? 1) ?? 0;
+      // После «после» — родительный: «после 2 и больше ребаев», не «после 2 ребая и больше».
       return isMe
-        ? `Выиграй вечер, в котором понадобилось ${pluralWithNumber(T.comebackRebuys, REBUY_FORMS)} и больше`
-        : ACHIEVEMENT_META.comeback.description;
+        ? `Выиграй вечер, в котором понадобилось ${pluralWithNumber(rebuys, REBUY_FORMS)} и больше`
+        : `Победа в вечере после ${rebuys}${NBSP}и больше ${plural(rebuys, REBUY_GEN_FORMS)}`;
+    }
+    case 'phoenix':
+      // Без «вылети первым»: «первым» требует рода — первый вылет назван существительным.
+      return isMe
+        ? 'Выиграй вечер, в котором первый вылет — твой: вернись ребаем'
+        : ACHIEVEMENT_META.phoenix.description;
+    case 'clean_win':
+      return isMe ? 'Выиграй вечер без единого ребая' : ACHIEVEMENT_META.clean_win.description;
     case 'hat_trick':
       if (c === 0)
         return isMe ? `Выиграй ${T.hatTrickWins} вечера подряд` : 'Серии побед сейчас нет';
@@ -87,14 +109,38 @@ function hintFor(p: AchievementProgress, { isMe, self, nameOf }: ProgressViewOpt
     case 'sworn_enemy':
       if (!p.victimId || c === 0)
         return isMe
-          ? `Выбей одного и того же соперника ${pluralWithNumber(T.swornEnemyKos, TIMES_FORMS)}`
+          ? `Выбей одного и того же соперника ${pluralWithNumber(target, TIMES_FORMS)}`
           : 'Нокаутов пока не было';
       // Не «чаще всех»: это не Немезида (у той же жертвы может быть игрок с тем же счётом), а
       // лучший счёт этого игрока против одного соперника. Имя — после «против игрока», чтобы его
       // нельзя было прочитать как подлежащее.
       return isMe
-        ? `Больше всего нокаутов у тебя — против игрока ${nameOf(p.victimId)}: ${c}. До ачивки — ${kosCount(left)}`
+        ? `Больше всего нокаутов у тебя — против игрока ${nameOf(p.victimId)}: ${c}. До ${next ?? 'ачивки'} — ${kosCount(left)}`
         : `Больше всего нокаутов — против игрока ${nameOf(p.victimId)}: ${c}`;
+    case 'revenge':
+      if (!p.victimId)
+        return isMe
+          ? 'Немезиды у тебя пока нет: она появится, когда кто-то выбьет тебя дважды'
+          : 'Немезиды пока нет';
+      return isMe
+        ? `Твоя Немезида — ${nameOf(p.victimId)}: выбей в ответ`
+        : `Немезида — ${nameOf(p.victimId)}`;
+    case 'king_hunt': {
+      const kings = p.leaders ?? [];
+      if (kings.length === 0)
+        return 'Действующего чемпиона нет — охота откроется со следующего сезона';
+      // Цели — действующие чемпионы, кроме игрока карточки: себя не выбить (как huntable домена).
+      const targets = self === undefined ? kings : kings.filter((id) => id !== self);
+      if (!p.possible || targets.length === 0)
+        return isMe
+          ? 'Действующий чемпион — ты: охотятся на тебя'
+          : 'Действующий чемпион — этот игрок';
+      const who = names(targets);
+      const many = targets.length > 1;
+      return isMe
+        ? `Выбей ${many ? 'одного из действующих чемпионов' : 'действующего чемпиона'}: ${who}`
+        : `Цель — ${many ? 'действующие чемпионы' : 'действующий чемпион'}: ${who}`;
+    }
     case 'oracle':
       if (c === 0)
         return isMe
@@ -104,9 +150,13 @@ function hintFor(p: AchievementProgress, { isMe, self, nameOf }: ProgressViewOpt
         ? `Угадано победителей подряд: ${c}, до ачивки — ${pluralWithNumber(left, PREDICTION_FORMS)}`
         : `Угадано победителей подряд: ${c}`;
     case 'star':
+      if (p.measure === 'condition')
+        return isMe
+          ? 'Выиграй номинацию голосования после вечера — без ничьей и с 2 голосами и больше'
+          : 'Единоличная победа в номинации голосования, от 2 голосов';
       return isMe
-        ? 'Победи в номинации голосования после вечера'
-        : ACHIEVEMENT_META.star.description;
+        ? `Звёзд вечера: ${c}, до «${nextTitle(p)}» — ${pluralWithNumber(left, STAR_FORMS)}`
+        : `Звёзд вечера: ${c}`;
     case 'iron_chair':
       if (target === 0) return 'В этом сезоне ещё не было вечеров';
       if (!p.possible)
@@ -137,7 +187,7 @@ function hintFor(p: AchievementProgress, { isMe, self, nameOf }: ProgressViewOpt
 
 /** Строка прогресса одной ачивки. */
 export function progressView(p: AchievementProgress, opts: ProgressViewOptions): ProgressView {
-  const title = ACHIEVEMENT_META[p.code].title;
+  const title = isLeveled(p.code) ? nextTitle(p) : ACHIEVEMENT_META[p.code].title;
   const hint = hintFor(p, opts);
   const c = p.current ?? 0;
   const target = p.target ?? 0;
@@ -163,9 +213,9 @@ export function progressView(p: AchievementProgress, opts: ProgressViewOptions):
 export interface ProgressGroups {
   /** Сезонные: гонка текущего сезона. */
   season: ProgressView[];
-  /** Неполученные с уже начатым счётчиком — ближние сверху. */
+  /** Неполученные (или следующий уровень) с уже начатым счётчиком — ближние сверху. */
   close: ProgressView[];
-  /** Остальные неполученные: счётчик на нуле или только условие. */
+  /** Остальные: счётчик на нуле или только условие. */
   rest: ProgressView[];
 }
 

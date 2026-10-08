@@ -2,6 +2,7 @@
 // и «На кону» в посте дня игры (одна-две строки). Тексты — к группе, о людях без рода.
 import { describe, expect, it } from 'vitest';
 import {
+  computeAchievements,
   DEFAULT_FORMAT,
   DEFAULT_SCORING,
   eveningAllIns,
@@ -97,7 +98,7 @@ describe('«Сюжет вечера» в посте итогов', () => {
     );
   });
 
-  it('из журнала до поста: месть и олл-ин в сюжете, рекорд и лидер — только в «Жизни клуба»', () => {
+  it('из журнала до поста: олл-ин в сюжете, месть — в «Новых ачивках», рекорд и лидер — в «Жизни клуба»', () => {
     const e1 = playEvening(
       'e1',
       day(1),
@@ -148,9 +149,15 @@ describe('«Сюжет вечера» в посте итогов', () => {
       totalEntries: 4,
       rebuysTotal: 0,
       prizePoolRub: 2000,
-      newAchievements: [
-        { playerId: 'a', code: 'hunter', eveningId: 'e2', seasonKey: null, count: 1 },
-      ],
+      // Как newAchievementsFor: строки этого вечера из computeAchievements.
+      newAchievements: computeAchievements({
+        summaries: [e1, e2],
+        excluded: new Set(),
+        predictions: [],
+        stars: [],
+        bestN: 10,
+        currentSeasonKey: '2026-Q4',
+      }).filter((a) => a.eveningId === 'e2'),
       votingClosesAt: null,
       botUsername: null,
       nowMs: Date.parse(day(8)),
@@ -166,9 +173,14 @@ describe('«Сюжет вечера» в посте итогов', () => {
     const text = plain(resultsPost(base).text);
     expect(text).toContain(
       '\n\n♠️ <b>Сюжет вечера</b>\n' +
-        'Женя забирает олл-ин с 13 % до флопа; фаворит — Саша, 87 %.\n' +
-        'Месть Немезиде: Женя выбивает игрока Саша.\n\n♣️ <b>Жизнь клуба</b>',
+        'Женя забирает олл-ин с 13 % до флопа; фаворит — Саша, 87 %.\n\n♣️ <b>Жизнь клуба</b>',
     );
+    // Месть — ачивкой в «Новых ачивках», без дубля строкой сюжета.
+    expect(text).toContain(
+      '🏅 <b>Новые ачивки</b>\n' +
+        '• Женя — «Охотник I», «Чистая победа», «Месть» (Немезида — Саша)\n',
+    );
+    expect(text).not.toContain('Месть Немезиде');
     // Рядом с «Жизнью клуба» и после ачивок; рекордов и лидера сезона в сюжете поста нет.
     expect(text.indexOf('Новые ачивки')).toBeLessThan(text.indexOf('Сюжет вечера'));
     expect(text).not.toContain('Новый рекорд клуба: больше');
@@ -180,7 +192,7 @@ describe('«На кону» в посте дня игры', () => {
   const stakes: EveningStakes = {
     items: [
       { kind: 'win_step', playerId: 'a', hatTrick: true, streak: 3, record: 'new' },
-      { kind: 'enemy_step', playerId: 'b', victimId: 'c', kos: 4, target: 5 },
+      { kind: 'enemy_step', playerId: 'b', victimId: 'c', kos: 4, target: 5, level: 1 },
       { kind: 'first_blood' },
     ],
     season: {
@@ -195,7 +207,7 @@ describe('«На кону» в посте дня игры', () => {
   it('одна строка шагов (не больше двух) и строка сезона', () => {
     expect(stakesLines(stakes, NAMES).map(plain)).toEqual([
       'На кону: Женя — в одной победе от ачивки «Хет-трик» и рекорда клуба (3 победы подряд); ' +
-        'Саша — в одном нокауте от ачивки «Заклятый враг» (цель — Дима).',
+        'Саша — в одном нокауте от ачивки «Заклятый враг I» (цель — Дима).',
       'Сезон: лидер — Саша, 24 очка; Женя отстаёт на 3 очка.',
     ]);
   });
@@ -291,7 +303,7 @@ describe('«На кону» в посте дня игры', () => {
     const text = plain(gamedayPost({ ...input, stakes, names: NAMES }).text);
     expect(text).toContain(
       'Идут (2): Женя и Саша\n\nНа кону: Женя — в одной победе от ачивки «Хет-трик» и рекорда клуба ' +
-        '(3 победы подряд); Саша — в одном нокауте от ачивки «Заклятый враг» (цель — Дима).\n' +
+        '(3 победы подряд); Саша — в одном нокауте от ачивки «Заклятый враг I» (цель — Дима).\n' +
         'Сезон: лидер — Саша, 24 очка; Женя отстаёт на 3 очка.\n\n',
     );
     expect(gamedayPost(input).text).not.toContain('На кону');
@@ -310,8 +322,10 @@ describe('«На кону» в посте дня игры', () => {
         buyInRub: 500,
       },
     );
+    // Женя — чемпион 2026-Q4, то есть действующий в 2027-Q1: Саша может на него охотиться.
     expect(stakesLines(s, NAMES).map(plain)).toEqual([
-      'На кону: первый нокаут в истории клуба принесёт ачивку «Первая кровь».',
+      'На кону: первый нокаут в истории клуба принесёт ачивку «Первая кровь»; ' +
+        'нокаут действующего чемпиона принесёт ачивку «Охота на короля» (чемпион — Женя).',
       'Сезон: первый вечер — I квартал 2027 начинается с нуля.',
     ]);
   });

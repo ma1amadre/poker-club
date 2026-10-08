@@ -131,11 +131,25 @@ describe('«Твой вечер»', () => {
 
   it('новые ачивки — только этого вечера и этого игрока', () => {
     const c = eveningRecap(input(), 'e3', 'C');
-    expect(c?.newAchievements.map((a) => a.code).sort()).toEqual(['first_blood', 'hunter']);
+    expect(c?.newAchievements.map((a) => a.code).sort()).toEqual([
+      'clean_win',
+      'first_blood',
+      'hunter',
+    ]);
+    // Уровень и «впервые» — как у computeAchievements: первый «Охотник» C — уровень I.
+    expect(c?.newAchievements.find((a) => a.code === 'hunter')).toMatchObject({
+      level: 1,
+      first: true,
+      targetId: null,
+    });
     expect(eveningRecap(input(), 'e3', 'A')?.newAchievements.map((a) => a.code)).toEqual([
       'first_blood',
     ]);
-    expect(eveningRecap(input(), 'e2', 'B')?.newAchievements).toEqual([]);
+    // e2: B выигрывает без ребаев — «Чистая победа»; у A в e2 ачивок нет.
+    expect(eveningRecap(input(), 'e2', 'B')?.newAchievements.map((a) => a.code)).toEqual([
+      'clean_win',
+    ]);
+    expect(eveningRecap(input(), 'e2', 'A')?.newAchievements).toEqual([]);
   });
 
   it('гость: без ачивок и мест в сезоне, но с нокаутами и прогнозом', () => {

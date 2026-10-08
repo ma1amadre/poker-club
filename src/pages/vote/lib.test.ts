@@ -7,6 +7,7 @@ import {
   CAPTION_MAX,
   categoryResults,
   formatCountdown,
+  winnerBadge,
   photoPlan,
   voteDraftError,
   type VoteLike,
@@ -66,6 +67,46 @@ describe('participantIds', () => {
   });
 });
 
+describe('«Звезда вечера» на экране итогов', () => {
+  const v = (voter: string, category: VoteLike['category'], nominee: string): VoteLike => ({
+    voter_id: voter,
+    category,
+    nominee_id: nominee,
+  });
+
+  it('звезда — единственному лидеру с 2 голосами; ничья и один голос — без звезды', () => {
+    const res = categoryResults([
+      v('a', 'hand', 'b'),
+      v('c', 'hand', 'b'),
+      v('d', 'hand', 'c'),
+      v('a', 'bluff', 'c'),
+      v('b', 'bluff', 'd'),
+      v('a', 'badbeat', 'd'),
+    ]);
+    expect([res.hand.star, res.bluff.star, res.badbeat.star]).toEqual(['b', null, null]);
+    expect(winnerBadge(res.hand, 'b', false)).toEqual({
+      label: 'Звезда вечера',
+      star: true,
+      note: null,
+    });
+    expect(winnerBadge(res.bluff, 'c', false)).toEqual({
+      label: 'Ничья',
+      star: false,
+      note: 'при ничьей звезды вечера нет',
+    });
+    expect(winnerBadge(res.badbeat, 'd', false)).toMatchObject({
+      label: 'Победитель',
+      star: false,
+      note: 'звезда вечера — от 2 голосов',
+    });
+    // Гость-лидер: победитель, но без звезды.
+    expect(winnerBadge(res.hand, 'b', true)).toMatchObject({
+      star: false,
+      note: 'гостю звезда вечера не положена',
+    });
+  });
+});
+
 describe('categoryResults', () => {
   const v = (voter: string, category: VoteLike['category'], nominee: string): VoteLike => ({
     voter_id: voter,
@@ -92,7 +133,13 @@ describe('categoryResults', () => {
       ['c', 1],
     ]);
     expect(res.bluff.winners.map((w) => w.nomineeId)).toEqual(['c']);
-    expect(res.badbeat).toEqual({ category: 'badbeat', total: 0, winners: [], others: [] });
+    expect(res.badbeat).toEqual({
+      category: 'badbeat',
+      total: 0,
+      winners: [],
+      others: [],
+      star: null,
+    });
   });
 
   it('ничья — несколько победителей', () => {

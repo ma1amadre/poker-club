@@ -1,4 +1,9 @@
-import { computeAchievements, titles } from '@domain/achievements.ts';
+import {
+  ACHIEVEMENT_CODES,
+  computeAchievements,
+  titles,
+  type Achievement,
+} from '@domain/achievements.ts';
 import { playEvening, simpleEvening } from '@domain/test-utils.ts';
 import { describe, expect, it } from 'vitest';
 import {
@@ -140,6 +145,18 @@ describe('немезида', () => {
   });
 });
 
+/** Сезонная ачивка «Чемпион сезона» игрока за сезон. */
+const season = (playerId: string, seasonKey: string): Achievement => ({
+  playerId,
+  code: 'champion',
+  eveningId: null,
+  seasonKey,
+  targetId: null,
+  count: 1,
+  level: 1,
+  first: false,
+});
+
 describe('ачивки игрока', () => {
   it('все коды по порядку META, полученные — со счётчиком и датой последней', () => {
     const list = [
@@ -156,21 +173,68 @@ describe('ачивки игрока', () => {
     });
     const dates = new Map(list.map((s) => [s.eveningId, s.date]));
     const views = achievementsForPlayer(all, 'A', (id) => dates.get(id));
-    expect(views).toHaveLength(10);
+    expect(views.map((v) => v.code)).toEqual(ACHIEVEMENT_CODES);
+    // Два вечера по 3 нокаута — «Охотник I» дважды; уровень — в названии.
     const hunter = views.find((v) => v.code === 'hunter');
-    expect(hunter).toMatchObject({ count: 2, lastDate: day(10, 8), title: 'Охотник' });
+    expect(hunter).toMatchObject({
+      count: 2,
+      lastDate: day(10, 8),
+      title: 'Охотник\u00A0I',
+      level: 1,
+      levels: 3,
+    });
+    // Без уровней — название как есть; не получена — уровень 0.
+    expect(views.find((v) => v.code === 'clean_win')).toMatchObject({
+      title: 'Чистая победа',
+      count: 2,
+      level: 1,
+      levels: 1,
+    });
+    expect(views.find((v) => v.code === 'star')).toMatchObject({
+      title: 'Звезда вечера',
+      level: 0,
+      levels: 3,
+    });
     const firstBlood = views.find((v) => v.code === 'first_blood');
     expect(firstBlood).toMatchObject({ count: 1, lastDate: day(10, 1) });
     expect(views.find((v) => v.code === 'champion')?.count).toBe(0);
   });
 
+  it('у уровневой дата — последней выдачи на уровне игрока, уровень ниже её не сдвигает', () => {
+    const hunter = (eveningId: string, level: number): Achievement => ({
+      playerId: 'A',
+      code: 'hunter',
+      eveningId,
+      seasonKey: null,
+      targetId: null,
+      count: 1,
+      level,
+      first: false,
+    });
+    const dates = new Map([
+      ['aug27', '2026-08-27T16:00:00.000Z'],
+      ['sep10', '2026-09-10T16:00:00.000Z'],
+      ['oct01', '2026-10-01T16:00:00.000Z'],
+    ]);
+    const view = (rows: Achievement[]) =>
+      achievementsForPlayer(rows, 'A', (id) => dates.get(id)).find((v) => v.code === 'hunter');
+    // 27 августа — «Охотник III» (5 нокаутов), 1 октября — «Охотник I» (3 нокаута).
+    expect(view([hunter('aug27', 3), hunter('oct01', 1)])).toMatchObject({
+      level: 3,
+      count: 2,
+      lastDate: '2026-08-27T16:00:00.000Z',
+    });
+    // Порядок строк не важен; две выдачи на уровне игрока — последняя из них.
+    expect(view([hunter('oct01', 1), hunter('sep10', 3), hunter('aug27', 3)])).toMatchObject({
+      level: 3,
+      count: 3,
+      lastDate: '2026-09-10T16:00:00.000Z',
+    });
+  });
+
   it('сезонная ачивка — с последним сезоном', () => {
     const views = achievementsForPlayer(
-      [
-        { playerId: 'A', code: 'champion', eveningId: null, seasonKey: '2026-Q2', count: 1 },
-        { playerId: 'A', code: 'champion', eveningId: null, seasonKey: '2026-Q3', count: 1 },
-        { playerId: 'B', code: 'champion', eveningId: null, seasonKey: '2026-Q1', count: 1 },
-      ],
+      [season('A', '2026-Q2'), season('A', '2026-Q3'), season('B', '2026-Q1')],
       'A',
       () => undefined,
     );

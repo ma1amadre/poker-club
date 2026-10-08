@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { computeAchievements, type AchievementInput } from './achievements.ts';
 import type { ScoredPrediction } from './predictions.ts';
 import { eveningStakes, type StakesInput, type StakesPlayer } from './stakes.ts';
-import { playEvening, simpleEvening } from './test-utils.ts';
+import { playEvening, simpleEvening, type Step } from './test-utils.ts';
 
 const day = (n: number) => `2026-10-${String(n).padStart(2, '0')}T12:00:00.000Z`;
 const ALL: StakesPlayer[] = ['A', 'B', 'C', 'D'].map((playerId) => ({ playerId, rsvp: null }));
@@ -27,6 +27,9 @@ describe('шаг к «Хет-трику» и рекорду серии', () => {
     ];
     expect(eveningStakes(input(s), opts()).items).toEqual([
       { kind: 'win_step', playerId: 'A', hatTrick: true, streak: 3, record: 'new' },
+      // A дважды выбил B и C — у обоих Немезида A, «Мести» ещё не было.
+      { kind: 'revenge_step', playerId: 'B', nemesisId: 'A' },
+      { kind: 'revenge_step', playerId: 'C', nemesisId: 'A' },
     ]);
   });
 
@@ -65,6 +68,8 @@ describe('шаг к «Хет-трику» и рекорду серии', () => {
     const items = eveningStakes(input(s), opts()).items;
     expect(items).toEqual([
       { kind: 'win_step', playerId: 'A', hatTrick: true, streak: 3, record: 'equal' },
+      // Немезида B — A (выбивал последним при равном счёте), мести ещё не было.
+      { kind: 'revenge_step', playerId: 'B', nemesisId: 'A' },
     ]);
     // Одна победа при рекорде 3 — ни «Хет-трика», ни рекорда.
     // (И первая серия из двух побед рекордом не объявляется — см. «Оракул» ниже: у B одна победа.)
@@ -110,14 +115,43 @@ describe('шаг к «Заклятому врагу»', () => {
     ),
   ];
 
-  it('четыре нокаута одного соперника — пятый даст ачивку', () => {
+  it('четыре нокаута одного соперника — пятый даст ачивку уровня I', () => {
     expect(eveningStakes(input(s), opts()).items).toContainEqual({
       kind: 'enemy_step',
       playerId: 'A',
       victimId: 'B',
       kos: 4,
       target: 5,
+      level: 1,
     });
+  });
+
+  it('девять нокаутов — десятый даст уровень II; пять — до уровня II ещё далеко', () => {
+    const nine = playEvening(
+      'e3',
+      day(15),
+      ['A', 'B'],
+      [
+        ...Array.from({ length: 4 }, (): Step[] => [
+          ['bust', 'B', ['A']],
+          ['rebuy', 'B'],
+        ]).flat(),
+        ['bust', 'B', ['A']],
+      ],
+    );
+    const items = eveningStakes(input([...s, nine]), opts()).items;
+    expect(items).toContainEqual({
+      kind: 'enemy_step',
+      playerId: 'A',
+      victimId: 'B',
+      kos: 9,
+      target: 10,
+      level: 2,
+    });
+    const five = playEvening('e3', day(15), ['A', 'B'], [['bust', 'B', ['A']]]);
+    expect(eveningStakes(input([...s, five]), opts()).items.map((i) => i.kind)).not.toContain(
+      'enemy_step',
+    );
   });
 
   it('жертва ответила «не иду» — шага нет', () => {
@@ -196,7 +230,8 @@ describe('болельщик (миграция 024)', () => {
     const kinds = eveningStakes(input(s, { predictions }), opts(as(false, 'maybe'))).items.map(
       (i) => i.kind,
     );
-    expect(kinds).toEqual(['win_step', 'oracle_step']);
+    // B дважды выбит A — шаг к «Мести» у B (B может прийти), у A — победы и «Оракул».
+    expect(kinds).toEqual(['win_step', 'revenge_step', 'oracle_step']);
   });
 
   it('болельщик не делает фонд: в «идут» для рекорда фонда считаются только игроки', () => {
@@ -246,6 +281,97 @@ describe('расклад сезона', () => {
     const season = eveningStakes(input(tie), opts()).season;
     expect(season?.leaders.map((l) => l.playerId)).toEqual(['A', 'B']);
     expect(season?.chasers.map((c) => c.playerId)).toEqual(['C']);
+  });
+});
+
+describe('«Охота на короля», «Месть», «Звезда вечера»', () => {
+  const q3 = (n: number) => `2026-07-${String(n).padStart(2, '0')}T12:00:00.000Z`;
+  // Q3: чемпион — A. Вечер — в Q4.
+  const champ = [
+    simpleEvening('c1', q3(2), ['A', 'B', 'C']),
+    simpleEvening('c2', q3(9), ['A', 'C', 'B']),
+  ];
+
+  it('действующий чемпион может прийти — его нокаут даст «Охоту на короля»', () => {
+    expect(eveningStakes(input(champ), opts()).items).toContainEqual({
+      kind: 'king_step',
+      championIds: ['A'],
+    });
+    // Чемпион не придёт — шага нет.
+    const no = ALL.map((p) => (p.playerId === 'A' ? { ...p, rsvp: 'no' as const } : p));
+    expect(eveningStakes(input(champ), opts(no)).items.map((i) => i.kind)).not.toContain(
+      'king_step',
+    );
+    // Все, кто может прийти, уже охотились — шага нет.
+    const hunted = playEvening(
+      'h',
+      day(1),
+      ['A', 'B', 'C', 'D'],
+      [
+        ['bust', 'A', ['B', 'C', 'D']],
+        ['bust', 'D', ['B']],
+        ['bust', 'C', ['B']],
+      ],
+    );
+    expect(eveningStakes(input([...champ, hunted]), opts()).items.map((i) => i.kind)).not.toContain(
+      'king_step',
+    );
+  });
+
+  it('«Месть»: Немезида может прийти; после первой мести шага нет', () => {
+    const n1 = playEvening(
+      'n1',
+      day(1),
+      ['A', 'B', 'C'],
+      [
+        ['bust', 'A', ['B']],
+        ['rebuy', 'A'],
+        ['bust', 'A', ['B']],
+        ['bust', 'C', []],
+      ],
+    );
+    expect(eveningStakes(input([n1]), opts()).items).toContainEqual({
+      kind: 'revenge_step',
+      playerId: 'A',
+      nemesisId: 'B',
+    });
+    const no = ALL.map((p) => (p.playerId === 'B' ? { ...p, rsvp: 'no' as const } : p));
+    expect(eveningStakes(input([n1]), opts(no)).items.map((i) => i.kind)).not.toContain(
+      'revenge_step',
+    );
+    const n2 = playEvening(
+      'n2',
+      day(8),
+      ['A', 'B', 'C'],
+      [
+        ['bust', 'B', ['A']],
+        ['bust', 'C', []],
+      ],
+    );
+    expect(eveningStakes(input([n1, n2]), opts()).items.map((i) => i.kind)).not.toContain(
+      'revenge_step',
+    );
+  });
+
+  it('«Звезда вечера»: 4 звезды — пятая даст уровень II; первая звезда — не шаг', () => {
+    const ev = [1, 2, 3, 4].map((n) => simpleEvening(`v${n}`, day(n), ['A', 'B']));
+    const stars = ev.map((e) => ({
+      eveningId: e.eveningId,
+      category: 'hand' as const,
+      playerId: 'C',
+      votes: 2,
+    }));
+    expect(eveningStakes(input(ev, { stars }), opts()).items).toContainEqual({
+      kind: 'star_step',
+      playerId: 'C',
+      stars: 4,
+      target: 5,
+      level: 2,
+    });
+    expect(
+      eveningStakes(input(ev, { stars: stars.slice(0, 3) }), opts()).items.map((i) => i.kind),
+    ).not.toContain('star_step');
+    expect(eveningStakes(input(ev), opts()).items.map((i) => i.kind)).not.toContain('star_step');
   });
 });
 

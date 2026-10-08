@@ -4,14 +4,17 @@
 import {
   chronological,
   computeAchievements,
+  starAchievements,
+  starAwards,
   titles,
   type AchievementCode,
   type AchievementInput,
+  type StarAward,
 } from './achievements.ts';
 import { recordsBroken, type RecordKind } from './records.ts';
 import type { EveningSummary } from './summary.ts';
 import type { PlayerId } from './types.ts';
-import { VOTE_CATEGORIES, voteResults, type VoteCategory } from './votes.ts';
+import { starWinner, VOTE_CATEGORIES, voteResults, type VoteCategory } from './votes.ts';
 
 /** Служебные поля вечера, которых нет в итоге: строки evenings. */
 export interface FeedEvening {
@@ -62,6 +65,11 @@ export interface AchievementItem extends FeedBase {
   eveningId: string | null;
   seasonKey: string | null;
   count: number;
+  /** Уровень выдачи (1 у ачивок без уровней) и «впервые на этом уровне» — как в Achievement. */
+  level: number;
+  first: boolean;
+  /** Соперник «Заклятого врага», Немезида у «Мести», чемпион у «Охоты на короля»; иначе null. */
+  targetId: PlayerId | null;
 }
 
 export interface TitleChange {
@@ -85,6 +93,11 @@ export interface Moment {
   caption: string | null; // подпись лучшего голоса
   photoPath: string | null; // фото лучшего голоса (путь в Storage)
   noteBy: PlayerId | null; // автор лучшего голоса
+  /**
+   * Номинация дала «Звезду вечера» (единственный лидер, от STAR_MIN_VOTES голосов, не гость): уровень
+   * игрока после звёзд этого вечера и «впервые на этом уровне»; null — звезды нет.
+   */
+  star: { level: number; first: boolean } | null;
 }
 
 export interface MomentItem extends FeedBase, Moment {
@@ -184,12 +197,15 @@ function bestVote(votes: readonly MomentVote[]): MomentVote | null {
 /**
  * Моменты: победители номинаций по вечерам с закрытым голосованием (voting_closes_at <= nowMs) —
  * как сейчас видны голоса: до закрытия RLS отдаёт только свои. Новые сверху; внутри вечера — по
- * порядку категорий. Ничья — по моменту на каждого победителя.
+ * порядку категорий. Ничья — по моменту на каждого победителя (звезды у ничьей нет). Звёзды —
+ * starAchievements по тем же голосованиям, что и моменты (excluded — гости: звезды им нет).
  */
 export function clubMoments(
-  input: Pick<ClubFeedInput, 'summaries' | 'evenings' | 'votes'>,
+  input: Pick<ClubFeedInput, 'summaries' | 'evenings' | 'votes'> &
+    Partial<Pick<ClubFeedInput, 'excluded'>>,
   opts: { nowMs: number },
 ): (Moment & { at: string })[] {
+  const excluded = input.excluded ?? new Set<PlayerId>();
   const finished = new Set(input.summaries.map((s) => s.eveningId));
   const votesBy = new Map<string, MomentVote[]>();
   for (const v of input.votes) {
@@ -197,15 +213,29 @@ export function clubMoments(
     list.push(v);
     votesBy.set(v.eveningId, list);
   }
-  const out: (Moment & { at: string })[] = [];
+  const closed: { e: FeedEvening; closesMs: number; votes: MomentVote[] }[] = [];
+  const stars: StarAward[] = [];
   for (const e of input.evenings) {
     if (!finished.has(e.eveningId) || !e.votingClosesAt) continue;
     const closesMs = Date.parse(e.votingClosesAt);
     if (Number.isNaN(closesMs) || closesMs > opts.nowMs) continue;
     const votes = (votesBy.get(e.eveningId) ?? []).filter((v) => v.voterId !== v.nomineeId);
+    closed.push({ e, closesMs, votes });
+    stars.push(...starAwards(e.eveningId, voteResults(votes)));
+  }
+  const starOf = new Map(
+    starAchievements({ summaries: input.summaries, excluded, stars }).map((a) => [
+      `${a.playerId}|${a.eveningId}`,
+      { level: a.level, first: a.first },
+    ]),
+  );
+
+  const out: (Moment & { at: string })[] = [];
+  for (const { e, closesMs, votes } of closed) {
     const results = voteResults(votes);
     for (const category of VOTE_CATEGORIES) {
       const r = results[category];
+      const star = starWinner(r);
       for (const nomineeId of r.winners) {
         const note = bestVote(
           votes.filter((v) => v.category === category && v.nomineeId === nomineeId),
@@ -220,6 +250,7 @@ export function clubMoments(
           caption: note?.caption ?? null,
           photoPath: note?.photoPath ?? null,
           noteBy: note?.voterId ?? null,
+          star: star === nomineeId ? (starOf.get(`${nomineeId}|${e.eveningId}`) ?? null) : null,
         });
       }
     }
@@ -289,6 +320,7 @@ export function clubEvents(input: ClubFeedInput): FeedItem[] {
   }
 
   for (const a of computeAchievements(input)) {
+    // «Звезду вечера» показывает момент голосования (Moment.star).
     if (a.code === 'star') continue;
     const at =
       a.eveningId !== null
@@ -299,13 +331,18 @@ export function clubEvents(input: ClubFeedInput): FeedItem[] {
     if (at === null) continue;
     items.push({
       type: 'achievement',
-      id: `achievement:${a.code}:${a.playerId}:${a.eveningId ?? a.seasonKey ?? ''}`,
+      id:
+        `achievement:${a.code}:${a.playerId}:${a.eveningId ?? a.seasonKey ?? ''}` +
+        (a.targetId !== null ? `:${a.targetId}` : ''),
       at,
       playerId: a.playerId,
       code: a.code,
       eveningId: a.eveningId,
       seasonKey: a.seasonKey,
       count: a.count,
+      level: a.level,
+      first: a.first,
+      targetId: a.targetId,
     });
   }
 
@@ -355,7 +392,7 @@ export function mergeFeed(
  * Лента «В клубе», новые сверху. Время событий вечера — evenings.finished_at (итог, ачивки,
  * звания, рекорды), момента — voting_closes_at, сезонной ачивки — конец сезона. При равном
  * времени: итог, рекорды, ачивки, звания, моменты; дальше по id (моменты — по категориям).
- * Ачивка «Звезда» в ленту не идёт отдельно — её показывает момент голосования.
+ * Ачивка «Звезда вечера» в ленту не идёт отдельно — её показывает момент голосования (Moment.star).
  * То же, что mergeFeed(clubEvents(input), momentItems(clubMoments(input, opts)), opts.limit).
  */
 export function clubFeed(

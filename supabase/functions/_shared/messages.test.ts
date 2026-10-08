@@ -4,8 +4,12 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_FORMAT,
   eveningClubNews,
+  voteResults,
+  type Achievement,
   type EveningClubNews,
   type TournamentFormat,
+  type Vote,
+  type VoteCategory,
 } from './domain/index.ts';
 import { simpleEvening } from './domain/test-utils.ts';
 import {
@@ -14,9 +18,22 @@ import {
   formatPoints,
   resultsPost,
   turnoutText,
+  votingPost,
   votingReminderPost,
   type ResultsPostInput,
+  type VotingPostInput,
 } from './messages.ts';
+
+/** Строка ачивки: по умолчанию — вечерняя, уровень I, впервые, без цели. */
+const ach = (a: Pick<Achievement, 'playerId' | 'code'> & Partial<Achievement>): Achievement => ({
+  eveningId: 'e1',
+  seasonKey: null,
+  targetId: null,
+  count: 1,
+  level: 1,
+  first: true,
+  ...a,
+});
 
 const base: ResultsPostInput = {
   eveningId: 'e1',
@@ -267,8 +284,8 @@ describe('«Жизнь клуба» в посте итогов', () => {
     const full = resultsPost({
       ...base,
       newAchievements: [
-        { playerId: 'a', code: 'hunter', eveningId: 'e1', seasonKey: null, count: 1 },
-        { playerId: 'b', code: 'champion', eveningId: null, seasonKey: '2026-Q3', count: 1 },
+        ach({ playerId: 'a', code: 'hunter', eveningId: 'e1' }),
+        ach({ playerId: 'b', code: 'champion', eveningId: null, seasonKey: '2026-Q3' }),
       ],
       votingClosesAt: '2026-10-09T21:00:00.000Z',
       clubNews: news({ predictions: { made: 1, winnerGuessedBy: ['a'], firstOutGuessedBy: [] } }),
@@ -317,6 +334,108 @@ describe('«Жизнь клуба» в посте итогов', () => {
       }),
     );
     expect(quiet).toEqual([]);
+  });
+});
+
+describe('«Новые ачивки» в посте итогов: уровни и о ком', () => {
+  const post = (newAchievements: Achievement[]) =>
+    resultsPost({
+      eveningId: 'e1',
+      scheduledAt: '2026-10-08T16:00:00.000Z',
+      location: null,
+      names: NAMES,
+      places: ['a', 'b'],
+      money: {},
+      kos: {},
+      totalEntries: 2,
+      rebuysTotal: 0,
+      prizePoolRub: 1000,
+      newAchievements,
+      votingClosesAt: null,
+      botUsername: null,
+      nowMs: Date.parse('2026-10-08T20:00:00.000Z'),
+    }).text.replace(/\u00A0/g, ' ');
+
+  it('строкой на игрока, в порядке каталога; новый уровень и цель — в скобках', () => {
+    const text = post([
+      ach({ playerId: 'a', code: 'revenge', targetId: 'b' }),
+      ach({ playerId: 'a', code: 'hunter', level: 2, first: true }),
+      ach({ playerId: 'a', code: 'clean_win' }),
+      ach({ playerId: 'b', code: 'sworn_enemy', targetId: 'c', level: 1, first: true }),
+      ach({ playerId: 'c', code: 'hunter', level: 1, first: false }),
+      ach({ playerId: 'c', code: 'star', level: 2, first: false, count: 2 }),
+      ach({ playerId: 'e', code: 'king_hunt', targetId: 'a' }),
+    ]);
+    expect(text).toContain(
+      '🏅 <b>Новые ачивки</b>\n' +
+        '• Женя — «Охотник II» (новый уровень), «Чистая победа», «Месть» (Немезида — Саша)\n' +
+        '• Саша — «Заклятый враг I» (соперник — Дима)\n' +
+        '• Дима — «Охотник I», «Звезда вечера II» ×2\n' +
+        '• &lt;Эрдни&gt; — «Охота на короля» (чемпион — Женя)',
+    );
+  });
+});
+
+describe('votingPost: «Звезда вечера»', () => {
+  const v = (voterId: string, category: VoteCategory, nomineeId: string): Vote => ({
+    voterId,
+    category,
+    nomineeId,
+  });
+  const post = (votes: Vote[], extra: Partial<VotingPostInput> = {}) =>
+    votingPost({
+      eveningId: 'e1',
+      scheduledAt: '2026-10-08T16:00:00.000Z',
+      names: NAMES,
+      results: voteResults(votes),
+      botUsername: null,
+      ...extra,
+    })?.text.replace(/\u00A0/g, ' ') ?? '';
+
+  it('звезда — единственному лидеру с 2 голосами; ничья и один голос — без звезды', () => {
+    const text = post([
+      v('b', 'hand', 'a'),
+      v('c', 'hand', 'a'),
+      v('a', 'bluff', 'b'),
+      v('c', 'bluff', 'd'),
+      v('a', 'badbeat', 'c'),
+    ]);
+    expect(text).toContain('🃏 Рука вечера: <b>Женя</b> (2 голоса)');
+    expect(text).toContain(
+      '⭐ Ачивка «Звезда вечера»: Женя.\n' +
+        'Звезда — единоличному победителю номинации с 2 голосами и больше; ничья — без звезды.',
+    );
+  });
+
+  it('две номинации — ×2; новый уровень — из истории; гость-лидер — без звезды', () => {
+    const votes = [
+      v('b', 'hand', 'a'),
+      v('c', 'hand', 'a'),
+      v('b', 'bluff', 'a'),
+      v('c', 'bluff', 'a'),
+      v('a', 'badbeat', 'e'),
+      v('b', 'badbeat', 'e'),
+    ];
+    expect(
+      post(votes, { guests: new Set(['e']), starLevels: { a: { level: 2, first: true } } }),
+    ).toContain('⭐ Ачивка «Звезда вечера»: Женя ×2 («Звезда вечера II» — новый уровень).');
+    // Без истории (не загрузилась) — без уровня; гость без пометки гостя получил бы звезду.
+    expect(post(votes, { guests: new Set(['e']) })).toContain(
+      '⭐ Ачивка «Звезда вечера»: Женя ×2.',
+    );
+  });
+
+  it('звёзд нет — так и пишем; голосов нет — поста нет', () => {
+    expect(post([v('a', 'hand', 'b')])).toContain('⭐ В этот раз без ачивки «Звезда вечера».');
+    expect(
+      votingPost({
+        eveningId: 'e1',
+        scheduledAt: '2026-10-08T16:00:00.000Z',
+        names: NAMES,
+        results: voteResults([]),
+        botUsername: null,
+      }),
+    ).toBeNull();
   });
 });
 

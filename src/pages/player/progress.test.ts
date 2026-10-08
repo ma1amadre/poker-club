@@ -1,3 +1,4 @@
+import { ACHIEVEMENT_CODES, isLeveled } from '@domain/achievements.ts';
 import type { AchievementProgress } from '@domain/progress.ts';
 import { describe, expect, it } from 'vitest';
 import { groupProgress, progressView } from './progress';
@@ -18,6 +19,8 @@ function p(
     hint: '',
     possible: true,
     obtained: 0,
+    level: 0,
+    nextLevel: isLeveled(over.code) ? (over.level ?? 0) + 1 : null,
     ...over,
   };
 }
@@ -27,7 +30,8 @@ describe('строка прогресса', () => {
     const enemy = p({ code: 'sworn_enemy', current: 4, target: 5, victimId: 'L' });
     const v = progressView(enemy, me);
     expect(v.bar).toEqual({ value: 4, max: 5, text: '4 из 5' });
-    expect(v.title).toBe('Заклятый враг');
+    // Строка — о следующем уровне: неполученная — к уровню I.
+    expect(sp(v.title)).toBe('Заклятый враг I');
     expect(sp(v.hint)).toBe(
       'Больше всего нокаутов у тебя — против игрока Лёша: 4. До ачивки — 1 нокаут',
     );
@@ -42,6 +46,113 @@ describe('строка прогресса', () => {
     expect(sp(progressView(hunter, me).hint)).toBe('Лучший вечер — 2 нокаута, нужно 3 за вечер');
   });
 
+  it('уровни: строка — о следующем уровне, название с римской цифрой', () => {
+    const hunter = progressView(p({ code: 'hunter', current: 3, target: 4, level: 1 }), me);
+    expect(sp(hunter.title)).toBe('Охотник II');
+    expect(sp(hunter.bar?.text)).toBe('3 из 4');
+    expect(sp(hunter.hint)).toBe('Лучший вечер — 3 нокаута, для «Охотник II» нужно 4 за вечер');
+    expect(sp(progressView(p({ code: 'hunter', current: 2 }), me).title)).toBe('Охотник I');
+    const enemy = progressView(
+      p({ code: 'sworn_enemy', current: 7, target: 10, level: 1, victimId: 'L' }),
+      me,
+    );
+    expect(sp(enemy.title)).toBe('Заклятый враг II');
+    expect(sp(enemy.hint)).toBe(
+      'Больше всего нокаутов у тебя — против игрока Лёша: 7. До «Заклятый враг II» — 3 нокаута',
+    );
+    const star = progressView(p({ code: 'star', current: 3, target: 5, level: 1 }), me);
+    expect([sp(star.title), sp(star.bar?.text), sp(star.hint)]).toEqual([
+      'Звезда вечера II',
+      '3 из 5',
+      'Звёзд вечера: 3, до «Звезда вечера II» — 2 звезды',
+    ]);
+    const comeback = progressView(
+      p({ code: 'comeback', measure: 'condition', current: null, target: null, level: 1 }),
+      me,
+    );
+    expect([sp(comeback.title), sp(comeback.hint)]).toEqual([
+      'Камбэк II',
+      'Выиграй вечер, в котором понадобилось 3 ребая и больше',
+    ]);
+    // На чужой карточке после «после» — родительный падеж.
+    const cond = { measure: 'condition' as const, current: null, target: null };
+    expect(sp(progressView(p({ code: 'comeback', ...cond }), other).hint)).toBe(
+      'Победа в вечере после 2 и больше ребаев',
+    );
+    expect(sp(progressView(p({ code: 'comeback', ...cond, level: 1 }), other).hint)).toBe(
+      'Победа в вечере после 3 и больше ребаев',
+    );
+  });
+
+  it('сюжетные: «Месть» — своя Немезида, «Охота на короля» — действующий чемпион', () => {
+    const cond = { measure: 'condition' as const, current: null, target: null };
+    expect(sp(progressView(p({ code: 'revenge', ...cond, victimId: 'D' }), me).hint)).toBe(
+      'Твоя Немезида — Дима: выбей в ответ',
+    );
+    expect(sp(progressView(p({ code: 'revenge', ...cond }), other).hint)).toBe('Немезиды пока нет');
+    const king = (over: Partial<AchievementProgress>) =>
+      progressView(p({ code: 'king_hunt', ...cond, ...over }), { ...me, self: 'M' });
+    expect(sp(king({ leaders: ['D'] }).hint)).toBe('Выбей действующего чемпиона: Дима');
+    const self = king({ leaders: ['M'], possible: false });
+    expect([sp(self.hint), self.muted]).toEqual([
+      'Действующий чемпион — ты: охотятся на тебя',
+      true,
+    ]);
+    expect(sp(king({ leaders: [], possible: false }).hint)).toBe(
+      'Действующего чемпиона нет — охота откроется со следующего сезона',
+    );
+    expect(sp(progressView(p({ code: 'phoenix', ...cond }), me).hint)).toBe(
+      'Выиграй вечер, в котором первый вылет — твой: вернись ребаем',
+    );
+    expect(sp(progressView(p({ code: 'clean_win', ...cond }), other).hint)).toBe(
+      'Победа в вечере без единого ребая',
+    );
+  });
+
+  it('«Охота на короля»: себя в целях нет, на чужой карточке — без «ты»', () => {
+    const cond = { measure: 'condition' as const, current: null, target: null };
+    const king = (over: Partial<AchievementProgress>, opts: { isMe: boolean; self: string }) =>
+      progressView(p({ code: 'king_hunt', ...cond, ...over }), { ...opts, nameOf: me.nameOf });
+    // Чужая карточка единственного чемпиона: не «ты» о другом человеке.
+    const sole = king({ leaders: ['M'], possible: false }, { isMe: false, self: 'M' });
+    expect([sp(sole.hint), sole.muted]).toEqual(['Действующий чемпион — этот игрок', true]);
+    // Ничья в прошлом сезоне, владелец карточки — один из чемпионов: в целях только остальные.
+    expect(sp(king({ leaders: ['D', 'M'] }, { isMe: true, self: 'M' }).hint)).toBe(
+      'Выбей действующего чемпиона: Дима',
+    );
+    expect(sp(king({ leaders: ['D', 'L', 'M'] }, { isMe: true, self: 'M' }).hint)).toBe(
+      'Выбей одного из действующих чемпионов: Дима и Лёша',
+    );
+    expect(sp(king({ leaders: ['D', 'M'] }, { isMe: false, self: 'M' }).hint)).toBe(
+      'Цель — действующий чемпион: Дима',
+    );
+    expect(sp(king({ leaders: ['D', 'L'] }, { isMe: false, self: 'M' }).hint)).toBe(
+      'Цель — действующие чемпионы: Дима и Лёша',
+    );
+  });
+
+  it('подсказки без рода: ни одна форма «ты» не требует рода', () => {
+    // Слова, у которых при «ты» есть род: «первым/первой», «сам/сама», прошедшее время («выбил»).
+    const GENDERED =
+      /(?<!\p{L})(?:перв(?:ым|ой)|последн(?:им|ей)|сам[аи]?|готова?|должн[аы]?|должен|\p{L}+(?:ал|ял|ил|ыл|ел|ёл|ул)а?)(?!\p{L})/u;
+    const cond = { measure: 'condition' as const, current: null, target: null };
+    const states: AchievementProgress[] = ACHIEVEMENT_CODES.flatMap((code) => [
+      p({ code }),
+      p({ code, current: 2, target: 3, victimId: 'L', leaders: ['L'], leaderValue: 3 }),
+      p({ code, ...cond, victimId: 'L', leaders: ['L', 'M'] }),
+      p({ code, ...cond, possible: false, leaders: ['M'] }),
+      p({ code, current: 1, target: 5, level: 1 }),
+    ]);
+    for (const state of states)
+      for (const opts of [
+        { ...me, self: 'M' },
+        { ...other, self: 'M' },
+      ]) {
+        const hint = progressView(state, opts).hint;
+        expect(hint, `${state.code}: ${hint}`).not.toMatch(GENDERED);
+      }
+  });
+
   it('условие без счётчика — без полосы', () => {
     const v = progressView(
       p({ code: 'star', measure: 'condition', current: null, target: null }),
@@ -49,7 +160,9 @@ describe('строка прогресса', () => {
     );
     expect(v.bar).toBeNull();
     expect(v.aside).toBeNull();
-    expect(sp(v.hint)).toBe('Победи в номинации голосования после вечера');
+    expect(sp(v.hint)).toBe(
+      'Выиграй номинацию голосования после вечера — без ничьей и с 2 голосами и больше',
+    );
   });
 
   it('чемпион — место справа и лидер сезона', () => {

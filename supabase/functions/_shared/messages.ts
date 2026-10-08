@@ -4,12 +4,17 @@
 // Форматирование чисел и дат сделано вручную, без локали ru-RU в Intl: ICU-данные локалей
 // в рантайме функций не гарантированы, а часовые пояса нужны и так (сезоны домена на них же).
 import {
+  ACHIEVEMENT_CODES,
   ACHIEVEMENT_META,
+  achievementTitle,
+  isLeveled,
   RECORD_META,
+  starWinner,
   TITLE_META,
   VOTE_CATEGORIES,
   VOTE_CATEGORY_META,
   type Achievement,
+  type AchievementCode,
   type EveningClubNews,
   type EveningStakes,
   type MoneyTable,
@@ -459,11 +464,23 @@ export function stakeText(item: StakeItem, name: (id: PlayerId) => string): stri
     }
     case 'enemy_step':
       return (
-        `${name(item.playerId)} — в одном нокауте от ачивки «${ACHIEVEMENT_META.sworn_enemy.title}» ` +
+        `${name(item.playerId)} — в одном нокауте от ачивки «${achievementTitle('sworn_enemy', item.level)}» ` +
         `(цель — ${name(item.victimId)})`
       );
     case 'first_blood':
       return `первый нокаут в истории клуба принесёт ачивку «${ACHIEVEMENT_META.first_blood.title}»`;
+    case 'king_step':
+      return (
+        `нокаут действующего чемпиона принесёт ачивку «${ACHIEVEMENT_META.king_hunt.title}» ` +
+        `(${item.championIds.length > 1 ? 'чемпионы' : 'чемпион'} — ${joinNames(item.championIds.map(name))})`
+      );
+    case 'revenge_step':
+      return (
+        `${name(item.playerId)} — в одном нокауте от ачивки «${ACHIEVEMENT_META.revenge.title}» ` +
+        `(Немезида — ${name(item.nemesisId)})`
+      );
+    case 'star_step':
+      return `${name(item.playerId)} — в одной звезде от ачивки «${achievementTitle('star', item.level)}»`;
     case 'pool_record':
       return (
         `идут ${item.going} — фонд ещё до ребаев ` +
@@ -650,7 +667,33 @@ const titleOf = (a: Achievement): string => escapeHtml(ACHIEVEMENT_META[a.code]?
 /** Сезонные ачивки — по порядку важности, а не по алфавиту кодов. */
 const SEASON_ORDER: readonly Achievement['code'][] = ['champion', 'rebuy_king', 'iron_chair'];
 
-/** Ачивки вечера — строкой на игрока. */
+/** О ком ачивка (Achievement.targetId) — подпись в скобках: «(Немезида — Дима)». */
+const TARGET_ROLE: Partial<Record<AchievementCode, string>> = {
+  sworn_enemy: 'соперник',
+  revenge: 'Немезида',
+  king_hunt: 'чемпион',
+};
+
+/**
+ * Ачивка одной фразой: «Охотник II» (новый уровень), «Месть» (Немезида — Дима), «Звезда вечера I» ×2.
+ * «Новый уровень» — только у уровней от II, взятых впервые: уровень I — и так новая ачивка.
+ */
+export function achievementPhrase(a: Achievement, name: (id: PlayerId) => string): string {
+  const notes: string[] = [];
+  if (isLeveled(a.code) && a.first && a.level >= 2) notes.push('новый уровень');
+  const role = TARGET_ROLE[a.code];
+  if (role && a.targetId) notes.push(`${role} — ${name(a.targetId)}`);
+  return (
+    `«${escapeHtml(achievementTitle(a.code, a.level))}»` +
+    (a.count > 1 ? ` ×${a.count}` : '') +
+    (notes.length > 0 ? ` (${notes.join(', ')})` : '')
+  );
+}
+
+/**
+ * Ачивки вечера — строкой на игрока, ачивки — в порядке каталога: «• Лёша — «Охотник II» (новый
+ * уровень), «Месть» (Немезида — Дима)».
+ */
 function eveningAchievementLines(
   list: readonly Achievement[],
   names: Record<PlayerId, string>,
@@ -658,11 +701,18 @@ function eveningAchievementLines(
   const name = (id: PlayerId): string => escapeHtml(names[id] ?? 'Игрок');
   const evening = list.filter((a) => a.seasonKey === null);
   if (evening.length === 0) return [];
+  const byPlayer = new Map<PlayerId, Achievement[]>();
+  for (const a of evening) byPlayer.set(a.playerId, [...(byPlayer.get(a.playerId) ?? []), a]);
+  const rank = (a: Achievement) => ACHIEVEMENT_CODES.indexOf(a.code);
   return [
     '',
     '🏅 <b>Новые ачивки</b>',
-    ...evening.map(
-      (a) => `• ${name(a.playerId)} — «${titleOf(a)}»${a.count > 1 ? ` ×${a.count}` : ''}`,
+    ...[...byPlayer].map(
+      ([id, own]) =>
+        `• ${name(id)} — ${[...own]
+          .sort((a, b) => rank(a) - rank(b) || b.level - a.level)
+          .map((a) => achievementPhrase(a, name))
+          .join(', ')}`,
     ),
   ];
 }
@@ -986,9 +1036,43 @@ export interface VotingPostInput {
   names: Record<PlayerId, string>;
   results: Record<VoteCategory, VoteResult>;
   botUsername: string | null;
+  /** Гости: «Звезду вечера» не получают (и она не переходит второму месту). */
+  guests?: ReadonlySet<PlayerId>;
+  /**
+   * Уровень «Звезды вечера» после этого вечера (starAchievements по истории клуба): «новый уровень»
+   * в посте. Нет — история не загрузилась: звёзды без уровней.
+   */
+  starLevels?: Readonly<Record<PlayerId, { level: number; first: boolean }>>;
 }
 
 const CATEGORY_ICON: Record<VoteCategory, string> = { hand: '🃏', bluff: '🎭', badbeat: '💔' };
+
+/**
+ * Звёзды вечера (решение клуба 08.10.2026): по номинации — единственному лидеру с 2 голосами и
+ * больше (starWinner), ничья или один голос — никому, гостю — нет. «⭐ Ачивка «Звезда вечера»: Саша,
+ * Дима ×2 («Звезда вечера II» — новый уровень).» и правило строкой ниже.
+ */
+function votingStarLines(input: VotingPostInput): string[] {
+  const name = (id: PlayerId): string => escapeHtml(input.names[id] ?? 'Игрок');
+  const count = new Map<PlayerId, number>();
+  for (const cat of VOTE_CATEGORIES) {
+    const w = starWinner(input.results[cat]);
+    if (w !== null && !input.guests?.has(w)) count.set(w, (count.get(w) ?? 0) + 1);
+  }
+  const rule =
+    'Звезда — единоличному победителю номинации с 2 голосами и больше; ничья — без звезды.';
+  const title = ACHIEVEMENT_META.star.title;
+  if (count.size === 0) return [`⭐ В этот раз без ачивки «${title}».`, rule];
+  const who = [...count].map(([id, n]) => {
+    const lvl = input.starLevels?.[id];
+    const upgrade =
+      lvl && lvl.first && lvl.level >= 2
+        ? ` («${escapeHtml(achievementTitle('star', lvl.level))}» — новый уровень)`
+        : '';
+    return `${name(id)}${n > 1 ? ` ×${n}` : ''}${upgrade}`;
+  });
+  return [`⭐ Ачивка «${title}»: ${who.join(', ')}.`, rule];
+}
 
 /** null — голосов не было, постить нечего. */
 export function votingPost(input: VotingPostInput): Post | null {
@@ -1016,7 +1100,7 @@ export function votingPost(input: VotingPostInput): Post | null {
       '',
       ...lines,
       '',
-      `⭐ Победители номинаций получают ачивку «${ACHIEVEMENT_META.star.title}».`,
+      ...votingStarLines(input),
     ].join('\n'),
     buttons: appButton(input.botUsername, '♥️ Смотреть голоса', `v_${input.eveningId}`),
   };

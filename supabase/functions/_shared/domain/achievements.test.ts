@@ -1,17 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACHIEVEMENT_CODES,
+  ACHIEVEMENT_LEVEL_RULE,
+  ACHIEVEMENT_LEVELS,
   ACHIEVEMENT_META,
+  achievementLevelText,
+  achievementTitle,
   computeAchievements,
   diffAchievements,
+  levelFor,
+  playerLevel,
+  starAchievements,
+  starAwards,
   titles,
   type Achievement,
   type AchievementCode,
   type AchievementInput,
+  type StarAward,
 } from './achievements.ts';
 import type { ScoredPrediction } from './predictions.ts';
 import { seasonKey } from './season.ts';
 import type { EveningSummary } from './summary.ts';
 import { playEvening, simpleEvening, type Step } from './test-utils.ts';
+import { voteResults, type Vote, type VoteCategory } from './votes.ts';
 
 // Q3 2026 — завершённый сезон, Q4 — текущий.
 const CURRENT = '2026-Q4';
@@ -33,26 +44,97 @@ const only = (list: Achievement[], code: AchievementCode) =>
   list
     .filter((a) => a.code === code)
     .map((a) => [a.playerId, a.eveningId ?? a.seasonKey, a.count] as const);
+/** [игрок, вечер, уровень, впервые на уровне] */
+const levels = (list: Achievement[], code: AchievementCode) =>
+  list
+    .filter((a) => a.code === code)
+    .map((a) => [a.playerId, a.eveningId ?? a.seasonKey, a.level, a.first] as const);
+/**
+ * Формы, которым нужен род: прошедшее время («выбил», «выбила»), «первым/первой», «сам/сама».
+ * Границы слова — через \p{L}: \b в JS не считает кириллицу буквами и никогда не срабатывает.
+ */
+const GENDERED =
+  /(?<!\p{L})(?:перв(?:ым|ой)|последн(?:им|ей)|сам[аи]?|готова?|должн[аы]?|должен|\p{L}+(?:ал|ял|ил|ыл|ел|ёл|ул)а?)(?!\p{L})/u;
+const star = (eveningId: string, playerId: string, category: VoteCategory = 'hand'): StarAward => ({
+  eveningId,
+  category,
+  playerId,
+  votes: 2,
+});
 
 describe('ачивки', () => {
-  it('у каждого кода есть русское название и описание', () => {
-    const codes = Object.keys(ACHIEVEMENT_META);
-    expect(codes.sort()).toEqual([
-      'champion',
-      'comeback',
+  it('у каждого кода есть русское название и описание без рода; порядок каталога', () => {
+    expect(ACHIEVEMENT_CODES).toEqual([
       'first_blood',
-      'hat_trick',
       'hunter',
-      'iron_chair',
-      'oracle',
+      'comeback',
+      'phoenix',
+      'clean_win',
       'rebuy_king',
-      'star',
+      'iron_chair',
+      'hat_trick',
       'sworn_enemy',
+      'revenge',
+      'king_hunt',
+      'oracle',
+      'star',
+      'champion',
     ]);
     for (const m of Object.values(ACHIEVEMENT_META)) {
       expect(m.title).toMatch(/[А-Яа-яЁё]/);
       expect(m.description).toMatch(/[А-Яа-яЁё]/);
+      expect(m.description).not.toMatch(GENDERED);
     }
+    for (const rule of Object.values(ACHIEVEMENT_LEVEL_RULE)) expect(rule).not.toMatch(GENDERED);
+  });
+
+  it('проверка рода ловит родовые формы (у кириллицы \\b не работает — границы через \\p{L})', () => {
+    expect('кто выбил игрока').toMatch(GENDERED);
+    expect('вылети первым').toMatch(GENDERED);
+    expect('первый вылет вечера — и всё равно победа').not.toMatch(GENDERED);
+  });
+
+  describe('уровни', () => {
+    it('пороги решения клуба 08.10.2026', () => {
+      expect(ACHIEVEMENT_LEVELS).toEqual({
+        hunter: [3, 4, 5],
+        comeback: [2, 3],
+        sworn_enemy: [5, 10, 15],
+        star: [1, 5, 10],
+      });
+      expect([2, 3, 4, 5, 9].map((n) => levelFor('hunter', n))).toEqual([0, 1, 2, 3, 3]);
+      expect([1, 2, 3, 7].map((n) => levelFor('comeback', n))).toEqual([0, 1, 2, 2]);
+      expect([4, 5, 9, 10, 15, 30].map((n) => levelFor('sworn_enemy', n))).toEqual([
+        0, 1, 1, 2, 3, 3,
+      ]);
+      expect([0, 1, 4, 5, 10].map((n) => levelFor('star', n))).toEqual([0, 1, 1, 2, 3]);
+    });
+
+    it('названия с римскими цифрами и тексты уровней без рода', () => {
+      // Уровень — через неразрывный пробел: не уезжает на новую строку.
+      expect(achievementTitle('hunter', 2)).toBe('Охотник\u00A0II');
+      expect(achievementTitle('comeback', 1)).toBe('Камбэк\u00A0I');
+      expect(achievementTitle('star', 3)).toBe('Звезда вечера\u00A0III');
+      expect(achievementTitle('hunter')).toBe('Охотник');
+      // У ачивки без уровней уровень в названии не пишется.
+      expect(achievementTitle('revenge', 1)).toBe('Месть');
+      expect(achievementLevelText('hunter', 1)).toBe('3 нокаута за вечер');
+      expect(achievementLevelText('hunter', 3)).toBe('5 и больше нокаутов за вечер');
+      expect(achievementLevelText('comeback', 1)).toBe('победа после 2 ребаев');
+      expect(achievementLevelText('comeback', 2)).toBe('победа после 3 и больше ребаев');
+      expect(achievementLevelText('sworn_enemy', 2)).toBe('10 нокаутов одного и того же игрока');
+      // «Звезда вечера» — порог как порог: строку дают за каждую звезду, 4 звезды — всё ещё I.
+      expect(achievementLevelText('star', 1)).toBe('от 1 звезды вечера');
+      expect(achievementLevelText('star', 2)).toBe('от 5 звёзд вечера');
+      expect(achievementLevelText('star', 3)).toBe('от 10 звёзд вечера');
+      for (const code of Object.keys(ACHIEVEMENT_LEVELS) as (keyof typeof ACHIEVEMENT_LEVELS)[])
+        for (let l = 1; l <= ACHIEVEMENT_LEVELS[code].length; l++)
+          expect(achievementLevelText(code, l)).not.toMatch(GENDERED);
+      // Правило каталога — у каждой уровневой, без порогов.
+      expect(Object.keys(ACHIEVEMENT_LEVEL_RULE).sort()).toEqual(
+        Object.keys(ACHIEVEMENT_LEVELS).sort(),
+      );
+    });
   });
 
   describe('first_blood', () => {
@@ -101,11 +183,24 @@ describe('ачивки', () => {
     });
   });
 
-  describe('hunter', () => {
-    it('3+ KO за вечер', () => {
-      expect(
-        only(run([simpleEvening('h', q4(1), ['A', 'B', 'C', 'D'], 'winner')]), 'hunter'),
-      ).toEqual([['A', 'h', 1]]);
+  describe('hunter: 3 / 4 / 5 нокаутов за вечер', () => {
+    it('уровень — по нокаутам вечера; «впервые» — только когда уровень выше прежних', () => {
+      const list = [
+        simpleEvening('h1', q4(1), ['A', 'B', 'C', 'D'], 'winner'), // 3 KO — I
+        simpleEvening('h2', q4(2), ['A', 'B', 'C', 'D', 'E', 'F'], 'winner'), // 5 KO — III
+        simpleEvening('h3', q4(3), ['A', 'B', 'C', 'D', 'E'], 'winner'), // 4 KO — II, но III уже есть
+        simpleEvening('h4', q4(4), ['A', 'B', 'C', 'D'], 'winner'), // 3 KO — I ещё раз
+      ];
+      const res = run(list);
+      expect(levels(res, 'hunter')).toEqual([
+        ['A', 'h1', 1, true],
+        ['A', 'h2', 3, true],
+        ['A', 'h3', 2, false],
+        ['A', 'h4', 1, false],
+      ]);
+      // Выданное не отнимается: уровень игрока — наибольший.
+      expect(playerLevel(res, 'A', 'hunter')).toBe(3);
+      expect(playerLevel(res, 'B', 'hunter')).toBe(0);
     });
     it('2 KO — мало; гостю не положено', () => {
       expect(only(run([simpleEvening('h', q4(1), ['A', 'B', 'C'], 'winner')]), 'hunter')).toEqual(
@@ -117,11 +212,18 @@ describe('ачивки', () => {
     });
   });
 
-  describe('comeback', () => {
-    it('победа после 2+ ребаев', () => {
-      expect(
-        only(run([simpleEvening('c', q4(1), ['A', 'B', 'C'], 'none', { A: 2 })]), 'comeback'),
-      ).toEqual([['A', 'c', 1]]);
+  describe('comeback: победа после 2 / 3 ребаев', () => {
+    it('2 ребая — I, 3 и больше — II', () => {
+      const res = run([
+        simpleEvening('c1', q4(1), ['A', 'B', 'C'], 'none', { A: 2 }),
+        simpleEvening('c2', q4(2), ['A', 'B', 'C'], 'none', { A: 4 }),
+        simpleEvening('c3', q4(3), ['A', 'B', 'C'], 'none', { A: 3 }),
+      ]);
+      expect(levels(res, 'comeback')).toEqual([
+        ['A', 'c1', 1, true],
+        ['A', 'c2', 2, true],
+        ['A', 'c3', 2, false],
+      ]);
     });
     it('1 ребай — не камбэк; 2 ребая без победы — тоже', () => {
       expect(
@@ -130,6 +232,25 @@ describe('ачивки', () => {
       expect(
         only(run([simpleEvening('c', q4(1), ['B', 'A', 'C'], 'none', { A: 2 })]), 'comeback'),
       ).toEqual([]);
+    });
+  });
+
+  describe('phoenix и clean_win', () => {
+    it('«Феникс»: первый вылет вечера — и победа после ребая', () => {
+      // simpleEvening ставит ребаи в начало: A вылетает первым, докупается и выигрывает.
+      const back = simpleEvening('p1', q4(1), ['A', 'B', 'C'], 'none', { A: 1 });
+      expect(only(run([back]), 'phoenix')).toEqual([['A', 'p1', 1]]);
+      // Первым вылетел B (ребай), а выиграл A — не феникс; гостю — нет.
+      const other = simpleEvening('p2', q4(2), ['A', 'B', 'C'], 'none', { B: 1 });
+      expect(only(run([other]), 'phoenix')).toEqual([]);
+      const guest = simpleEvening('p3', q4(3), ['G', 'B'], 'none', { G: 1 });
+      expect(only(run([guest]), 'phoenix')).toEqual([]);
+    });
+    it('«Чистая победа»: победа без единого ребая; ребаи других не мешают', () => {
+      const clean = simpleEvening('w1', q4(1), ['A', 'B', 'C'], 'none', { B: 2 });
+      const dirty = simpleEvening('w2', q4(2), ['A', 'B', 'C'], 'none', { A: 1 });
+      expect(only(run([clean, dirty]), 'clean_win')).toEqual([['A', 'w1', 1]]);
+      expect(levels(run([clean, dirty]), 'clean_win')).toEqual([['A', 'w1', 1, true]]);
     });
   });
 
@@ -185,14 +306,14 @@ describe('ачивки', () => {
       ];
       expect(only(run(broken), 'hat_trick')).toEqual([]);
       const six = [1, 2, 3, 4, 5, 6].map((n) => simpleEvening(`s${n}`, q4(n), ['A', 'B']));
-      expect(only(run(six), 'hat_trick')).toEqual([
-        ['A', 's3', 1],
-        ['A', 's6', 1],
+      expect(levels(run(six), 'hat_trick')).toEqual([
+        ['A', 's3', 1, true],
+        ['A', 's6', 1, false],
       ]);
     });
   });
 
-  describe('sworn_enemy', () => {
+  describe('sworn_enemy: 5 / 10 / 15 нокаутов одного игрока', () => {
     const steps: Step[] = [
       ['bust', 'B', ['A']],
       ['rebuy', 'B'],
@@ -204,15 +325,187 @@ describe('ачивки', () => {
       ['bust', 'C', ['A']],
     ];
     const s1 = playEvening('s1', q4(1), ['A', 'B', 'C'], steps);
-    it('5 нокаутов одного и того же игрока — в вечере, где случился 5-й', () => {
+    it('уровень I — в вечере, где случился 5-й нокаут; соперник — в targetId', () => {
       const s2 = simpleEvening('s2', q4(8), ['A', 'B'], 'winner');
-      expect(only(run([s1, s2]), 'sworn_enemy')).toEqual([['A', 's2', 1]]);
+      const res = run([s1, s2]);
+      expect(only(res, 'sworn_enemy')).toEqual([['A', 's2', 1]]);
+      expect(res.find((a) => a.code === 'sworn_enemy')).toMatchObject({
+        targetId: 'B',
+        level: 1,
+        first: true,
+      });
       // Шестой нокаут ачивку не повторяет.
       const s3 = simpleEvening('s3', q4(15), ['A', 'B'], 'winner');
       expect(only(run([s1, s2, s3]), 'sworn_enemy')).toEqual([['A', 's2', 1]]);
     });
     it('4 нокаута — ещё нет', () => {
       expect(only(run([s1]), 'sworn_enemy')).toEqual([]);
+    });
+    it('10-й нокаут — уровень II, 15-й — III; два соперника — две строки', () => {
+      // Каждый вечер A выбивает B пять раз (B четырежды докупается) и C один раз.
+      const five = (id: string, n: number) =>
+        playEvening(
+          id,
+          q4(n),
+          ['A', 'B', 'C'],
+          [
+            ...[1, 2, 3, 4].flatMap((): Step[] => [
+              ['bust', 'B', ['A']],
+              ['rebuy', 'B'],
+            ]),
+            ['bust', 'B', ['A']],
+            ['bust', 'C', ['A']],
+          ],
+        );
+      const res = run([five('f1', 1), five('f2', 2), five('f3', 3), five('f4', 4), five('f5', 5)]);
+      expect(
+        res
+          .filter((a) => a.code === 'sworn_enemy')
+          .map((a) => [a.eveningId, a.targetId, a.level, a.first]),
+      ).toEqual([
+        ['f1', 'B', 1, true],
+        ['f2', 'B', 2, true],
+        ['f3', 'B', 3, true],
+        ['f5', 'C', 1, false],
+      ]);
+      expect(playerLevel(res, 'A', 'sworn_enemy')).toBe(3);
+    });
+    it('порог взят дважды за вечер — одна строка со старшим уровнем', () => {
+      const ten = playEvening(
+        't',
+        q4(1),
+        ['A', 'B'],
+        [
+          ...Array.from({ length: 9 }, (): Step[] => [
+            ['bust', 'B', ['A']],
+            ['rebuy', 'B'],
+          ]).flat(),
+          ['bust', 'B', ['A']],
+        ],
+      );
+      expect(levels(run([ten]), 'sworn_enemy')).toEqual([['A', 't', 2, true]]);
+    });
+  });
+
+  describe('revenge: нокаут своей Немезиды', () => {
+    // n1: B дважды выбивает A — B становится Немезидой A. n2: A выбивает B — «Месть».
+    const n1 = playEvening(
+      'n1',
+      q4(1),
+      ['A', 'B', 'C'],
+      [
+        ['bust', 'A', ['B']],
+        ['rebuy', 'A'],
+        ['bust', 'A', ['B']],
+        ['bust', 'C', ['B']],
+      ],
+    );
+    const n2 = playEvening(
+      'n2',
+      q4(2),
+      ['A', 'B', 'C'],
+      [
+        ['bust', 'B', ['A', 'C']],
+        ['rebuy', 'B'],
+        ['bust', 'B', ['A']],
+        ['bust', 'C', ['A']],
+      ],
+    );
+    it('Немезида — по вечерам ДО этого; пара — один раз за вечер; Немезида — в targetId', () => {
+      const res = run([n1, n2]);
+      expect(
+        res.filter((a) => a.code === 'revenge').map((a) => [a.playerId, a.eveningId, a.targetId]),
+      ).toEqual([['A', 'n2', 'B']]);
+      // В самом n1 Немезиды ещё не было — мести нет.
+      expect(only(run([n1]), 'revenge')).toEqual([]);
+    });
+    it('Немезида появилась в этом же вечере — месть со следующего', () => {
+      const same = playEvening(
+        'x',
+        q4(1),
+        ['A', 'B', 'C'],
+        [
+          ['bust', 'A', ['B']],
+          ['rebuy', 'A'],
+          ['bust', 'A', ['B']],
+          ['rebuy', 'A'],
+          ['bust', 'B', ['A']],
+          ['bust', 'C', ['A']],
+        ],
+      );
+      expect(only(run([same]), 'revenge')).toEqual([]);
+    });
+    it('гость не Немезида и не мститель', () => {
+      const g1 = playEvening(
+        'g1',
+        q4(1),
+        ['A', 'G', 'C'],
+        [
+          ['bust', 'A', ['G']],
+          ['rebuy', 'A'],
+          ['bust', 'A', ['G']],
+          ['bust', 'C', ['G']],
+        ],
+      );
+      const g2 = playEvening(
+        'g2',
+        q4(2),
+        ['A', 'G', 'C'],
+        [
+          ['bust', 'G', ['A']],
+          ['bust', 'C', ['A']],
+        ],
+      );
+      expect(only(run([g1, g2]), 'revenge')).toEqual([]);
+    });
+  });
+
+  describe('king_hunt: нокаут действующего чемпиона', () => {
+    // Q3: чемпион — A (две победы). Q4: B выбивает A.
+    const c1 = simpleEvening('c1', q3(2), ['A', 'B', 'C'], 'winner');
+    const c2 = simpleEvening('c2', q3(9), ['A', 'C', 'B'], 'winner');
+    const hunt = playEvening(
+      'k1',
+      q4(1),
+      ['A', 'B', 'C'],
+      [
+        ['bust', 'A', ['B', 'C']],
+        ['bust', 'C', ['B']],
+      ],
+    );
+    it('чемпион прошлого сезона; при дележе — каждому; чемпион — в targetId', () => {
+      const res = run([c1, c2, hunt]);
+      expect(
+        res.filter((a) => a.code === 'king_hunt').map((a) => [a.playerId, a.eveningId, a.targetId]),
+      ).toEqual([
+        ['B', 'k1', 'A'],
+        ['C', 'k1', 'A'],
+      ]);
+    });
+    it('в сезоне чемпиона охоты нет; в позапрошлом сезоне он уже не действующий', () => {
+      // Нокаут A внутри Q3 — чемпион Q3 ещё не определён (и чемпиона Q2 нет).
+      const inQ3 = playEvening('k0', q3(16), ['A', 'B'], [['bust', 'A', ['B']]]);
+      expect(only(run([c1, c2, inQ3]), 'king_hunt')).toEqual([]);
+      // 2027-Q1: действующий — чемпион 2026-Q4 (его нет), не A.
+      const later = playEvening(
+        'k2',
+        '2027-01-15T16:00:00.000Z',
+        ['A', 'B'],
+        [['bust', 'A', ['B']]],
+      );
+      expect(only(run([c1, c2, later], { currentSeasonKey: '2027-Q1' }), 'king_hunt')).toEqual([]);
+    });
+    it('нокаут без выбившего — никому; гостю — нет', () => {
+      const none = playEvening(
+        'k3',
+        q4(1),
+        ['A', 'G', 'C'],
+        [
+          ['bust', 'A', ['G']],
+          ['bust', 'C', []],
+        ],
+      );
+      expect(only(run([c1, c2, none]), 'king_hunt')).toEqual([]);
     });
   });
 
@@ -252,22 +545,72 @@ describe('ачивки', () => {
     });
   });
 
-  describe('star', () => {
-    it('победа в номинации; две номинации — count 2; ничья — обоим', () => {
-      const stars = [
-        { eveningId: 'e1', category: 'hand' as const, winners: ['A'] },
-        { eveningId: 'e1', category: 'bluff' as const, winners: ['A', 'B'] },
-        { eveningId: 'e1', category: 'badbeat' as const, winners: ['G'] },
-      ];
-      expect(only(run([], { stars }), 'star')).toEqual([
-        ['A', 'e1', 2],
-        ['B', 'e1', 1],
-      ]);
+  describe('star: «Звезда вечера»', () => {
+    const vote = (voterId: string, category: VoteCategory, nomineeId: string): Vote => ({
+      voterId,
+      category,
+      nomineeId,
     });
-    it('без голосов — никому', () => {
+
+    it('единственный лидер номинации с 2 голосами и больше; ничья и 1 голос — никому', () => {
+      const results = voteResults([
+        vote('B', 'hand', 'A'),
+        vote('C', 'hand', 'A'),
+        vote('D', 'hand', 'B'),
+        // Блеф — ничья 2:2.
+        vote('A', 'bluff', 'B'),
+        vote('C', 'bluff', 'B'),
+        vote('B', 'bluff', 'C'),
+        vote('D', 'bluff', 'C'),
+        // Бэд-бит — один голос.
+        vote('A', 'badbeat', 'D'),
+      ]);
+      expect(starAwards('e1', results)).toEqual([
+        { eveningId: 'e1', category: 'hand', playerId: 'A', votes: 2 },
+      ]);
+      expect(starAwards('e1', voteResults([]))).toEqual([]);
+    });
+
+    it('две номинации — count 2; гость-лидер звезду не получает, второму она не переходит', () => {
+      const stars = [star('e1', 'A', 'hand'), star('e1', 'A', 'bluff'), star('e1', 'G', 'badbeat')];
+      expect(only(run([], { stars }), 'star')).toEqual([['A', 'e1', 2]]);
+    });
+
+    it('уровни по звёздам за всё время: 1 — I, 5 — II, 10 — III', () => {
+      const ev = [1, 2, 3, 4, 5, 6].map((n) => simpleEvening(`v${n}`, q4(n), ['A', 'B']));
+      // v1: 1, v2: 2 (две номинации), v3: 1 → 4; v4: 1 → 5 (II); v5: 3 → 8; v6: 2 → 10 (III).
+      const stars = [
+        star('v1', 'A'),
+        star('v2', 'A', 'hand'),
+        star('v2', 'A', 'bluff'),
+        star('v3', 'A'),
+        star('v4', 'A'),
+        star('v5', 'A', 'hand'),
+        star('v5', 'A', 'bluff'),
+        star('v5', 'A', 'badbeat'),
+        star('v6', 'A', 'hand'),
+        star('v6', 'A', 'bluff'),
+      ];
+      // Порядок звёзд в списке не важен — хронология по датам вечеров.
+      const res = run(ev, { stars: [...stars].reverse() });
       expect(
-        only(run([], { stars: [{ eveningId: 'e1', category: 'hand', winners: [] }] }), 'star'),
-      ).toEqual([]);
+        res.filter((a) => a.code === 'star').map((a) => [a.eveningId, a.count, a.level, a.first]),
+      ).toEqual([
+        ['v1', 1, 1, true],
+        ['v2', 2, 1, false],
+        ['v3', 1, 1, false],
+        ['v4', 1, 2, true],
+        ['v5', 3, 2, false],
+        ['v6', 2, 3, true],
+      ]);
+      // Лента моментов считает те же строки.
+      expect(starAchievements({ summaries: ev, excluded: new Set(['G']), stars })).toEqual(
+        res.filter((a) => a.code === 'star'),
+      );
+    });
+
+    it('без звёзд — никому', () => {
+      expect(only(run([], { stars: [] }), 'star')).toEqual([]);
     });
   });
 
@@ -307,7 +650,8 @@ describe('ачивки', () => {
       simpleEvening('b', q3(9), ['G', 'A'], 'winner'),
       simpleEvening('c', q3(16), ['G', 'A'], 'winner'),
     ];
-    const res = run(list, { stars: [{ eveningId: 'a', category: 'hand', winners: ['G'] }] });
+    const stars = [star('a', 'G')];
+    const res = run(list, { stars });
     expect(res.filter((a) => a.playerId === 'G')).toEqual([]);
     // Без исключения тот же гость собрал бы почти всё.
     const raw = computeAchievements({
@@ -316,13 +660,15 @@ describe('ачивки', () => {
       predictions: [],
       bestN: 10,
       currentSeasonKey: CURRENT,
-      stars: [{ eveningId: 'a', category: 'hand', winners: ['G'] }],
+      stars,
     });
     expect(new Set(raw.filter((a) => a.playerId === 'G').map((a) => a.code))).toEqual(
       new Set([
         'first_blood',
         'hunter',
         'comeback',
+        'phoenix',
+        'clean_win',
         'rebuy_king',
         'iron_chair',
         'hat_trick',
@@ -444,16 +790,44 @@ describe('звания', () => {
 });
 
 describe('diffAchievements', () => {
-  it('новые строки и прирост count — для поста бота', () => {
+  it('новые строки и прирост count — для поста бота; уровень и «впервые» — как после', () => {
     const e1 = simpleEvening('d1', q4(1), ['A', 'B', 'C', 'D'], 'winner');
-    const e2 = simpleEvening('d2', q4(2), ['B', 'A', 'C', 'D'], 'winner');
-    const stars1 = [{ eveningId: 'd2', category: 'hand' as const, winners: ['C'] }];
-    const stars2 = [...stars1, { eveningId: 'd2', category: 'bluff' as const, winners: ['C'] }];
+    const e2 = simpleEvening('d2', q4(2), ['B', 'A', 'C', 'D', 'E'], 'winner');
+    const stars1 = [star('d2', 'C', 'hand')];
+    const stars2 = [...stars1, star('d2', 'C', 'bluff')];
     const before = run([e1], { stars: stars1 });
     const after = run([e1, e2], { stars: stars2 });
     expect(diffAchievements(before, after)).toEqual([
-      { playerId: 'B', code: 'hunter', eveningId: 'd2', seasonKey: null, count: 1 },
-      { playerId: 'C', code: 'star', eveningId: 'd2', seasonKey: null, count: 1 },
+      {
+        playerId: 'B',
+        code: 'clean_win',
+        eveningId: 'd2',
+        seasonKey: null,
+        targetId: null,
+        count: 1,
+        level: 1,
+        first: true,
+      },
+      {
+        playerId: 'B',
+        code: 'hunter',
+        eveningId: 'd2',
+        seasonKey: null,
+        targetId: null,
+        count: 1,
+        level: 2,
+        first: true,
+      },
+      {
+        playerId: 'C',
+        code: 'star',
+        eveningId: 'd2',
+        seasonKey: null,
+        targetId: null,
+        count: 1,
+        level: 1,
+        first: true,
+      },
     ]);
     expect(diffAchievements(after, after)).toEqual([]);
     expect(diffAchievements([], before)).toEqual(before);

@@ -1,5 +1,6 @@
 // Итоги голосования после закрытия: по каждой номинации победители (ничья — несколько) с числом
-// голосов, подписи и фото их голосов; остальные номинанты — строкой. Админ может удалить любой
+// голосов и пометкой «Звезда вечера» (или почему её нет — winnerBadge), подписи и фото их голосов;
+// остальные номинанты — строкой. Админ может удалить любой
 // голос (концепция: «админ может удалить») — ему под номинацией полный список «кто → за кого».
 import { VOTE_CATEGORIES, VOTE_CATEGORY_META, type VoteCategory } from '@domain/votes.ts';
 import { useMemo, useState } from 'react';
@@ -10,7 +11,7 @@ import {
   type Player,
   type VoteRow,
 } from '../../shared/api';
-import { pluralWithNumber } from '../../shared/lib';
+import { capitalize, keepNumbersTogether, pluralWithNumber } from '../../shared/lib';
 import {
   Avatar,
   Badge,
@@ -23,7 +24,13 @@ import {
   useConfirm,
   useToast,
 } from '../../shared/ui';
-import { categoryResults, type CategoryResult, type NomineeResult } from './lib';
+import {
+  categoryResults,
+  winnerBadge,
+  type CategoryResult,
+  type NomineeResult,
+  type WinnerBadge,
+} from './lib';
 import { VotePhoto } from './VotePhoto';
 
 const VOTES_FORMS = ['голос', 'голоса', 'голосов'] as const;
@@ -86,7 +93,6 @@ function CategoryBlock({
   isAdmin: boolean;
 }) {
   const title = VOTE_CATEGORY_META[result.category].title;
-  const tie = result.winners.length > 1;
   const others = result.others
     .map((o) => `${nameOf(playersById, o.nomineeId, meId)} — ${o.count}`)
     .join(', ');
@@ -108,7 +114,11 @@ function CategoryBlock({
           <WinnerCard
             key={winner.nomineeId}
             winner={winner}
-            tie={tie}
+            badge={winnerBadge(
+              result,
+              winner.nomineeId,
+              playersById.get(winner.nomineeId)?.is_guest ?? false,
+            )}
             playersById={playersById}
             meId={meId}
           />
@@ -207,12 +217,12 @@ function AdminVotes({
 
 function WinnerCard({
   winner,
-  tie,
+  badge,
   playersById,
   meId,
 }: {
   winner: NomineeResult<VoteRow>;
-  tie: boolean;
+  badge: WinnerBadge;
   playersById: PlayersById;
   meId: string;
 }) {
@@ -227,8 +237,13 @@ function WinnerCard({
         <div className="vote-winner__text">
           <p className="m-h3">{name}</p>
           <p className="m-small m-mono">{pluralWithNumber(winner.count, VOTES_FORMS)}</p>
+          {badge.note && (
+            <p className="m-small vote-winner__note">
+              {keepNumbersTogether(capitalize(badge.note))}
+            </p>
+          )}
         </div>
-        <Badge tone={tie ? 'neutral' : 'positive'}>{tie ? 'Ничья' : 'Победитель'}</Badge>
+        <Badge tone={badge.star ? 'positive' : 'neutral'}>{badge.label}</Badge>
       </div>
       {notes.map((vote) => (
         <VoteNote

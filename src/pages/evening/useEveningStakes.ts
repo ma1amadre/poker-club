@@ -55,6 +55,7 @@ export function useEveningStakes(
         summaries: history.summaries,
         excluded: history.excluded,
         predictions: history.predictionScores,
+        stars: history.stars,
         bestN: history.bestN,
         bestNBySeason: history.bestNBySeason,
       },

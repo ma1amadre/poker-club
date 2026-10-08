@@ -102,10 +102,112 @@ describe('feedRows', () => {
       caption: 'Каре',
       photoPath: null,
       noteBy: 'c',
+      star: null,
     };
     const [row] = feedRows([moment], ctx, 8);
     expect(sp(row?.title)).toBe('Рука вечера — Дима');
     expect(sp(row?.subtitle)).toBe('1 октября · 3 голоса');
+  });
+
+  it('момент со звездой: «звезда вечера», новый уровень — с названием уровня', () => {
+    const moment = (star: { level: number; first: boolean } | null): FeedItem => ({
+      type: 'moment',
+      id: 'moment:e1:hand:b',
+      at: '2026-10-03T16:00:00Z',
+      eveningId: 'e1',
+      category: 'hand',
+      nomineeId: 'b',
+      votes: 2,
+      tie: false,
+      caption: null,
+      photoPath: null,
+      noteBy: null,
+      star,
+    });
+    const sub = (star: { level: number; first: boolean } | null) =>
+      sp(feedRows([moment(star)], ctx, 8)[0]?.subtitle);
+    expect(sub({ level: 1, first: true })).toBe('1 октября · 2 голоса · звезда вечера');
+    expect(sub({ level: 2, first: false })).toBe('1 октября · 2 голоса · звезда вечера');
+    expect(sub({ level: 2, first: true })).toBe(
+      '1 октября · 2 голоса · новый уровень «Звезда вечера II»',
+    );
+  });
+
+  it('ачивка вечера: уровень в названии, о ком и «новый уровень»; несколько — одной строкой', () => {
+    const ach = (
+      code: 'hunter' | 'revenge' | 'clean_win' | 'sworn_enemy' | 'king_hunt',
+      playerId: string,
+      over: Partial<Extract<FeedItem, { type: 'achievement' }>> = {},
+    ): FeedItem => ({
+      type: 'achievement',
+      id: `achievement:${code}:${playerId}:e1:${over.targetId ?? ''}`,
+      at: '2026-10-01T21:00:00.000Z',
+      playerId,
+      code,
+      eveningId: 'e1',
+      seasonKey: null,
+      count: 1,
+      level: 1,
+      first: true,
+      targetId: null,
+      ...over,
+    });
+    const [one] = feedRows([ach('hunter', 'b', { level: 2, first: true })], ctx, 8);
+    expect(sp(one?.title)).toBe('Ачивка «Охотник II» — Дима');
+    expect(sp(one?.subtitle)).toBe('1 октября · 4 нокаута за вечер · новый уровень');
+    const [revenge] = feedRows([ach('revenge', 'b', { targetId: 'c' })], ctx, 8);
+    expect(sp(revenge?.subtitle)).toBe('1 октября · нокаут своей Немезиды · Немезида — Лёша');
+    const rows = feedRows(
+      [
+        ach('revenge', 'b', { targetId: 'c' }),
+        ach('hunter', 'b', { level: 2, first: true }),
+        ach('clean_win', 'c'),
+      ],
+      ctx,
+      8,
+    );
+    expect(rows).toHaveLength(1);
+    expect(sp(rows[0]?.title)).toBe('Ачивки вечера');
+    // Цель — как в посте итогов: «Месть» (Немезида — Лёша).
+    expect(sp(rows[0]?.subtitle)).toBe(
+      '1 октября · Дима — «Охотник II» (новый уровень), «Месть» (Немезида — Лёша) · Лёша — «Чистая победа»',
+    );
+    expect(rows[0]?.to).toBe('/evening/e1');
+  });
+
+  it('«Ачивки вечера»: две строки одного кода у игрока различимы по цели', () => {
+    const ach = (
+      code: 'sworn_enemy' | 'king_hunt',
+      targetId: string,
+      over: Partial<Extract<FeedItem, { type: 'achievement' }>> = {},
+    ): FeedItem => ({
+      type: 'achievement',
+      id: `achievement:${code}:b:e1:${targetId}`,
+      at: '2026-10-01T21:00:00.000Z',
+      playerId: 'b',
+      code,
+      eveningId: 'e1',
+      seasonKey: null,
+      count: 1,
+      level: 1,
+      first: true,
+      targetId,
+      ...over,
+    });
+    // До вечера у Димы по 4 нокаута Саши и Лёши, за вечер он выбивает обоих.
+    const [enemies] = feedRows(
+      [ach('sworn_enemy', 'a'), ach('sworn_enemy', 'c', { first: false })],
+      ctx,
+      8,
+    );
+    expect(sp(enemies?.subtitle)).toBe(
+      '1 октября · Дима — «Заклятый враг I» (соперник — ты), «Заклятый враг I» (соперник — Лёша)',
+    );
+    // Общий нокаут двух со-чемпионов.
+    const [kings] = feedRows([ach('king_hunt', 'a'), ach('king_hunt', 'd')], ctx, 8);
+    expect(sp(kings?.subtitle)).toBe(
+      '1 октября · Дима — «Охота на короля» (чемпион — ты), «Охота на короля» (чемпион — Миша)',
+    );
   });
 
   it('сезонные ачивки одного сезона — одной строкой «Итоги сезона», чемпион первым', () => {
@@ -121,6 +223,9 @@ describe('feedRows', () => {
       eveningId: null,
       seasonKey: '2026-Q3',
       count: 1,
+      level: 1,
+      first: true,
+      targetId: null,
     });
     const rows = feedRows(
       [
@@ -217,7 +322,16 @@ describe('recapLines', () => {
         netRub: null,
         prediction: { made: true, winnerHit: true, firstOutHit: true, points: 5 },
         newAchievements: [
-          { playerId: 'a', code: 'oracle', eveningId: 'e1', seasonKey: null, count: 1 },
+          {
+            playerId: 'a',
+            code: 'oracle',
+            eveningId: 'e1',
+            seasonKey: null,
+            targetId: null,
+            count: 1,
+            level: 1,
+            first: true,
+          },
         ],
       }),
       'a',
@@ -290,6 +404,40 @@ describe('recapLines', () => {
     const p = lines.find((l) => l.key === 'prediction');
     expect(sp(p?.title)).toBe('Прогноз без очков');
     expect(sp(p?.detail)).toBe('Победитель не угадан');
+  });
+
+  it('ачивки вечера: новая, новый уровень, повтор; у «Звезды вечера» повтор — без порога', () => {
+    const a = (
+      code: 'hunter' | 'revenge' | 'star',
+      over: Partial<EveningRecap['newAchievements'][number]> = {},
+    ) => ({
+      playerId: 'a',
+      code,
+      eveningId: 'e1',
+      seasonKey: null,
+      targetId: null,
+      count: 1,
+      level: 1,
+      first: true,
+      ...over,
+    });
+    const lines = (list: EveningRecap['newAchievements']) =>
+      recapLines(recap({ newAchievements: list }), 'a', nameOf, null)
+        .filter((l) => l.key.startsWith('achievement:'))
+        .map((l) => `${sp(l.title)} | ${sp(l.detail ?? '')}`);
+    expect(lines([a('hunter', { level: 2 }), a('revenge', { targetId: 'b' }), a('star')])).toEqual([
+      'Новый уровень: «Охотник II» | 4 нокаута за вечер',
+      'Новая ачивка «Месть» | Нокаут своей Немезиды · Немезида — Дима',
+      'Новая ачивка «Звезда вечера I» | Единоличная победа в номинации голосования',
+    ]);
+    // Вторая звезда — всё ещё уровень I: не «1 звезда вечера» рядом с повтором.
+    expect(lines([a('star', { first: false })])).toEqual([
+      'Ачивка «Звезда вечера I» — ещё раз | Единоличная победа в номинации голосования',
+    ]);
+    // Пятая звезда — новый уровень: порог как порог.
+    expect(lines([a('star', { level: 2, count: 2 })])).toEqual([
+      'Новый уровень: «Звезда вечера II» | От 5 звёзд вечера · ×2',
+    ]);
   });
 
   it('свои новые Немезиды — одной строкой', () => {

@@ -1,12 +1,18 @@
 // «Твой вечер» — подписи строк к доменному eveningRecap (что вечер значил лично для игрока).
 // Ничего не считает: нокауты, прогноз, места в сезоне, ачивки и рекорды — из домена (recap.ts,
 // records.ts); подписи ачивок и значения рекордов — общие с лентой (shared/lib/clubLife).
-import { ACHIEVEMENT_META } from '@domain/achievements.ts';
+import { achievementTitle } from '@domain/achievements.ts';
 import type { TitleChange } from '@domain/feed.ts';
 import type { EveningRecap } from '@domain/recap.ts';
 import type { PlayerId } from '@domain/types.ts';
 // Только чистое форматирование (Intl), без React: модуль тестируется в node.
-import { ACHIEVEMENT_SHORT, recordTitleLower, recordValueText } from '../../shared/lib/clubLife';
+import {
+  ACHIEVEMENT_TARGET_ROLE,
+  achievementShort,
+  isNewLevel,
+  recordTitleLower,
+  recordValueText,
+} from '../../shared/lib/clubLife';
 import { NBSP, plural } from '../../shared/lib/format';
 import { paths } from '../../shared/lib/paths';
 import { formatSeason } from '../../shared/lib/season';
@@ -190,15 +196,33 @@ function titleLines(changes: readonly TitleChange[], meId: PlayerId, nameOf: Nam
   return out;
 }
 
-/** Новые ачивки этого вечера. */
-function achievementLines(recap: EveningRecap, meId: PlayerId): RecapLine[] {
-  return recap.newAchievements.map((a) => ({
-    key: `achievement:${a.code}`,
-    icon: 'shield-check',
-    title: `Новая ачивка «${ACHIEVEMENT_META[a.code].title}»`,
-    detail: capitalizeFirst(ACHIEVEMENT_SHORT[a.code]),
-    to: paths.player(meId),
-  }));
+/**
+ * Ачивки этого вечера: впервые — «Новая ачивка «Охотник I»», уровень от II впервые — «Новый
+ * уровень: «Охотник II»», повтор — «Ачивка «Чистая победа» — ещё раз». В подробностях — что дала
+ * выдача, о ком она («Немезида — Дима») и сколько раз за вечер.
+ */
+function achievementLines(recap: EveningRecap, meId: PlayerId, nameOf: NameOf): RecapLine[] {
+  return recap.newAchievements.map((a) => {
+    const name = achievementTitle(a.code, a.level);
+    const role = ACHIEVEMENT_TARGET_ROLE[a.code];
+    return {
+      key: `achievement:${a.code}${a.targetId !== null ? `:${a.targetId}` : ''}`,
+      icon: 'shield-check',
+      title: isNewLevel(a)
+        ? `Новый уровень: «${name}»`
+        : a.first
+          ? `Новая ачивка «${name}»`
+          : `Ачивка «${name}» — ещё раз`,
+      detail: [
+        capitalizeFirst(achievementShort(a)),
+        role && a.targetId !== null ? `${role} — ${nameOf(a.targetId)}` : null,
+        a.count > 1 ? `×${a.count}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+      to: paths.player(meId),
+    };
+  });
 }
 
 /**
@@ -214,7 +238,7 @@ export function recapLines(
 ): RecapLine[] {
   if (!recap.played) {
     if (!recap.prediction.made) return [];
-    return [predictionLine(recap, pick), ...achievementLines(recap, meId)];
+    return [predictionLine(recap, pick), ...achievementLines(recap, meId, nameOf)];
   }
   const lines: RecapLine[] = [];
 
@@ -240,7 +264,7 @@ export function recapLines(
 
   lines.push(predictionLine(recap, pick));
 
-  lines.push(...achievementLines(recap, meId));
+  lines.push(...achievementLines(recap, meId, nameOf));
 
   const season = seasonLine(recap);
   if (season) lines.push(season);

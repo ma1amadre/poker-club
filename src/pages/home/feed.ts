@@ -1,7 +1,7 @@
 // Лента «В клубе» на главной: подписи строк к событиям доменной ленты (clubEvents + clubMoments).
 // Ничего не пересчитывает — события, рекорды и звания считает домен (feed.ts, records.ts); вход
 // домена из истории клуба — clubFeedInput (shared/api/history).
-import { ACHIEVEMENT_META } from '@domain/achievements.ts';
+import { ACHIEVEMENT_CODES, ACHIEVEMENT_META, achievementTitle } from '@domain/achievements.ts';
 import type { FeedItem } from '@domain/feed.ts';
 import { VOTE_CATEGORY_META } from '@domain/votes.ts';
 import type { Player } from '../../shared/api/types';
@@ -11,7 +11,14 @@ import { paths } from '../../shared/lib/paths';
 import { formatSeason } from '../../shared/lib/season';
 import { capitalize, joinNames, kosCount, playersCount } from '../../shared/lib/text';
 // «Твой вечер», лента и «Рекорды» говорят об ачивках и рекордах одинаково.
-import { ACHIEVEMENT_SHORT, recordTitleLower, recordValueText } from '../../shared/lib/clubLife';
+import {
+  ACHIEVEMENT_TARGET_ROLE,
+  achievementShort,
+  isNewLevel,
+  recordTitleLower,
+  recordValueText,
+  starNote,
+} from '../../shared/lib/clubLife';
 import type { IconName } from '../../shared/ui/icons';
 import { nameWithMe } from './lib';
 
@@ -145,14 +152,16 @@ export function feedRow(item: FeedItem, ctx: FeedContext): FeedRow {
       };
 
     case 'achievement': {
-      const meta = ACHIEVEMENT_META[item.code];
+      const role = ACHIEVEMENT_TARGET_ROLE[item.code];
       return {
         ...base,
         icon: 'shield-check',
-        title: `Ачивка «${meta.title}» — ${name(item.playerId)}`,
+        title: `Ачивка «${achievementTitle(item.code, item.level)}» — ${name(item.playerId)}`,
         subtitle: line([
           day,
-          ACHIEVEMENT_SHORT[item.code],
+          achievementShort(item),
+          role && item.targetId !== null && `${role} — ${name(item.targetId)}`,
+          isNewLevel(item) && 'новый уровень',
           item.seasonKey !== null && formatSeason(item.seasonKey),
         ]),
         to: paths.player(item.playerId),
@@ -200,6 +209,7 @@ export function feedRow(item: FeedItem, ctx: FeedContext): FeedRow {
           day,
           `${item.votes}${NBSP}${plural(item.votes, ['голос', 'голоса', 'голосов'])}`,
           item.tie && 'номинацию делят несколько игроков',
+          item.star && starNote(item.star),
         ]),
         to: paths.vote(item.eveningId),
         caption: item.caption,
@@ -259,7 +269,62 @@ function nemesisGroupRow(group: readonly NemesisChange[], ctx: FeedContext): Fee
   };
 }
 
-type SeasonAchievement = Extract<FeedItem, { type: 'achievement' }> & { seasonKey: string };
+type AchievementFeedItem = Extract<FeedItem, { type: 'achievement' }>;
+type EveningAchievement = AchievementFeedItem & { eveningId: string };
+
+function isEveningAchievement(item: FeedItem): item is EveningAchievement {
+  return item.type === 'achievement' && item.eveningId !== null;
+}
+
+/**
+ * Ачивка в строке «Ачивки вечера» — как в посте итогов (achievementPhrase): «Охотник II» (новый
+ * уровень), «Месть» (Немезида — Дима). Цель нужна: у одного игрока за вечер бывает две строки
+ * одного кода — «Заклятый враг» против двух соперников, «Охота на короля» на двух чемпионов.
+ */
+function eveningAchievementPhrase(a: EveningAchievement, name: (id: string) => string): string {
+  const role = ACHIEVEMENT_TARGET_ROLE[a.code];
+  const notes = [
+    isNewLevel(a) && 'новый уровень',
+    role && a.targetId !== null && `${role} — ${name(a.targetId)}`,
+  ].filter(Boolean);
+  return `«${achievementTitle(a.code, a.level)}»${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`;
+}
+
+/**
+ * Ачивки одного вечера — одной строкой «Ачивки вечера»: «Лёша — «Охотник II», «Месть» (Немезида —
+ * Дима) · Саша — «Чистая победа»». После вечера их бывает пять-шесть (уровни, сюжетные), и по
+ * отдельности они вытеснили бы из короткой ленты всё остальное. Подробности — на карточке игрока и
+ * в «Твоём вечере».
+ */
+function eveningAchievementsRow(group: readonly EveningAchievement[], ctx: FeedContext): FeedRow {
+  const name = (id: string) => nameWithMe(ctx.names, id, ctx.meId);
+  const byPlayer = new Map<string, EveningAchievement[]>();
+  for (const a of group) byPlayer.set(a.playerId, [...(byPlayer.get(a.playerId) ?? []), a]);
+  const rank = (a: EveningAchievement) => ACHIEVEMENT_CODES.indexOf(a.code);
+  const first = group[0] as EveningAchievement;
+  return {
+    id: `achievements:${first.eveningId}`,
+    icon: 'shield-check',
+    title: 'Ачивки вечера',
+    subtitle: line([
+      dayOf(first, ctx),
+      ...[...byPlayer].map(
+        ([id, list]) =>
+          `${name(id)} — ${[...list]
+            .sort((a, b) => rank(a) - rank(b) || b.level - a.level)
+            // Цель в скобках: себя — просто «ты», без вложенных скобок «Саша (ты)».
+            .map((a) => eveningAchievementPhrase(a, (t) => (t === ctx.meId ? 'ты' : name(t))))
+            .join(', ')}`,
+      ),
+    ]),
+    to: paths.evening(first.eveningId),
+    caption: null,
+    photoPath: null,
+    photoAlt: null,
+  };
+}
+
+type SeasonAchievement = AchievementFeedItem & { seasonKey: string };
 
 function isSeasonAchievement(item: FeedItem): item is SeasonAchievement {
   return item.type === 'achievement' && item.eveningId === null && item.seasonKey !== null;
@@ -309,8 +374,13 @@ function seasonGroupRow(group: readonly SeasonAchievement[], ctx: FeedContext): 
 export function feedRows(items: readonly FeedItem[], ctx: FeedContext, limit: number): FeedRow[] {
   const nemeses = new Map<string, NemesisChange[]>();
   const seasons = new Map<string, SeasonAchievement[]>();
+  const evenings = new Map<string, EveningAchievement[]>();
   for (const item of items) {
-    if (item.type === 'title_change' && item.title === 'nemesis') {
+    if (isEveningAchievement(item)) {
+      const list = evenings.get(item.eveningId) ?? [];
+      list.push(item);
+      evenings.set(item.eveningId, list);
+    } else if (item.type === 'title_change' && item.title === 'nemesis') {
       const list = nemeses.get(item.eveningId) ?? [];
       list.push(item);
       nemeses.set(item.eveningId, list);
@@ -331,6 +401,16 @@ export function feedRows(items: readonly FeedItem[], ctx: FeedContext, limit: nu
         if (done.has(key)) continue;
         done.add(key);
         rows.push(nemesisGroupRow(group, ctx));
+        continue;
+      }
+    }
+    if (isEveningAchievement(item)) {
+      const group = evenings.get(item.eveningId) ?? [];
+      if (group.length > 1) {
+        const key = `achievements:${item.eveningId}`;
+        if (done.has(key)) continue;
+        done.add(key);
+        rows.push(eveningAchievementsRow(group, ctx));
         continue;
       }
     }
