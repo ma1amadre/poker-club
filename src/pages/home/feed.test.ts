@@ -243,7 +243,7 @@ describe('feedRows', () => {
     expect(sp(rows[0]?.subtitle)).toBe(
       '1 октября · «Чемпион сезона» — Саша (ты) · «Железный стул» — Лёша и Саша (ты) · «Ребай-король» — Миша',
     );
-    expect(rows[0]?.to).toBe('/rating?tab=fame');
+    expect(rows[0]?.to).toBe('/season/2026-Q3');
     // Одна сезонная ачивка — обычная строка.
     const single = feedRows([season('champion', 'b')], ctx, 8);
     expect(sp(single[0]?.title)).toBe('Ачивка «Чемпион сезона» — Дима');

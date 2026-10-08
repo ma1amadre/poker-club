@@ -1,10 +1,12 @@
-import { moneyStandings } from '@domain/season.ts';
+import { lastEveningMoves } from '@domain/placeMoves.ts';
+import { moneyStandings, type StandingRow } from '@domain/season.ts';
+import type { EveningSummary } from '@domain/summary.ts';
 import { useMemo } from 'react';
 import { eveningsCount, formatSeason, paths } from '../../shared/lib';
 import { Amount, Empty, List, ListItem, Segmented } from '../../shared/ui';
 import type { RatingContext } from './context';
-import { PlayerName, Rank, SeasonSelect } from './parts';
-import { moneyPlaces } from './stats';
+import { MovesNote, PlayerName, Rank, SeasonSelect } from './parts';
+import { meRowClass, moneyPlaces, moveOf } from './stats';
 import type { MoneyPeriod } from './useRatingParams';
 
 interface MoneyTabProps {
@@ -21,18 +23,34 @@ const PERIODS = [
   { value: 'all', label: 'Всё время' },
 ] as const;
 
+/** Делят место в денежной таблице: равное нетто (как moneyPlaces). */
+const sameNet = (a: StandingRow, b: StandingRow): boolean => a.netRub === b.netRub;
+
 /** Денежный профит (moneyStandings домена): нетто за сезон или за всё время, знак + цвет + иконка. */
 export function MoneyTab({ ctx, seasons, season, onSeason, period, onPeriod }: MoneyTabProps) {
   const { history } = ctx;
-  const rows = useMemo(
+  // Итоги таблицы: сезон или всё время; та же таблица без последнего вечера даёт стрелки сдвига.
+  const list = useMemo(
     () =>
-      moneyStandings(history.summaries, {
-        excluded: history.excluded,
-        seasonKey: period === 'season' ? season : undefined,
-      }),
-    [history.summaries, history.excluded, period, season],
+      period === 'season'
+        ? history.summaries.filter((s) => s.seasonKey === season)
+        : history.summaries,
+    [history.summaries, period, season],
+  );
+  const rows = useMemo(
+    () => moneyStandings(list, { excluded: history.excluded }),
+    [list, history.excluded],
   );
   const places = useMemo(() => moneyPlaces(rows), [rows]);
+  const moves = useMemo(
+    () =>
+      lastEveningMoves(
+        list,
+        (s: readonly EveningSummary[]) => moneyStandings(s, { excluded: history.excluded }),
+        sameNet,
+      ),
+    [list, history.excluded],
+  );
 
   return (
     <div className="rt-panel">
@@ -62,10 +80,12 @@ export function MoneyTab({ ctx, seasons, season, onSeason, period, onPeriod }: M
             <ListItem
               key={row.playerId}
               to={paths.player(row.playerId)}
+              className={meRowClass(ctx.meId, row.playerId)}
               before={
                 <Rank
                   place={places[index] ?? index + 1}
                   player={ctx.playersById.get(row.playerId)}
+                  move={moveOf(moves, row.playerId)}
                 />
               }
               title={<PlayerName ctx={ctx} id={row.playerId} />}
@@ -76,6 +96,7 @@ export function MoneyTab({ ctx, seasons, season, onSeason, period, onPeriod }: M
         </List>
       )}
 
+      <MovesNote moves={moves} summaryById={history.summaryById} />
       <p className="m-small">
         Нетто — призовые минус входы и ребаи. Плюс — игрок в выигрыше, минус — в проигрыше. Гости в
         таблицу не входят.

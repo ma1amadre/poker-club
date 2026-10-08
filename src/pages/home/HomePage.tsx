@@ -4,6 +4,12 @@
 // Тренировочный вечер (миграция 023) не «ближайший вечер» клуба: он — отдельной строкой «Тренировка»
 // под ним, пока объявлен или идёт; в долги, ленту и сезон не попадает (история клуба без тренировок).
 // Вопрос «Играешь или следишь?» (миграция 024) — под ближайшим вечером, пока человек не выбрал.
+// Сезон как событие: последний вечер квартала в анонсе помечен «Финал сезона» (isSeasonFinale домена),
+// первые две недели нового квартала — карточка «Итоги сезона» (над лентой). Внизу — «Гонка сезона»:
+// место, очки до соседей и лидера, вечера в зачёте и игровые дни до конца квартала (пока вечер сезона
+// объявлен или идёт, «игр больше нет» не пишет).
+import { isSeasonFinale, type CalendarEvening } from '@domain/seasonCalendar.ts';
+import { seasonKey } from '@domain/season.ts';
 import { useMemo } from 'react';
 import {
   isTrainingEvening,
@@ -14,6 +20,7 @@ import {
   withoutTraining,
   type Evening,
   type Player,
+  type Settings,
 } from '../../shared/api';
 import { useAuth, useCurrentPlayer } from '../../shared/auth';
 import { formatDateTime, paths, useNow } from '../../shared/lib';
@@ -28,8 +35,9 @@ import {
 } from '../../shared/ui';
 import { FeedSection } from './FeedSection';
 import { LastEveningSection, OpenVoting } from './LastEveningSection';
-import { pickTraining, pickUpcoming } from './lib';
+import { pickTraining, pickUpcoming, seasonEveningPending } from './lib';
 import { RoleQuestion } from './RoleQuestion';
+import { SeasonResultsSection } from './SeasonResultsSection';
 import { SeasonSection } from './SeasonSection';
 import { SettlementNotices } from './SettlementNotices';
 import { AnnouncedEvening, LiveEvening, NextGame } from './UpcomingSection';
@@ -74,8 +82,11 @@ export default function HomePage() {
   }
 
   const all = evenings.data ?? [];
-  const upcoming = pickUpcoming(withoutTraining(all), nowMinute);
+  const real = withoutTraining(all);
+  const upcoming = pickUpcoming(real, nowMinute);
   const training = pickTraining(all.filter(isTrainingEvening), nowMinute);
+  const finaleSeasonKey =
+    upcoming?.status === 'announced' ? finaleOf(upcoming, real, settings.data ?? null) : null;
 
   return (
     <Page
@@ -103,6 +114,7 @@ export default function HomePage() {
           players={players.data ?? []}
           playersById={playersById}
           nowMs={nowMinute}
+          finaleSeasonKey={finaleSeasonKey}
         />
       )}
       {!upcoming && (
@@ -114,13 +126,55 @@ export default function HomePage() {
       {history.data && <OpenVoting history={history.data} me={me} nowMs={nowMinute} />}
 
       {history.data && (
+        <SeasonResultsSection
+          history={history.data}
+          me={me}
+          playersById={playersById}
+          nowMs={nowMinute}
+        />
+      )}
+
+      {history.data && (
         <FeedSection history={history.data} me={me} playersById={playersById} nowMs={nowMinute} />
       )}
 
       <LastEveningSection history={history} me={me} playersById={playersById} nowMs={nowMinute} />
-      {history.data && !me.is_guest && <SeasonSection history={history.data} me={me} />}
+      {history.data && !me.is_guest && (
+        <SeasonSection
+          history={history.data}
+          me={me}
+          settings={settings.data ?? null}
+          eveningPending={seasonEveningPending(real, history.data.currentSeasonKey, nowMinute)}
+          nowMs={nowMinute}
+        />
+      )}
     </Page>
   );
+}
+
+/** Вечер для календаря сезона (домен): отменённый держит свой слот расписания. */
+function calendarEvening(e: Evening): CalendarEvening {
+  return {
+    id: e.id,
+    scheduledAt: e.scheduled_at,
+    slotDate: e.slot_date,
+    cancelled: e.status === 'cancelled',
+  };
+}
+
+/**
+ * Сезон, финал которого объявленный вечер (последний вечер квартала), или null. Вечера — настоящие,
+ * в любом статусе; расписание — из настроек клуба (нет — только по вечерам).
+ */
+function finaleOf(
+  evening: Evening,
+  evenings: readonly Evening[],
+  settings: Pick<Settings, 'game_weekday' | 'game_time'> | null,
+): string | null {
+  const schedule = settings ? { weekday: settings.game_weekday, time: settings.game_time } : null;
+  return isSeasonFinale(calendarEvening(evening), evenings.map(calendarEvening), schedule)
+    ? seasonKey(evening.scheduled_at)
+    : null;
 }
 
 /** Тренировка — строкой со ссылкой на экран вечера: прогон пульта, табло и голоса. */

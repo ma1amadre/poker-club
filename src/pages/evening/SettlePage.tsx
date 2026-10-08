@@ -12,7 +12,7 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMarkSettled, useUnmarkSettled } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
-import { formatDate, formatNumber, formatRub, formatTime, paths } from '../../shared/lib';
+import { copyText, formatDate, formatNumber, formatRub, formatTime, paths } from '../../shared/lib';
 import {
   Amount,
   Avatar,
@@ -41,11 +41,13 @@ import {
   settleDirection,
   settleLabel,
   settleOrder,
+  settleShareText,
   settleTotals,
   settledNotice,
 } from './lib';
 import { EventRow, StaleNotice } from './parts';
 import { PaymentSheet, type PaymentTarget } from './PaymentSheet';
+import { ShareTextSheet } from './ShareTextSheet';
 import { useEveningActions } from './useEveningActions';
 import { useEveningModel, type EveningModel } from './useEveningModel';
 
@@ -90,6 +92,8 @@ function SettleScreen({ model }: { model: EveningModel }) {
   const markSettled = useMarkSettled();
   const unmarkSettled = useUnmarkSettled();
   const [target, setTarget] = useState<PaymentTarget | null>(null);
+  // Текст расчёта, который не удалось положить в буфер: шторка с выделенным текстом.
+  const [shareText, setShareText] = useState<string | null>(null);
 
   const money = computeMoney(evening.format, state);
   const table = settlement(money, paymentsFromEvents(events));
@@ -138,6 +142,21 @@ function SettleScreen({ model }: { model: EveningModel }) {
 
   const playerPayments = (playerId: string) =>
     payments.filter((ev) => eventPlayerId(ev) === playerId);
+
+  // «Скопировать расчёт»: остатки settlement домена текстом для чата; буфер недоступен — шторка.
+  const copySettle = async () => {
+    const text = settleShareText({
+      dateLabel: formatDate(evening.scheduled_at, nowMs),
+      bankerId: evening.banker_id,
+      ids,
+      table,
+      nameOf,
+      formatRub,
+    });
+    if (await copyText(text))
+      toast.show('Расчёт скопирован — вставь его в чат', { tone: 'positive' });
+    else setShareText(text);
+  };
 
   return (
     <Page
@@ -241,6 +260,12 @@ function SettleScreen({ model }: { model: EveningModel }) {
         )}
       </Section>
 
+      {finished && ids.length > 0 && (
+        <Button block variant="secondary" icon="copy" onClick={() => void copySettle()}>
+          Скопировать расчёт
+        </Button>
+      )}
+
       {canControl && status === 'finished' && (
         <div className="ev-actions">
           <Button
@@ -308,6 +333,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
         actions={actions}
         payments={target ? playerPayments(target.playerId) : []}
       />
+      <ShareTextSheet text={shareText} onClose={() => setShareText(null)} title="Расчёт для чата" />
       {actions.confirmElement}
     </Page>
   );

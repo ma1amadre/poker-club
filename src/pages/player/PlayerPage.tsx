@@ -21,6 +21,7 @@ import {
   paths,
   placeLabel,
   plural,
+  requestWelcome,
   SPECTATOR_EVENING_NOTE_SELF,
   SPECTATOR_NOTE,
 } from '../../shared/lib';
@@ -235,6 +236,12 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
               <Button size="sm" variant="ghost" icon="volume-2" onClick={() => setVoicing(true)}>
                 Имя на табло
               </Button>
+              {/* Шторка «Добро пожаловать» ещё раз: держит её раскладка (WelcomeHost). */}
+              {isMe && (
+                <Button size="sm" variant="ghost" icon="info" onClick={requestWelcome}>
+                  Как всё устроено
+                </Button>
+              )}
             </div>
           )}
         </div>

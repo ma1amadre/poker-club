@@ -117,3 +117,16 @@
 .hs-allins > .ui-allins {
   justify-self: stretch;
 }
+
+/* ---------- Строка вечера: подробности и «твоё» второй строкой ---------- */
+
+.hs-sub {
+  display: grid;
+  gap: 2px;
+}
+
+/* Свой результат — цветом текста: его ищут глазами в списке. «Без тебя» остаётся приглушённым. */
+.hs-sub__mine {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}

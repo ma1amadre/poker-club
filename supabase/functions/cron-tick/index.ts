@@ -15,7 +15,10 @@
 //      не ответил (без болельщиков, миграция 024), «На кону» (кто в шаге от ачивки или рекорда, расклад сезона — stakesOf) и сколько
 //      сделано прогнозов (миграция 014, _shared/gameday.ts);
 //   6) напоминание о голосовании за 3 ч до его закрытия: сколько игроков вечера уже проголосовали
-//      (миграция 021, _shared/votingReminder.ts).
+//      (миграция 021, _shared/votingReminder.ts);
+//   7) пост «Итоги сезона» в первый день нового квартала после 12:00 МСК — один раз на сезон
+//      (отметка season_posts, миграция 025; notify/season.ts). Анонс и пост дня игры последнего
+//      вечера квартала несут строку «Финал сезона» (_shared/seasonPost.ts).
 // Каждый шаг идемпотентен по *_posted_at (см. publishOnce), поэтому лишний вызов безопасен.
 // Тренировочные вечера (миграция 023) не выбирает ни один шаг: о них бот в группу не пишет, день клуба
 // они не занимают (claimPost их тоже не застолбит — страховка).
@@ -29,6 +32,8 @@ import { adminClient, describeError, errorResponse, json } from '../_shared/admi
 import { alertAdmin, type AlertKind } from '../_shared/alerts.ts';
 import {
   DEFAULT_FORMAT,
+  seasonKey,
+  seasonStartMs,
   seatedIds,
   validateFormat,
   voteResults,
@@ -53,6 +58,13 @@ import {
   votingReminderPost,
 } from '../_shared/messages.ts';
 import { postAnnounceChange } from '../notify/changes.ts';
+import { postSeasonResults, type SeasonPostOutcome } from '../notify/season.ts';
+import {
+  clubSchedule,
+  finaleSeasonOf,
+  seasonPostDue,
+  type CalendarRow,
+} from '../_shared/seasonPost.ts';
 import {
   EVENING_COLUMNS,
   fetchAll,
@@ -114,6 +126,8 @@ interface TickReport {
    * no_voters (_shared/votingReminder.ts).
    */
   votingReminder: Record<string, PostOutcome | 'wait_results' | ReminderMark>;
+  /** Пост «Итоги сезона» по ключу сезона (миграция 025): posted / already_posted / wait_live / no_evenings. */
+  season: Record<string, SeasonPostOutcome>;
   changes: Record<string, string>;
   errors: string[];
 }
@@ -207,6 +221,53 @@ async function defaultFormat(db: Db, s: SettingsRow): Promise<TournamentFormat> 
   return config as TournamentFormat;
 }
 
+/** Сезон, финал которого вечер (строка «Финал сезона»), или null. */
+type FinaleOf = (e: EveningRow) => Promise<string | null>;
+
+/**
+ * Пометка «Финал сезона» для анонса и поста дня игры (последний вечер квартала — isSeasonFinale
+ * домена): вечера клуба с начала текущего сезона в любом статусе (отменённый держит свой слот
+ * расписания), один запрос на тик и только если есть что постить. Не загрузились или подсчёт упал —
+ * пост уходит без строки (ошибка в лог): это пометка, из-за неё пост не застревает.
+ */
+function finaleResolver(db: Db, s: SettingsRow, nowMs: number): FinaleOf {
+  const schedule = clubSchedule(s);
+  let rows: Promise<CalendarRow[] | null> | null = null;
+  const load = async (): Promise<CalendarRow[] | null> => {
+    try {
+      const from = seasonStartMs(seasonKey(new Date(nowMs).toISOString()));
+      const { data, error } = await db
+        .from('evenings')
+        .select('id, scheduled_at, slot_date, status')
+        .eq('is_training', false)
+        .gte('scheduled_at', new Date(from).toISOString())
+        .order('scheduled_at');
+      if (error) throw new Error(describeError(error));
+      return (data ?? []) as CalendarRow[];
+    } catch (err) {
+      console.error(`«Финал сезона»: вечера не загрузились — ${describeError(err)}`);
+      return null;
+    }
+  };
+  return async (e) => {
+    rows ??= load();
+    const list = await rows;
+    if (!list) return null;
+    try {
+      const self = list.find((r) => r.id === e.id) ?? {
+        id: e.id,
+        scheduled_at: e.scheduled_at,
+        slot_date: null,
+        status: e.status,
+      };
+      return finaleSeasonOf(self, list, schedule);
+    } catch (err) {
+      console.error(`«Финал сезона» вечера ${e.id} не посчитан: ${describeError(err)}`);
+      return null;
+    }
+  };
+}
+
 /** Шаг 1а: вечер на ближайшую игру, если до неё не больше announce_hours_before. */
 async function ensureUpcomingEvening(
   db: Db,
@@ -250,6 +311,7 @@ async function postAnnouncements(
   s: SettingsRow & { group_chat_id: number | string },
   nowMs: number,
   report: TickState,
+  finaleOf: FinaleOf,
 ): Promise<void> {
   const { data, error } = await db
     .from('evenings')
@@ -270,6 +332,7 @@ async function postAnnouncements(
         note: e.note,
         format: e.format,
         botUsername: s.bot_username,
+        finaleSeasonKey: await finaleOf(e),
       });
       // Вместе с отметкой — снимок того, что ушло в пост: с ним сравнивает notify evening_changed.
       report.announced[e.id] = await publishOnce(
@@ -300,6 +363,7 @@ async function postGamedayPosts(
   s: SettingsRow & { group_chat_id: number | string },
   nowMs: number,
   report: TickState,
+  finaleOf: FinaleOf,
 ): Promise<void> {
   const hours = gamedayHours(s.gameday_hours_before);
   const { data, error } = await db
@@ -414,6 +478,7 @@ async function postGamedayPosts(
         predictionsMade: predictionsMade((predictions ?? []) as GamedayPredictionRow[]),
         stakes,
         names: Object.fromEntries(all.map((p) => [p.id, p.display_name])),
+        finaleSeasonKey: await finaleOf(e),
       });
       report.gameday[e.id] = await publishOnce(
         db,
@@ -648,6 +713,26 @@ async function postVotingReminders(
 }
 
 /**
+ * Шаг 7: пост «Итоги сезона» — прошлый квартал, с 12:00 МСК первого дня нового квартала и ещё две
+ * недели (seasonPostDue), один раз на сезон (season_posts). Сбой Telegram снимает отметку — пост уйдёт
+ * следующим тиком; вечер сезона ещё идёт — ждём (wait_live).
+ */
+async function postSeasonPost(
+  db: Db,
+  s: SettingsRow & { group_chat_id: number | string },
+  nowMs: number,
+  report: TickState,
+): Promise<void> {
+  const key = seasonPostDue(nowMs);
+  if (!key) return;
+  try {
+    report.season[key] = await postSeasonResults(db, s, key, nowMs);
+  } catch (err) {
+    fail(report, 'cron_season', `итоги сезона ${key}`, err, `сезон ${key}`);
+  }
+}
+
+/**
  * Шаг 4: правки объявленных вечеров, о которых группа ещё не знает. Окно — неделя назад: о вечерах,
  * которые давно прошли, писать нечего (decideAnnounceChange их и так пропустит).
  */
@@ -714,6 +799,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     results: {},
     voting: {},
     votingReminder: {},
+    season: {},
     changes: {},
     errors: [],
     failures: [],
@@ -738,17 +824,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ensureUpcomingEvening(client, s, nowMs, report),
     );
     if (hasGroup(s)) {
+      const finaleOf = finaleResolver(client, s, nowMs);
       // Сначала правки уже объявленных вечеров, потом новые анонсы: свежий анонс и так несёт
       // актуальные данные, а его снимок пишется вместе с отметкой.
       await step('правки вечеров', 'cron_changes', () =>
         postAnnounceChanges(client, s, nowMs, report),
       );
-      await step('анонсы', 'cron_announce', () => postAnnouncements(client, s, nowMs, report));
+      await step('анонсы', 'cron_announce', () =>
+        postAnnouncements(client, s, nowMs, report, finaleOf),
+      );
       // После анонсов: анонс, ушедший в этот тик, гасит пост дня игры (decideGamedayPost).
       await step('пост в день игры', 'cron_gameday', () =>
-        postGamedayPosts(client, s, nowMs, report),
+        postGamedayPosts(client, s, nowMs, report, finaleOf),
       );
       await step('итоги вечеров', 'cron_results', () => backfillResults(client, nowMs, report));
+      // После итогов вечеров: последний вечер сезона уходит в группу раньше итогов сезона.
+      await step('итоги сезона', 'cron_season', () => postSeasonPost(client, s, nowMs, report));
       await step('итоги голосования', 'cron_voting', () =>
         postVotingResults(client, s, nowMs, report),
       );

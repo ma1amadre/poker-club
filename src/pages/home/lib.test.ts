@@ -1,5 +1,4 @@
 import { DEFAULT_FORMAT } from '@domain/format.ts';
-import type { StandingRow } from '@domain/season.ts';
 import type { EveningEvent, EventPayload, EventType } from '@domain/types.ts';
 import { describe, expect, it } from 'vitest';
 import type { RsvpStatus } from '../../shared/api';
@@ -12,7 +11,7 @@ import {
   pickUpcoming,
   type PlayerLike,
   playerName,
-  seasonPosition,
+  seasonEveningPending,
   type SettleEveningLike,
   STALE_ANNOUNCE_MS,
   type UpcomingLike,
@@ -178,23 +177,47 @@ describe('состав', () => {
   });
 });
 
-describe('место в сезоне', () => {
-  const row = (playerId: string, total: number, wins = 0, kos = 0): StandingRow => ({
-    playerId,
-    total,
-    counted: [total],
-    played: 1,
-    wins,
-    kos,
-    netRub: 0,
+describe('сезон на главной', () => {
+  // Пт 25.12.2026 — последний слот IV квартала (15:00 МСК = 12:00 UTC).
+  const FINAL = '2026-12-25T12:00:00.000Z';
+  const ev = (status: UpcomingLike['status'], scheduled: string): UpcomingLike => ({
+    status,
+    scheduled_at: scheduled,
+    started_at: status === 'live' ? scheduled : null,
   });
 
-  it('делёж места при равных очках, победах и нокаутах', () => {
-    const rows = [row('a', 10, 1), row('b', 7), row('c', 7), row('d', 3)];
-    expect(seasonPosition(rows, 'a')?.place).toBe(1);
-    expect(seasonPosition(rows, 'c')?.place).toBe(2);
-    expect(seasonPosition(rows, 'd')).toMatchObject({ place: 4, of: 4 });
-    expect(seasonPosition(rows, 'x')).toBeNull();
+  it('несыгранный вечер сезона: идущий или объявленный, кроме забытых анонсов', () => {
+    const at = (iso: string) => Date.parse(iso);
+    // Финал идёт — слотов уже нет, но игра в сезоне есть.
+    expect(seasonEveningPending([ev('live', FINAL)], '2026-Q4', at('2026-12-25T12:30:00Z'))).toBe(
+      true,
+    );
+    // Финал перенесён с пятницы на субботу: в пятницу вечером он ещё впереди.
+    expect(
+      seasonEveningPending(
+        [ev('announced', '2026-12-26T12:00:00.000Z')],
+        '2026-Q4',
+        at('2026-12-25T13:00:00Z'),
+      ),
+    ).toBe(true);
+    // Сыгран или отменён — игр в сезоне не осталось.
+    for (const status of ['finished', 'settled', 'cancelled'] as const) {
+      expect(seasonEveningPending([ev(status, FINAL)], '2026-Q4', at('2026-12-25T18:00:00Z'))).toBe(
+        false,
+      );
+    }
+    // Забытый анонс (время прошло больше чем на STALE_ANNOUNCE_MS) не держит сезон.
+    expect(
+      seasonEveningPending([ev('announced', FINAL)], '2026-Q4', at(FINAL) + STALE_ANNOUNCE_MS + 1),
+    ).toBe(false);
+    // Вечер следующего сезона не в счёт.
+    expect(
+      seasonEveningPending(
+        [ev('announced', '2027-01-08T12:00:00.000Z')],
+        '2026-Q4',
+        at('2026-12-28T12:00:00Z'),
+      ),
+    ).toBe(false);
   });
 
   it('подпись сезона', () => {

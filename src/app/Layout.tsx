@@ -6,6 +6,7 @@ import { useBackButton } from '../shared/telegram';
 import { BottomNav, PageSkeleton, type BottomNavItem } from '../shared/ui';
 import { ErrorBoundary } from './ErrorBoundary';
 import { useStartParamRedirect } from './useStartParamRedirect';
+import { WelcomeHost } from './WelcomeHost';
 
 const TABS: readonly (BottomNavItem & { adminOnly?: boolean })[] = [
   { to: paths.home, label: 'Главная', icon: 'home', end: true },
@@ -18,7 +19,10 @@ const TABS: readonly (BottomNavItem & { adminOnly?: boolean })[] = [
 // «Назад» Telegram, а место внизу нужно пульту банкира.
 const TAB_ROOTS = new Set(TABS.map((tab) => tab.to));
 
-/** Раскладка экранов под входом: страница + нижняя навигация (раздел «Админ» — только админу). */
+/**
+ * Раскладка экранов под входом: страница + нижняя навигация (раздел «Админ» — только админу) и
+ * шторка «Добро пожаловать» (WelcomeHost).
+ */
 export function Layout() {
   const { isAdmin } = useAuth();
   const location = useLocation();
@@ -40,6 +44,8 @@ export function Layout() {
         </Suspense>
       </ErrorBoundary>
       {showNav && <BottomNav items={TABS.filter((tab) => !tab.adminOnly || isAdmin)} />}
+      {/* «Добро пожаловать»: сама — один раз на главной, дальше — «Как всё устроено» на своей карточке. */}
+      <WelcomeHost />
     </div>
   );
 }

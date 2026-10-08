@@ -1,11 +1,13 @@
+import { lastEveningMoves } from '@domain/placeMoves.ts';
 import { PREDICTION_POINTS } from '@domain/predictions.ts';
-import { oracleStandings } from '@domain/season.ts';
+import { oracleStandings, type OracleRow } from '@domain/season.ts';
+import type { EveningSummary } from '@domain/summary.ts';
 import { useMemo } from 'react';
 import { formatPointsWithUnit, formatSeason, NBSP, paths, plural } from '../../shared/lib';
 import { Empty, List, ListItem } from '../../shared/ui';
 import type { RatingContext } from './context';
-import { PlayerName, Rank, Score, SeasonSelect } from './parts';
-import { oraclePlaces, seasonPredictionScores } from './stats';
+import { MovesNote, PlayerName, Rank, Score, SeasonSelect } from './parts';
+import { meRowClass, moveOf, oraclePlaces, seasonPredictionScores } from './stats';
 
 interface OracleTabProps {
   ctx: RatingContext;
@@ -13,6 +15,10 @@ interface OracleTabProps {
   season: string;
   onSeason: (season: string) => void;
 }
+
+/** Делят место в «Оракуле»: равные очки и угаданные победители (как oraclePlaces). */
+const sameOracle = (a: OracleRow, b: OracleRow): boolean =>
+  a.total === b.total && a.winnerHits === b.winnerHits;
 
 function predictionsMeta(row: { predictions: number; winnerHits: number; firstOutHits: number }) {
   const count = `${row.predictions}${NBSP}${plural(row.predictions, ['прогноз', 'прогноза', 'прогнозов'])}`;
@@ -22,16 +28,27 @@ function predictionsMeta(row: { predictions: number; winnerHits: number; firstOu
 /** «Оракул сезона» (oracleStandings домена): очки прогнозов, участвуют и те, кто не играл. */
 export function OracleTab({ ctx, seasons, season, onSeason }: OracleTabProps) {
   const { history } = ctx;
-  const rows = useMemo(() => {
-    const scores = seasonPredictionScores(
-      history.predictionScores,
-      (id) => history.summaryById.get(id)?.seasonKey,
-      season,
-      history.excluded,
-    );
-    return oracleStandings(scores);
-  }, [history.predictionScores, history.summaryById, history.excluded, season]);
+  const scores = useMemo(
+    () =>
+      seasonPredictionScores(
+        history.predictionScores,
+        (id) => history.summaryById.get(id)?.seasonKey,
+        season,
+        history.excluded,
+      ),
+    [history.predictionScores, history.summaryById, history.excluded, season],
+  );
+  const rows = useMemo(() => oracleStandings(scores), [scores]);
   const places = useMemo(() => oraclePlaces(rows), [rows]);
+  // Стрелки: та же таблица по прогнозам вечеров сезона без последнего вечера.
+  const moves = useMemo(() => {
+    const evenings = history.summaries.filter((s) => s.seasonKey === season);
+    const build = (list: readonly EveningSummary[]) => {
+      const ids = new Set(list.map((s) => s.eveningId));
+      return oracleStandings(scores.filter((p) => ids.has(p.eveningId)));
+    };
+    return lastEveningMoves(evenings, build, sameOracle);
+  }, [history.summaries, season, scores]);
 
   return (
     <div className="rt-panel">
@@ -54,10 +71,12 @@ export function OracleTab({ ctx, seasons, season, onSeason }: OracleTabProps) {
             <ListItem
               key={row.playerId}
               to={paths.player(row.playerId)}
+              className={meRowClass(ctx.meId, row.playerId)}
               before={
                 <Rank
                   place={places[index] ?? index + 1}
                   player={ctx.playersById.get(row.playerId)}
+                  move={moveOf(moves, row.playerId)}
                 />
               }
               title={<PlayerName ctx={ctx} id={row.playerId} />}
@@ -68,6 +87,7 @@ export function OracleTab({ ctx, seasons, season, onSeason }: OracleTabProps) {
         </List>
       )}
 
+      <MovesNote moves={moves} summaryById={history.summaryById} />
       <p className="m-small">
         Угаданный победитель — {formatPointsWithUnit(PREDICTION_POINTS.winner)}, первый вылет —{' '}
         {formatPointsWithUnit(PREDICTION_POINTS.firstOut)}. Прогнозы закрываются при старте таймера,

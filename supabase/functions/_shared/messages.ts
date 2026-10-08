@@ -8,6 +8,7 @@ import {
   ACHIEVEMENT_META,
   achievementTitle,
   isLeveled,
+  nextSeasonKey,
   RECORD_META,
   starWinner,
   TITLE_META,
@@ -21,6 +22,8 @@ import {
   type PlayerId,
   type RecordBreak,
   type RecordKind,
+  type SeasonRecap,
+  type SeasonTop,
   type StakeItem,
   type StoryItem,
   type TitleChange,
@@ -156,6 +159,21 @@ export function formatSeason(key: string): string {
   return `${['I', 'II', 'III', 'IV'][Number(m[2]) - 1]} квартал ${m[1]}`;
 }
 
+/** «2026-Q4» → «IV квартала 2026» — «последний вечер IV квартала 2026». */
+export function formatSeasonGenitive(key: string): string {
+  const m = /^(\d{4})-Q([1-4])$/.exec(key);
+  if (!m) return key;
+  return `${['I', 'II', 'III', 'IV'][Number(m[2]) - 1]} квартала ${m[1]}`;
+}
+
+/**
+ * Пометка финала сезона (последний вечер квартала — isSeasonFinale домена) — одной строкой в анонсе
+ * и посте дня игры: «Финал сезона — последний вечер IV квартала 2026.»
+ */
+export function finaleLine(seasonKey: string): string {
+  return `Финал сезона — последний вечер ${formatSeasonGenitive(seasonKey)}.`;
+}
+
 /**
  * «3 нокаута», а при ничьей — «по 3 нокаута». После «по» единица требует дательного падежа
  * («по 1 нокауту»), остальные формы совпадают с обычными.
@@ -224,11 +242,14 @@ export interface AnnouncePostInput {
   note: string | null;
   format: TournamentFormat;
   botUsername: string | null;
+  /** Сезон, финал которого этот вечер (последний вечер квартала); null — не финал. */
+  finaleSeasonKey?: string | null;
 }
 
 export function announcePost(input: AnnouncePostInput): Post {
   const f = input.format;
   const lines = [`♠️ <b>Покер ${formatWhen(input.scheduledAt)}</b>`];
+  if (input.finaleSeasonKey) lines.push(finaleLine(input.finaleSeasonKey));
   if (input.location) lines.push(`📍 ${escapeHtml(input.location)}`);
   lines.push(
     `Вход и ребай по ${formatRub(f.buyInRub)} (${formatInt(f.startingChips)} ` +
@@ -383,6 +404,8 @@ export interface GamedayPostInput {
   stakes?: EveningStakes | null;
   /** Имена для «На кону» (display_name), неэкранированные. */
   names?: Record<PlayerId, string>;
+  /** Сезон, финал которого этот вечер (последний вечер квартала); null — не финал. */
+  finaleSeasonKey?: string | null;
 }
 
 /**
@@ -588,13 +611,14 @@ export function gamedayPost(input: GamedayPostInput): Post {
   const pending = roster.pending.length > 0;
   const maybe = roster.maybe.length > 0;
   const render = (): string => {
-    const lines = [
-      `♠️ <b>${title}</b>`,
+    const lines = [`♠️ <b>${title}</b>`];
+    if (input.finaleSeasonKey) lines.push(finaleLine(input.finaleSeasonKey));
+    lines.push(
       location ? `Место: ${escapeHtml(location)}` : 'Место пока не назначено',
       banker ? `Банкир: ${escapeHtml(banker)}` : 'Банкир пока не назначен',
       '',
       roster.yes.length > 0 ? group('Идут', 'yes') : 'Идут: пока никто',
-    ];
+    );
     if (maybe) lines.push(group('Под вопросом', 'maybe'));
     if (roster.no.length > 0) lines.push(group('Не идут', 'no'));
     if (pending) lines.push(group('Ещё не ответили', 'pending'));
@@ -658,6 +682,11 @@ export interface ResultsPostInput {
   clubNews?: EveningClubNews | null;
   /** «Сюжет вечера» для поста (домен — eveningStory с forPost); пусто — блока нет. */
   story?: readonly StoryItem[];
+  /**
+   * Сезоны, чей пост «Итоги сезона» уже в группе (season_posts, миграция 025): их сезонные ачивки
+   * (чемпион, ребай-король, железный стул) в посте вечера не повторяются.
+   */
+  postedSeasons?: ReadonlySet<string>;
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
@@ -1009,7 +1038,15 @@ export function resultsPost(input: ResultsPostInput): Post {
   lines.push(...eveningAchievementLines(input.newAchievements, input.names));
   if (input.story) lines.push(...storyLines(input.story, input.names));
   if (input.clubNews) lines.push(...clubNewsLines(input.clubNews, input.names));
-  lines.push(...seasonAchievementLines(input.newAchievements, input.names));
+  const posted = input.postedSeasons;
+  lines.push(
+    ...seasonAchievementLines(
+      posted
+        ? input.newAchievements.filter((a) => a.seasonKey === null || !posted.has(a.seasonKey))
+        : input.newAchievements,
+      input.names,
+    ),
+  );
 
   let buttons: UrlButton[] = [];
   // Итоги, добитые cron-tick после закрытия голосования, не зовут голосовать «до вчера».
@@ -1024,6 +1061,147 @@ export function resultsPost(input: ResultsPostInput): Post {
     buttons = appButton(input.botUsername, '♦️ Открыть вечер', `e_${input.eveningId}`);
   }
   return { text: lines.join('\n'), buttons };
+}
+
+// ---------------------------------------------------------------------------
+// «Итоги сезона» (cron-tick, первый день нового квартала после 12:00 МСК; что в итогах — домен,
+// seasonRecap). Обращение — к группе, о людях — без рода; из эмодзи — только масти: ♠️ в заголовке,
+// ♣️ на кнопке.
+// ---------------------------------------------------------------------------
+
+/** Сколько рекордов сезона называет пост: один-два, остальное — на экране итогов. */
+export const SEASON_POST_RECORDS_MAX = 2;
+
+/** Сезонные ачивки поста, кроме чемпиона (он — в заголовке): по важности. */
+const SEASON_POST_ACHIEVEMENTS: readonly AchievementCode[] = ['rebuy_king', 'iron_chair'];
+
+export interface SeasonResultsPostInput {
+  recap: SeasonRecap;
+  /** display_name, неэкранированные. */
+  names: Record<PlayerId, string>;
+  botUsername: string | null;
+}
+
+/** Очки после «по»: «по 12 очков», «по 21 очку», «по 12,5 очка». */
+function sharedPoints(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  if (Number.isInteger(rounded) && rounded % 10 === 1 && rounded % 100 !== 11) {
+    return `по ${formatInt(rounded)}${NBSP}очку`;
+  }
+  return `по ${formatPoints(value)}`;
+}
+
+/** «Лёша, 14 нокаутов» / «Лёша и Дима, по 14 нокаутов». */
+function leaderPhrase(
+  leader: SeasonTop,
+  name: (id: PlayerId) => string,
+  value: (shared: boolean) => string,
+): string {
+  const shared = leader.playerIds.length > 1;
+  return `${joinNames(leader.playerIds.map(name))}, ${value(shared)}`;
+}
+
+/**
+ * Пост «Итоги сезона»: чемпион, подиум, «Оракул сезона», лидер по деньгам, лучший охотник, до двух
+ * рекордов клуба, установленных в сезоне, сезонные ачивки и кнопка на экран итогов. null — в сезоне не
+ * было вечеров (постить нечего).
+ */
+export function seasonResultsPost(input: SeasonResultsPostInput): Post | null {
+  const { recap } = input;
+  if (recap.eveningIds.length === 0) return null;
+  const name = (id: PlayerId): string => escapeHtml(input.names[id] ?? 'Игрок');
+  const lines = [`♠️ <b>Итоги сезона: ${formatSeason(recap.seasonKey)}</b>`];
+
+  const [top] = recap.podium;
+  if (top && recap.champions.length > 0) {
+    const bold = joinNames(recap.champions.map((id) => `<b>${name(id)}</b>`));
+    lines.push(
+      recap.champions.length > 1
+        ? `Чемпионы сезона — ${bold}, ${sharedPoints(top.total)}.`
+        : `Чемпион сезона — ${bold}, ${formatPoints(top.total)}.`,
+    );
+  } else {
+    lines.push('Чемпиона в этом сезоне нет: очков никто не набрал.');
+  }
+
+  if (recap.podium.length > 0) {
+    lines.push('');
+    for (const step of recap.podium) {
+      const shared = step.playerIds.length > 1;
+      lines.push(
+        `${step.place}-е место — ${joinNames(step.playerIds.map(name))}, ` +
+          (shared ? sharedPoints(step.total) : formatPoints(step.total)),
+      );
+    }
+  }
+
+  const laureates: string[] = [];
+  if (recap.oracleLeader) {
+    const v = recap.oracleLeader.value;
+    laureates.push(
+      `Оракул сезона — ${leaderPhrase(
+        recap.oracleLeader,
+        name,
+        (shared) => `${shared ? sharedPoints(v) : formatPoints(v)} за прогнозы`,
+      )}.`,
+    );
+  }
+  if (recap.moneyLeader) {
+    const leader = recap.moneyLeader;
+    laureates.push(
+      `${leader.playerIds.length > 1 ? 'Лидеры' : 'Лидер'} по деньгам — ${leaderPhrase(
+        leader,
+        name,
+        (shared) => `${shared ? 'по ' : ''}+${formatRub(leader.value)}`,
+      )}.`,
+    );
+  }
+  if (recap.hunters) {
+    const leader = recap.hunters;
+    laureates.push(
+      `${leader.playerIds.length > 1 ? 'Лучшие охотники' : 'Лучший охотник'} — ${leaderPhrase(
+        leader,
+        name,
+        (shared) => countPhrase(leader.value, ['нокаут', 'нокаута', 'нокаутов'], 'нокауту', shared),
+      )}.`,
+    );
+  }
+  const records = recap.records.slice(0, SEASON_POST_RECORDS_MAX);
+  if (records.length > 0) {
+    const parts = records.map((r) => {
+      const ids = [...new Set(r.holders.map((h) => h.playerId).filter((id) => id !== null))];
+      const who = ids.length > 0 ? `${joinNames(ids.map(name))}, ` : '';
+      return `${lowerFirst(RECORD_META[r.kind].title)} — ${who}${recordValue(r.kind, r.value)}`;
+    });
+    laureates.push(
+      `${records.length > 1 ? 'Новые рекорды клуба' : 'Новый рекорд клуба'}: ${parts.join('; ')}.`,
+    );
+  }
+  const seasonal = SEASON_POST_ACHIEVEMENTS.flatMap((code) => {
+    const holders = recap.achievements.filter(
+      (a) => a.code === code && a.seasonKey === recap.seasonKey,
+    );
+    return holders.length > 0
+      ? [
+          `«${escapeHtml(ACHIEVEMENT_META[code].title)}» — ${joinNames(holders.map((a) => name(a.playerId)))}`,
+        ]
+      : [];
+  });
+  if (seasonal.length > 0) laureates.push(`Ачивки сезона: ${seasonal.join('; ')}.`);
+  if (laureates.length > 0) lines.push('', ...laureates);
+
+  const n = recap.eveningIds.length;
+  // «В зачёт — лучшие 10» — только если вечеров было больше: иначе в зачёт шли все.
+  const counted = n > recap.bestN ? `, в зачёт — лучшие ${recap.bestN}` : '';
+  lines.push(
+    '',
+    `Вечеров в сезоне: ${n}${counted}. ` +
+      `Таблица ${formatSeasonGenitive(nextSeasonKey(recap.seasonKey))} начинается с нуля.`,
+  );
+  return {
+    text: lines.join('\n'),
+    buttons: appButton(input.botUsername, '♣️ Итоги сезона', `s_${recap.seasonKey}`),
+  };
 }
 
 // ---------------------------------------------------------------------------

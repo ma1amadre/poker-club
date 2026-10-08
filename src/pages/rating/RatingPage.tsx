@@ -25,7 +25,7 @@ import { OracleTab } from './OracleTab';
 import './rating.css';
 import { RecordsTab } from './RecordsTab';
 import { SeasonTab } from './SeasonTab';
-import { reigningChampions, seasonOptions } from './stats';
+import { defaultRatingSeason, reigningChampions, seasonOptions } from './stats';
 import { useRatingParams, type RatingTab } from './useRatingParams';
 
 /** /rating — сезон, деньги, всё время, оракул, рекорды, зал славы. Всё считает домен по истории клуба. */
@@ -48,12 +48,17 @@ export default function RatingPage() {
 }
 
 function Rating({ history }: { history: ClubHistory }) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, player } = useAuth();
+  const meId = player?.id ?? null;
   const seasons = useMemo(
     () => seasonOptions(history.summaries, history.currentSeasonKey),
     [history.summaries, history.currentSeasonKey],
   );
-  const params = useRatingParams(seasons, history.currentSeasonKey);
+  // Пока в новом сезоне нет вечеров — открыта финальная таблица прошлого (SeasonTab это поясняет).
+  const params = useRatingParams(
+    seasons,
+    defaultRatingSeason(history.summaries, history.currentSeasonKey),
+  );
 
   const ctx = useMemo<RatingContext>(() => {
     const hall = hallOfFame(history.summaries, {
@@ -68,8 +73,9 @@ function Rating({ history }: { history: ClubHistory }) {
       playersById: new Map(history.players.map((p) => [p.id, p])),
       champions: new Set(reigning?.champions ?? []),
       championSeason: reigning?.seasonKey ?? null,
+      meId,
     };
-  }, [history]);
+  }, [history, meId]);
 
   const formHolder = useMemo(() => titles(history.achievementInput).form, [history]);
 

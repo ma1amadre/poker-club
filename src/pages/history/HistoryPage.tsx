@@ -12,11 +12,12 @@ import {
   useEvenings,
   withoutTraining,
 } from '../../shared/api';
-import { useAuth } from '../../shared/auth';
+import { useAuth, useCurrentPlayer } from '../../shared/auth';
 import {
   eveningsCount,
   formatDate,
   formatRub,
+  formatRubSigned,
   formatSeason,
   NBSP,
   paths,
@@ -33,33 +34,55 @@ import {
   Page,
   PageSkeleton,
   Section,
+  Segmented,
   Tabs,
   type TabItem,
 } from '../../shared/ui';
 import './history.css';
 import { openVotings } from './moments';
 import { MomentsTab } from './MomentsTab';
-import { eveningTotals, groupHistory, type EveningTotals } from './stats';
+import {
+  eveningTotals,
+  groupHistory,
+  myHistoryLine,
+  myHistoryResult,
+  onlyMine,
+  type EveningTotals,
+  type MyHistoryResult,
+} from './stats';
 
 type HistoryTab = 'evenings' | 'moments';
+type HistoryFilter = 'all' | 'mine';
+
+const FILTERS = [
+  { value: 'all', label: 'Все вечера' },
+  { value: 'mine', label: 'Мои вечера' },
+] as const;
 
 /**
- * Вкладка в адресе (#/history?tab=moments): «Назад» с голосования возвращает на «Моменты».
- * Переключение — replace, чтобы вкладки не копили историю.
+ * Вкладка и фильтр в адресе (#/history?tab=moments, ?mine=1): «Назад» с голосования или вечера
+ * возвращает ту же вкладку и тот же фильтр. Переключение — replace, чтобы не копить историю.
  */
-function useHistoryTab(): [HistoryTab, (tab: HistoryTab) => void] {
+function useHistoryParams(): {
+  tab: HistoryTab;
+  filter: HistoryFilter;
+  set: (patch: { tab?: HistoryTab; filter?: HistoryFilter }) => void;
+} {
   const [params, setParams] = useSearchParams();
   const tab: HistoryTab = params.get('tab') === 'moments' ? 'moments' : 'evenings';
-  const set = (next: HistoryTab) =>
+  const filter: HistoryFilter = params.get('mine') === '1' ? 'mine' : 'all';
+  const set = (patch: { tab?: HistoryTab; filter?: HistoryFilter }) =>
     setParams(
       (prev) => {
         const out = new URLSearchParams(prev);
-        out.set('tab', next);
+        if (patch.tab) out.set('tab', patch.tab);
+        if (patch.filter === 'mine') out.set('mine', '1');
+        if (patch.filter === 'all') out.delete('mine');
         return out;
       },
       { replace: true },
     );
-  return [tab, set];
+  return { tab, filter, set };
 }
 
 /** В истории — идущий вечер и прошедшие; анонсы показывает главная. */
@@ -99,7 +122,20 @@ export default function HistoryPage() {
 
 function History({ evenings, history }: { evenings: Evening[]; history: ClubHistory }) {
   const { isAdmin } = useAuth();
-  const layout = useMemo(() => groupHistory(evenings), [evenings]);
+  const me = useCurrentPlayer();
+  const params = useHistoryParams();
+  const allLayout = useMemo(() => groupHistory(evenings), [evenings]);
+  // «Мои вечера»: те, где я за столом по итогу домена (summarize) — отменённые и несведённые уходят.
+  const layout = useMemo(
+    () =>
+      params.filter === 'mine'
+        ? onlyMine(
+            allLayout,
+            (id) => myHistoryResult(history.summaryById.get(id), me.id)?.played === true,
+          )
+        : allLayout,
+    [allLayout, params.filter, history.summaryById, me.id],
+  );
   const names = useMemo(
     () => new Map(history.players.map((p) => [p.id, p.display_name])),
     [history.players],
@@ -128,9 +164,8 @@ function History({ evenings, history }: { evenings: Evening[]; history: ClubHist
     [history, momentsNow],
   );
   const open = useMemo(() => openVotings(history.evenings, nowMs), [history.evenings, nowMs]);
-  const [tab, setTab] = useHistoryTab();
 
-  const empty = layout.live.length === 0 && layout.seasons.length === 0;
+  const empty = allLayout.live.length === 0 && allLayout.seasons.length === 0;
 
   if (empty) {
     return (
@@ -153,6 +188,22 @@ function History({ evenings, history }: { evenings: Evening[]; history: ClubHist
 
   const eveningsContent = (
     <div className="hs-panel">
+      <Segmented
+        label="Какие вечера показать"
+        options={FILTERS}
+        value={params.filter}
+        onChange={(filter) => params.set({ filter })}
+        block
+      />
+
+      {params.filter === 'mine' && layout.seasons.length === 0 && (
+        <Empty
+          icon="calendar"
+          title="Твоих вечеров в истории пока нет"
+          description="Здесь будут вечера, где ты за столом: место и сколько они принесли или стоили."
+        />
+      )}
+
       {layout.live.length > 0 && (
         <Section title="Сейчас">
           <List aria-label="Идущие вечера">
@@ -177,7 +228,16 @@ function History({ evenings, history }: { evenings: Evening[]; history: ClubHist
                   key={e.id}
                   to={paths.evening(e.id)}
                   title={<EveningTitle evening={e} />}
-                  subtitle={pastDetails(e, history, names, totals.get(e.id))}
+                  subtitle={
+                    <PastSubtitle
+                      details={pastDetails(e, history, names, totals.get(e.id))}
+                      mine={
+                        e.status === 'cancelled'
+                          ? null
+                          : myHistoryResult(history.summaryById.get(e.id), me.id)
+                      }
+                    />
+                  }
                 />
               ))}
             </List>
@@ -201,7 +261,12 @@ function History({ evenings, history }: { evenings: Evening[]; history: ClubHist
 
   return (
     <Page title="История" subtitle="Вечера клуба и лучшие моменты, новые сверху">
-      <Tabs label="Разделы истории" tabs={tabs} value={tab} onChange={setTab} />
+      <Tabs
+        label="Разделы истории"
+        tabs={tabs}
+        value={params.tab}
+        onChange={(tab) => params.set({ tab })}
+      />
     </Page>
   );
 }
@@ -211,6 +276,23 @@ function EveningTitle({ evening }: { evening: Evening }) {
     <span className="hs-title">
       <span className="hs-title__date">{formatDate(evening.scheduled_at)}</span>
       <EveningStatusBadge status={evening.status} />
+    </span>
+  );
+}
+
+/**
+ * Подпись строки вечера: победитель, состав и фонд, ниже — «твоё: 2-е · +300 ₽» или «без тебя».
+ * Итога нет (отменён, журнал не свёлся) — только первая строка.
+ */
+function PastSubtitle({ details, mine }: { details: string; mine: MyHistoryResult | null }) {
+  return (
+    <span className="hs-sub">
+      <span>{details}</span>
+      {mine && (
+        <span className={mine.played ? 'hs-sub__mine' : undefined}>
+          {myHistoryLine(mine, formatRubSigned)}
+        </span>
+      )}
     </span>
   );
 }

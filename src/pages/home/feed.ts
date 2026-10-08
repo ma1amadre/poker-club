@@ -360,7 +360,7 @@ function seasonGroupRow(group: readonly SeasonAchievement[], ctx: FeedContext): 
           `«${ACHIEVEMENT_META[code].title}» — ${joinNames((byCode.get(code) ?? []).map(name))}`,
       ),
     ]),
-    to: paths.ratingFame,
+    to: paths.season(first.seasonKey),
     caption: null,
     photoPath: null,
     photoAlt: null,

@@ -108,3 +108,9 @@ export { PlayingCard, SuitPip, type PlayingCardProps, type PlayingCardSize } fro
 export { AllInList, type AllInListProps } from './AllInList';
 export { ShowdownView, type ShowdownViewProps } from './ShowdownView';
 export { Sheet, type SheetProps } from './Sheet';
+export {
+  SeasonPodium,
+  type PodiumPerson,
+  type PodiumStepView,
+  type SeasonPodiumProps,
+} from './SeasonPodium';

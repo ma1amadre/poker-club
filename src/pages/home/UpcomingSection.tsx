@@ -24,6 +24,7 @@ import {
 } from '../../shared/api';
 import {
   capitalize,
+  finaleText,
   formatBlinds,
   formatClock,
   formatDateTime,
@@ -110,6 +111,8 @@ export interface AnnouncedEveningProps {
   players: readonly Player[];
   playersById: PlayersById;
   nowMs: number;
+  /** Сезон, финал которого этот вечер (последний вечер квартала); null — не финал. */
+  finaleSeasonKey?: string | null;
 }
 
 export function AnnouncedEvening({
@@ -119,6 +122,7 @@ export function AnnouncedEvening({
   players,
   playersById,
   nowMs,
+  finaleSeasonKey,
 }: AnnouncedEveningProps) {
   // Подписка на журнал и строку вечера: старт таймера переводит вечер в live у всех сразу.
   const events = useEveningEvents(evening.id);
@@ -196,6 +200,7 @@ export function AnnouncedEvening({
           <p className="m-eyebrow">Анонс</p>
           <h3 className="m-h3">{whenTitle(evening.scheduled_at)}</h3>
           <ul className="home-facts">
+            {finaleSeasonKey && <Fact icon="trophy">{finaleText(finaleSeasonKey)}</Fact>}
             {evening.location && <Fact icon="map-pin">{evening.location}</Fact>}
             <Fact icon="coins">{feeText(evening.format)}</Fact>
             <Fact icon="user">{banker ? `Банкир — ${banker}` : 'Банкир ещё не назначен'}</Fact>

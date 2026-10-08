@@ -17,6 +17,14 @@ describe('startParamRoute', () => {
     expect(startParamRoute('e_../../admin')).toBeNull();
     expect(startParamRoute(`e_${ID}/settle`)).toBeNull();
   });
+
+  it('s_<сезон> → итоги сезона; ключ — только вида 2026-Q4', () => {
+    expect(startParamRoute('s_2026-Q4')).toBe('/season/2026-Q4');
+    expect(paths.season('2026-Q4')).toBe('/season/2026-Q4');
+    expect(startParamRoute('s_2026-Q5')).toBeNull();
+    expect(startParamRoute('s_2026-Q4/../admin')).toBeNull();
+    expect(startParamRoute('s_')).toBeNull();
+  });
 });
 
 describe('miniAppLink', () => {

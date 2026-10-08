@@ -245,7 +245,7 @@ export function niceTicks(min: number, max: number, maxTicks = 5): number[] {
 
 export interface StandingPosition<R> {
   row: R;
-  /** Место с дележом (из rankPlaces / standingPlaces). */
+  /** Место с дележом (standingPlaces / tiedPlaces домена). */
   place: number;
   /** Сколько строк в таблице. */
   of: number;

@@ -594,6 +594,41 @@ export function settleDirection(row: Pick<SettlementRow, 'remainingRub'>): Settl
   return 'none';
 }
 
+export interface SettleShareInput {
+  /** День вечера: «9 октября». */
+  dateLabel: string;
+  bankerId: PlayerId | null;
+  /** Игроки в порядке экрана расчёта (settleOrder). */
+  ids: readonly PlayerId[];
+  /** settlement домена: остаток каждого (+ игрок → банкиру, − банкир → игроку). */
+  table: Readonly<Record<PlayerId, Pick<SettlementRow, 'remainingRub'> | undefined>>;
+  nameOf: NameOf;
+  formatRub: (rub: number) => string;
+}
+
+/**
+ * Расчёт текстом для чата — его вставляет банкир («Скопировать расчёт»): сначала кто переводит
+ * банкиру, потом кому переводит банкир, в конце — кто уже в расчёте. Суммы — остатки settlement
+ * домена, имена в именительном (склонять чужие имена нельзя): «Лёша → банкиру: 1 500 ₽», «Банкир →
+ * Саша: 2 850 ₽». Строка самого банкира — его собственные деньги, в текст она не идёт.
+ */
+export function settleShareText(input: SettleShareInput): string {
+  const { bankerId, ids, table, nameOf, formatRub } = input;
+  const players = ids.filter((id) => id !== bankerId && table[id]);
+  const remaining = (id: PlayerId): number => table[id]?.remainingRub ?? 0;
+  const toBanker = players.filter((id) => remaining(id) > 0);
+  const fromBanker = players.filter((id) => remaining(id) < 0);
+  const settled = players.filter((id) => remaining(id) === 0);
+
+  const banker = bankerId ? ` · банкир — ${nameOf(bankerId)}` : '';
+  const lines = [`Расчёт за вечер ${input.dateLabel}${banker}`];
+  for (const id of toBanker) lines.push(`${nameOf(id)} → банкиру: ${formatRub(remaining(id))}`);
+  for (const id of fromBanker) lines.push(`Банкир → ${nameOf(id)}: ${formatRub(-remaining(id))}`);
+  if (toBanker.length + fromBanker.length === 0) lines.push('Все в расчёте');
+  else if (settled.length > 0) lines.push(`В расчёте: ${joinNames(settled.map(nameOf))}`);
+  return lines.join('\n');
+}
+
 /** Подпись статуса: «Должен банкиру 500 ₽», «Банкир должен 300 ₽», «В расчёте». */
 export function settleLabel(
   row: Pick<SettlementRow, 'remainingRub'>,

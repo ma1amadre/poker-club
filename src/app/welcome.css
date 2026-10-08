@@ -1,0 +1,100 @@
+/*
+ * Шторка «Добро пожаловать» / «Как всё устроено». Только токены «Материи». Префикс wl-.
+ * Карточка: значок в круге accent-soft, заголовок m-h3, строки m-body с шагом; под ней — точки-переход
+ * по карточкам (тач-цель 32 px, сама точка 8 px; текущая — accent и шире, смысл — aria-current).
+ */
+
+.wl-card {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+.wl-card__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.wl-card__title {
+  margin: 0;
+}
+
+.wl-card__lines {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wl-card__lines > li {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wl-dots {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wl-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.wl-dot::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--line-strong);
+  transition:
+    width var(--m-dur) var(--m-ease),
+    background-color var(--m-dur) var(--m-ease);
+}
+
+.wl-dot[aria-current='step']::before {
+  width: 20px;
+  background: var(--accent);
+}
+
+.wl-dot:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--focus);
+  border-radius: var(--m-r-control);
+}
+
+/* Кнопки: «Назад» и главная в ряд; на узком экране главная занимает остаток ряда. */
+.wl-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.wl-actions > :last-child {
+  flex: 1 1 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wl-dot::before {
+    transition: none;
+  }
+}

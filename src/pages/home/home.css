@@ -201,3 +201,52 @@
   background: var(--surface-sunken);
   overflow: hidden;
 }
+
+/* ---------- Сезон как событие: итоги прошлого сезона, отсчёт до конца текущего ---------- */
+
+.home-season-results {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.home-season-results__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.home-season-results__champion {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.home-season-results__mine {
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.home-season-results__mine p {
+  margin: 0;
+}
+
+/*
+ * «Гонка сезона»: метрики, строки о соседях (иконка 16 px + m-small, как факты анонса) и ссылка.
+ * Последние игровые дни сезона — строка дней цветом текста и полужирной, а не приглушённой.
+ */
+.home-race {
+  display: grid;
+  gap: var(--space-3);
+}
+.home-race .home-facts > li {
+  color: var(--ink-muted);
+}
+.home-race .home-facts > li:first-child,
+.home-race .home-facts > li.home-race__final {
+  color: var(--ink);
+}
+.home-race__final {
+  font-weight: 500;
+}

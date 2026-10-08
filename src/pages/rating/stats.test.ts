@@ -2,10 +2,10 @@ import { seasonStandings, type StandingRow } from '@domain/season.ts';
 import { playEvening, simpleEvening } from '@domain/test-utils.ts';
 import { describe, expect, it } from 'vitest';
 import {
+  defaultRatingSeason,
   markCountedEvenings,
   moneyPlaces,
   oraclePlaces,
-  rankPlaces,
   reigningChampions,
   seasonOptions,
   seasonPredictionScores,
@@ -49,11 +49,6 @@ describe('места с дележом', () => {
 
   it('равные очки, но разные победы — разные места (как sameRank домена)', () => {
     expect(standingPlaces([row('a', 8, 2), row('b', 8, 1)])).toEqual([1, 2]);
-  });
-
-  it('общий вариант с произвольным сравнением', () => {
-    expect(rankPlaces([5, 5, 5, 1], (a, b) => a === b)).toEqual([1, 1, 1, 4]);
-    expect(rankPlaces([], () => true)).toEqual([]);
   });
 });
 
@@ -200,5 +195,14 @@ describe('места и участники в вечерах сезона', () =
     expect(markCountedEvenings([s], 'A', [s.points.A ?? 0])).toEqual([
       { eveningId: 'm1', date: oct(1), points: s.points.A, place: 2, entrants: 3, counted: true },
     ]);
+  });
+});
+
+describe('сезон рейтинга по умолчанию', () => {
+  it('текущий; пока в нём нет вечеров — последний сезон с вечерами (финальная таблица)', () => {
+    const q = (seasonKey: string) => ({ seasonKey });
+    expect(defaultRatingSeason([q('2026-Q3'), q('2026-Q4')], '2026-Q4')).toBe('2026-Q4');
+    expect(defaultRatingSeason([q('2026-Q2'), q('2026-Q3')], '2026-Q4')).toBe('2026-Q3');
+    expect(defaultRatingSeason([], '2026-Q4')).toBe('2026-Q4');
   });
 });

@@ -54,6 +54,7 @@ export type AlertKind =
   | 'cron_results'
   | 'cron_voting'
   | 'cron_voting_reminder'
+  | 'cron_season'
   | 'cron_crash'
   | 'notify_post';
 
@@ -108,6 +109,12 @@ export const ALERT_KINDS: Record<AlertKind, KindInfo> = {
     what: 'Не ушло напоминание о голосовании в группу.',
     check:
       'Проверь логи функции. cron-tick повторит напоминание через 15 минут, пока до закрытия голосования больше получаса, но, пока причина не устранена, это не поможет.',
+  },
+  cron_season: {
+    fn: 'cron-tick',
+    what: 'Не ушёл пост «Итоги сезона» в группу.',
+    check:
+      'Проверь логи функции. cron-tick повторит пост через 15 минут — до двух недель после конца сезона, — но, пока причина не устранена, это не поможет.',
   },
   cron_crash: {
     fn: 'cron-tick',

@@ -1,8 +1,10 @@
-// Раскладка истории вечеров: идущие сверху, остальные — по сезонам, новые выше.
-// Фонд и состав вечера считает replay домена, здесь только группировка и порядок.
+// Раскладка истории вечеров: идущие сверху, остальные — по сезонам, новые выше; фильтр «Мои вечера» и
+// подпись «твоё: 2-е · +300 ₽». Фонд, состав, места и деньги считает домен (replay, summarize), здесь
+// только группировка, порядок и текст.
 import { replay } from '@domain/replay.ts';
 import { compareSeasonKeys, seasonKey } from '@domain/season.ts';
-import type { EveningEvent, TournamentFormat } from '@domain/types.ts';
+import type { EveningSummary } from '@domain/summary.ts';
+import type { EveningEvent, PlayerId, TournamentFormat } from '@domain/types.ts';
 import type { EveningStatus } from '../../shared/api';
 
 /** Минимум полей вечера, нужный для раскладки (тесты не тащат всю строку БД). */
@@ -77,5 +79,55 @@ export function eveningTotals(
     players: state.joinOrder.length,
     alive: state.aliveCount,
     prizePoolRub: state.prizePoolRub,
+  };
+}
+
+// --- Мои вечера --------------------------------------------------------------------------------
+
+/** Мой результат в строке вечера: место (сводка домена summarize) и нетто. */
+export interface MyHistoryResult {
+  played: boolean;
+  /** Место в вечере; null — не играл или место не определено. */
+  place: number | null;
+  netRub: number;
+}
+
+/** Что вечер дал игроку по итогу домена (summarize); null — итога нет (журнал не свёлся). */
+export function myHistoryResult(
+  summary: Pick<EveningSummary, 'entrants' | 'places' | 'netRub'> | undefined,
+  meId: PlayerId,
+): MyHistoryResult | null {
+  if (!summary) return null;
+  if (!summary.entrants.includes(meId)) return { played: false, place: null, netRub: 0 };
+  const index = summary.places.indexOf(meId);
+  return { played: true, place: index >= 0 ? index + 1 : null, netRub: summary.netRub[meId] ?? 0 };
+}
+
+/**
+ * Подпись «твоё» в строке вечера, на «ты» и без рода: «твоё: 2-е · +300 ₽», без места — «твоё:
+ * место не определено · −500 ₽», не за столом — «без тебя».
+ */
+export function myHistoryLine(
+  result: MyHistoryResult,
+  formatRubSigned: (rub: number) => string,
+): string {
+  if (!result.played) return 'без тебя';
+  const place = result.place !== null ? `${result.place}-е` : 'место не определено';
+  return `твоё: ${place} · ${formatRubSigned(result.netRub)}`;
+}
+
+/**
+ * Фильтр «Мои вечера»: в сезонах остаются только вечера, где игрок за столом по итогу домена
+ * (отменённые и несведённые уходят), пустые сезоны — тоже. Идущие вечера остаются: это «Сейчас».
+ */
+export function onlyMine<E extends HistoryEveningLike>(
+  layout: HistoryLayout<E>,
+  playedBy: (eveningId: string) => boolean,
+): HistoryLayout<E> {
+  return {
+    live: layout.live,
+    seasons: layout.seasons
+      .map((group) => ({ ...group, evenings: group.evenings.filter((e) => playedBy(e.id)) }))
+      .filter((group) => group.evenings.length > 0),
   };
 }

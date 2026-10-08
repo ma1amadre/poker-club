@@ -1,8 +1,9 @@
-// Чистые помощники главной: какой вечер показать, кто идёт, место в сезоне и незакрытые расчёты.
+// Чистые помощники главной: какой вечер показать, кто идёт, остались ли вечера в сезоне и незакрытые
+// расчёты.
 // Следующая игра по расписанию — nextGameAt из shared/lib/clubTime. Деньги и места — только доменными функциями.
 import { computeMoney, isSettled, paymentsFromEvents, settlement } from '@domain/money.ts';
 import { replay } from '@domain/replay.ts';
-import { sameRank, type StandingRow } from '@domain/season.ts';
+import { seasonKey } from '@domain/season.ts';
 import { spectatesEvening } from '@domain/spectators.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import type { EveningEvent, PlayerId, TournamentFormat } from '@domain/types.ts';
@@ -125,21 +126,23 @@ export function upsertRsvp<R extends RsvpLike & { updated_at: string }>(
 
 // --- Сезон -----------------------------------------------------------------------------------
 
-export interface SeasonPosition {
-  /** Место с учётом дележа: равные очки, победы и нокауты делят место. */
-  place: number;
-  of: number;
-  row: StandingRow;
-}
-
-export function seasonPosition(
-  rows: readonly StandingRow[],
-  playerId: PlayerId,
-): SeasonPosition | null {
-  const row = rows.find((r) => r.playerId === playerId);
-  if (!row) return null;
-  const place = rows.findIndex((r) => sameRank(r, row)) + 1;
-  return { place, of: rows.length, row };
+/**
+ * Остался ли в сезоне key несыгранный вечер: идущий или объявленный (кроме забытых анонсов старше
+ * STALE_ANNOUNCE_MS — их отменяет админ). Пока он есть, «Гонка сезона» не пишет «Игр в сезоне по
+ * расписанию больше нет», даже если слотов расписания в сезоне не осталось: финал в разгаре или
+ * перенесён с последнего слота на другой день. На вход — настоящие вечера (без тренировок).
+ */
+export function seasonEveningPending(
+  evenings: readonly UpcomingLike[],
+  key: string,
+  nowMs: number,
+): boolean {
+  return evenings.some(
+    (e) =>
+      seasonKey(e.scheduled_at) === key &&
+      (e.status === 'live' ||
+        (e.status === 'announced' && ms(e.scheduled_at) >= nowMs - STALE_ANNOUNCE_MS)),
+  );
 }
 
 // --- Незакрытые расчёты ----------------------------------------------------------------------

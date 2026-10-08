@@ -1,0 +1,70 @@
+/*
+ * Экран «Итоги сезона». Только токены «Материи»: цвет — семантика, отступы — space-*. Префикс ss-.
+ * Подиум — SeasonPodium кита (shared/ui/season.css), таблицы — List кита.
+ */
+
+.ss-champion {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.ss-champion__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.ss-champion__name {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ss-stats {
+  margin-bottom: var(--space-2);
+}
+
+.ss-mine__ach {
+  margin: 0 0 var(--space-1);
+}
+
+.ss-icon {
+  color: var(--ink-muted);
+}
+
+.ss-rank {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ss-place {
+  min-width: 2ch;
+  font-size: var(--m-small-size);
+  text-align: right;
+  color: var(--ink-muted);
+}
+
+.ss-record__value {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.ss-score {
+  flex: none;
+  display: grid;
+  justify-items: end;
+  line-height: 1.2;
+}
+
+.ss-score__num {
+  font-size: var(--m-h3-size);
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.ss-score__unit {
+  font-size: var(--m-small-size);
+  color: var(--ink-muted);
+}

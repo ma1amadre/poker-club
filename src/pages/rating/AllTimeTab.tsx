@@ -1,11 +1,13 @@
-import { allTimeStandings } from '@domain/season.ts';
+import { lastEveningMoves } from '@domain/placeMoves.ts';
+import { allTimeStandings, sameRank } from '@domain/season.ts';
+import type { EveningSummary } from '@domain/summary.ts';
 import { useMemo } from 'react';
 import { scoringFromSettings } from '../../shared/api';
 import { formatDate, paths, scoringRuleOf, standingMeta } from '../../shared/lib';
 import { List, ListItem } from '../../shared/ui';
 import type { RatingContext } from './context';
-import { PlayerName, Rank, Score } from './parts';
-import { standingPlaces } from './stats';
+import { MovesNote, PlayerName, Rank, Score } from './parts';
+import { meRowClass, moveOf, standingPlaces } from './stats';
 
 /** Зачёт за всё время (allTimeStandings домена): все вечера, без ограничения лучших N. */
 export function AllTimeTab({ ctx }: { ctx: RatingContext }) {
@@ -15,6 +17,15 @@ export function AllTimeTab({ ctx }: { ctx: RatingContext }) {
     [history.summaries, history.excluded],
   );
   const places = useMemo(() => standingPlaces(rows), [rows]);
+  const moves = useMemo(
+    () =>
+      lastEveningMoves(
+        history.summaries,
+        (s: readonly EveningSummary[]) => allTimeStandings(s, { excluded: history.excluded }),
+        sameRank,
+      ),
+    [history.summaries, history.excluded],
+  );
   const firstDate = useMemo(
     () =>
       history.summaries.reduce<string | null>(
@@ -39,8 +50,13 @@ export function AllTimeTab({ ctx }: { ctx: RatingContext }) {
           <ListItem
             key={row.playerId}
             to={paths.player(row.playerId)}
+            className={meRowClass(ctx.meId, row.playerId)}
             before={
-              <Rank place={places[index] ?? index + 1} player={ctx.playersById.get(row.playerId)} />
+              <Rank
+                place={places[index] ?? index + 1}
+                player={ctx.playersById.get(row.playerId)}
+                move={moveOf(moves, row.playerId)}
+              />
             }
             title={<PlayerName ctx={ctx} id={row.playerId} />}
             subtitle={<span className="rt-meta">{standingMeta(row)}</span>}
@@ -48,6 +64,7 @@ export function AllTimeTab({ ctx }: { ctx: RatingContext }) {
           />
         ))}
       </List>
+      <MovesNote moves={moves} summaryById={history.summaryById} />
       <p className="m-small">
         Все вечера клуба{firstDate ? ` с ${formatDate(firstDate)}` : ''}, без ограничения лучших
         вечеров. {rule}.

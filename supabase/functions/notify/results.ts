@@ -33,6 +33,7 @@ import {
   type StoryItem,
   type TournamentFormat,
   type Vote,
+  type VoteCategory,
 } from '../_shared/domain/index.ts';
 import { resultsPost, type Post } from '../_shared/messages.ts';
 import { sendMessage } from '../_shared/telegram.ts';
@@ -274,7 +275,7 @@ export async function loadHistory(db: Db, cfg: ScoringConfig): Promise<ClubHisto
   return { evenings, events, summaries, predictions, votes, bestNBySeason };
 }
 
-function scoredPredictions(
+export function scoredPredictions(
   history: ClubHistory,
   include: (eveningId: string) => boolean,
 ): ScoredPrediction[] {
@@ -417,6 +418,14 @@ export async function buildResultsPost(
   const money = computeMoney(evening.format, state);
   const clubNews = clubNewsOf(history, evening.id, guests, settings.season_best_n);
   const story = storyOf(history, evening, guests, settings.season_best_n);
+  const newAchievements = newAchievementsFor(
+    history,
+    evening.id,
+    guests,
+    settings.season_best_n,
+    nowMs,
+  );
+  const postedSeasons = await postedSeasonsOf(db, newAchievements);
 
   return resultsPost({
     eveningId: evening.id,
@@ -429,14 +438,41 @@ export async function buildResultsPost(
     totalEntries: state.totalEntries,
     rebuysTotal: Object.values(summary.rebuys).reduce((a, b) => a + b, 0),
     prizePoolRub: state.prizePoolRub,
-    newAchievements: newAchievementsFor(history, evening.id, guests, settings.season_best_n, nowMs),
+    newAchievements,
     votingClosesAt: evening.voting_closes_at,
     nowMs,
     botUsername: settings.bot_username,
     corrected: corrected || evening.results_revision > 0,
     clubNews,
     story,
+    postedSeasons,
   });
+}
+
+/**
+ * Сезоны сезонных ачивок вечера (их приносит первый вечер нового квартала), чей пост «Итоги сезона»
+ * уже в группе (season_posts, миграция 025): пост вечера их не повторяет. Не прочиталось — как будто
+ * поста не было (ошибка в лог): лучше повтор чемпиона, чем застрявшие итоги вечера.
+ */
+async function postedSeasonsOf(db: Db, list: readonly Achievement[]): Promise<Set<string>> {
+  const keys = [...new Set(list.map((a) => a.seasonKey).filter((k): k is string => k !== null))];
+  if (keys.length === 0) return new Set();
+  try {
+    return await loadPostedSeasons(db, keys);
+  } catch (error) {
+    console.error(`Итоги вечера: ${describeError(error)}`);
+    return new Set();
+  }
+}
+
+/** Сезоны из keys, чей пост «Итоги сезона» уже в группе (строки season_posts, миграция 025). */
+export async function loadPostedSeasons(db: Db, keys: readonly string[]): Promise<Set<string>> {
+  const { data, error } = await db
+    .from('season_posts')
+    .select('season_key')
+    .in('season_key', [...keys]);
+  if (error) throw new Error(`season_posts: ${describeError(error)}`);
+  return new Set(((data ?? []) as { season_key: string }[]).map((r) => r.season_key));
 }
 
 /**

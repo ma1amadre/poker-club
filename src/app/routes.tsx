@@ -17,6 +17,7 @@ const VotePage = lazy(() => import('../pages/vote/VotePage'));
 const BoardPage = lazy(() => import('../pages/board/BoardPage'));
 const ClubBoardPage = lazy(() => import('../pages/board/ClubBoardPage'));
 const RatingPage = lazy(() => import('../pages/rating/RatingPage'));
+const SeasonPage = lazy(() => import('../pages/season/SeasonPage'));
 const PlayerPage = lazy(() => import('../pages/player/PlayerPage'));
 const HistoryPage = lazy(() => import('../pages/history/HistoryPage'));
 const AdminPage = lazy(() => import('../pages/admin/AdminPage'));
@@ -119,6 +120,7 @@ export function AppRoutes() {
           path="admin/evening/new"
           element={
             <AdminOnly>
+        <Route path="season/:key" element={<SeasonPage />} />
               <EveningEditPage />
             </AdminOnly>
           }

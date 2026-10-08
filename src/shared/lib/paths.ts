@@ -13,6 +13,8 @@ export const paths = {
   ratingRecords: '/rating?tab=records',
   ratingFame: '/rating?tab=fame',
   player: (id: string) => `/player/${id}`,
+  /** Итоги сезона: '2026-Q4' (seasonKey домена). */
+  season: (key: string) => `/season/${key}`,
   history: '/history',
   historyMoments: '/history?tab=moments',
   admin: '/admin',
@@ -49,13 +51,19 @@ export function miniAppLink(botUsername: string, startParam?: string): string {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Ключ сезона в ссылке: '2026-Q4', как seasonKey домена. */
+export const SEASON_KEY_RE = /^\d{4}-Q[1-4]$/;
+
 /**
- * Параметр запуска → маршрут: `e_<id>` → вечер, `v_<id>` → голосование, `r` → рейтинг.
- * id проверяется как uuid: параметр приходит из ссылки и не должен складываться в произвольный путь.
+ * Параметр запуска → маршрут: `e_<id>` → вечер, `v_<id>` → голосование, `r` → рейтинг,
+ * `s_2026-Q4` → итоги сезона (кнопка поста «Итоги сезона»). id проверяется как uuid, сезон — как ключ:
+ * параметр приходит из ссылки и не должен складываться в произвольный путь.
  */
 export function startParamRoute(param: string | null | undefined): string | null {
   if (!param) return null;
   if (param === 'r') return paths.rating;
+  const season = /^s_(.+)$/.exec(param)?.[1];
+  if (season !== undefined) return SEASON_KEY_RE.test(season) ? paths.season(season) : null;
   const match = /^([ev])_(.+)$/.exec(param);
   if (!match) return null;
   const [, kind, id] = match;

@@ -1,4 +1,5 @@
-import { bestNForSeason, seasonStandings, type StandingRow } from '@domain/season.ts';
+import { lastEveningMoves, type PlaceMove } from '@domain/placeMoves.ts';
+import { bestNForSeason, sameRank, seasonStandings, type StandingRow } from '@domain/season.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -10,15 +11,16 @@ import {
   formatDate,
   formatPoints,
   formatSeason,
+  formatSeasonGenitive,
   paths,
   placeLabel,
   scoringRuleOf,
   standingMeta,
 } from '../../shared/lib';
-import { ButtonLink, Empty, Icon, List } from '../../shared/ui';
+import { Button, ButtonLink, Empty, Icon, List, Notice } from '../../shared/ui';
 import type { RatingContext } from './context';
-import { PlayerName, Rank, Score, SeasonSelect } from './parts';
-import { markCountedEvenings, standingPlaces } from './stats';
+import { MovesNote, PlayerName, Rank, Score, SeasonSelect } from './parts';
+import { markCountedEvenings, moveOf, standingPlaces } from './stats';
 
 interface SeasonTabProps {
   ctx: RatingContext;
@@ -37,17 +39,23 @@ export function SeasonTab({ ctx, seasons, season, onSeason }: SeasonTabProps) {
     () => history.summaries.filter((s) => s.seasonKey === season),
     [history.summaries, season],
   );
-  const rows = useMemo(
-    () =>
-      seasonStandings(seasonSummaries, {
+  const build = useMemo(
+    () => (list: readonly EveningSummary[]) =>
+      seasonStandings(list, {
         bestN: history.bestN,
         excluded: history.excluded,
         seasonKey: season,
         bestNBySeason: history.bestNBySeason,
       }),
-    [seasonSummaries, season, history.bestN, history.excluded, history.bestNBySeason],
+    [season, history.bestN, history.excluded, history.bestNBySeason],
   );
+  const rows = useMemo(() => build(seasonSummaries), [build, seasonSummaries]);
   const places = useMemo(() => standingPlaces(rows), [rows]);
+  // Стрелки: сдвиг мест после последнего вечера сезона (lastEveningMoves домена, та же таблица).
+  const moves = useMemo(
+    () => lastEveningMoves(seasonSummaries, build, sameRank),
+    [seasonSummaries, build],
+  );
   const [openId, setOpenId] = useState<string | null>(null);
   // Правила — те, по которым посчитана эта таблица: снимки вечеров сезона и «лучшие N» сезона
   // (у закрытого — замороженное значение), а не обязательно текущие настройки.
@@ -57,6 +65,9 @@ export function SeasonTab({ ctx, seasons, season, onSeason }: SeasonTabProps) {
     scoring,
   );
   const bestN = bestNForSeason(season, history.bestN, history.bestNBySeason);
+  // Завершённый сезон — финальная таблица и переход к его итогам.
+  const closed = season < history.currentSeasonKey && rows.length > 0;
+  const currentEmpty = !history.summaries.some((s) => s.seasonKey === history.currentSeasonKey);
 
   return (
     <div className="rt-panel">
@@ -69,6 +80,35 @@ export function SeasonTab({ ctx, seasons, season, onSeason }: SeasonTabProps) {
           onSeason(next);
         }}
       />
+
+      {closed && (
+        <Notice
+          tone="info"
+          className="rt-final"
+          title={`Финальная таблица ${formatSeasonGenitive(season)}`}
+          action={
+            <span className="rt-notice-actions">
+              <ButtonLink to={paths.season(season)} size="sm" icon="trophy">
+                Итоги сезона
+              </ButtonLink>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setOpenId(null);
+                  onSeason(history.currentSeasonKey);
+                }}
+              >
+                Открыть текущий сезон
+              </Button>
+            </span>
+          }
+        >
+          {currentEmpty
+            ? 'В новом сезоне вечеров ещё не было — его таблица начнётся с первого.'
+            : 'Подиум, деньги, «Оракул сезона» и рекорды сезона — на экране итогов.'}
+        </Notice>
+      )}
 
       {rows.length === 0 ? (
         <Empty
@@ -88,6 +128,7 @@ export function SeasonTab({ ctx, seasons, season, onSeason }: SeasonTabProps) {
               ctx={ctx}
               row={row}
               place={places[index] ?? index + 1}
+              move={moveOf(moves, row.playerId)}
               summaries={seasonSummaries}
               open={openId === row.playerId}
               onToggle={() => setOpenId((id) => (id === row.playerId ? null : row.playerId))}
@@ -96,6 +137,7 @@ export function SeasonTab({ ctx, seasons, season, onSeason }: SeasonTabProps) {
         </List>
       )}
 
+      <MovesNote moves={moves} summaryById={history.summaryById} />
       <p className="m-small">
         {rule}. {bestNRule(bestN)}. При равенстве выше тот, у кого больше побед, потом — нокаутов.
       </p>
@@ -107,12 +149,14 @@ interface SeasonRowProps {
   ctx: RatingContext;
   row: StandingRow;
   place: number;
+  /** Сдвиг места после последнего вечера сезона (moveOf). */
+  move: PlaceMove | null | undefined;
   summaries: readonly EveningSummary[];
   open: boolean;
   onToggle: () => void;
 }
 
-function SeasonRow({ ctx, row, place, summaries, open, onToggle }: SeasonRowProps) {
+function SeasonRow({ ctx, row, place, move, summaries, open, onToggle }: SeasonRowProps) {
   const detailId = useId();
   const marks = useMemo(
     () => (open ? markCountedEvenings(summaries, row.playerId, row.counted) : []),
@@ -120,7 +164,7 @@ function SeasonRow({ ctx, row, place, summaries, open, onToggle }: SeasonRowProp
   );
 
   return (
-    <li className="rt-row">
+    <li className={cn('rt-row', ctx.meId === row.playerId && 'rt-row--me')}>
       <button
         type="button"
         className="rt-row__btn"
@@ -128,7 +172,7 @@ function SeasonRow({ ctx, row, place, summaries, open, onToggle }: SeasonRowProp
         aria-controls={detailId}
         onClick={onToggle}
       >
-        <Rank place={place} player={ctx.playersById.get(row.playerId)} />
+        <Rank place={place} player={ctx.playersById.get(row.playerId)} move={move} />
         <span className="rt-row__body">
           <PlayerName ctx={ctx} id={row.playerId} />
           <span className="rt-meta">{standingMeta(row)}</span>

@@ -2,6 +2,7 @@
 // прогнозы сезона, действующий чемпион. Сами очки, таблицы и чемпионов считает домен
 // (seasonStandings, moneyStandings, oracleStandings, hallOfFame) — здесь только раскладка его
 // результатов для показа.
+import { tiedPlaces, type PlaceMove, type TableMoves } from '@domain/placeMoves.ts';
 import type { ScoredPrediction } from '@domain/predictions.ts';
 import {
   compareSeasonKeys,
@@ -25,34 +26,36 @@ export function seasonOptions(
 }
 
 /**
- * Места в отсортированной таблице с дележом: равные соседние строки делят место,
- * следующее место пропускается (1, 2, 2, 4) — как в спортивных таблицах.
+ * Сезон, который рейтинг открывает по умолчанию: текущий, а пока в нём нет вечеров — последний
+ * сезон с вечерами (его финальная таблица; аудит 07.10.2026). Вечеров нет вовсе — текущий.
  */
-export function rankPlaces<T>(rows: readonly T[], same: (a: T, b: T) => boolean): number[] {
-  const places: number[] = [];
-  rows.forEach((row, i) => {
-    const prev = rows[i - 1];
-    const prevPlace = places[i - 1];
-    places.push(
-      prev !== undefined && prevPlace !== undefined && same(prev, row) ? prevPlace : i + 1,
-    );
-  });
-  return places;
+export function defaultRatingSeason(
+  summaries: readonly Pick<EveningSummary, 'seasonKey'>[],
+  currentSeasonKey: string,
+): string {
+  const keys = summaries.map((s) => s.seasonKey);
+  if (keys.includes(currentSeasonKey)) return currentSeasonKey;
+  const past = keys
+    .filter((k) => compareSeasonKeys(k, currentSeasonKey) < 0)
+    .sort((a, b) => compareSeasonKeys(b, a));
+  return past[0] ?? currentSeasonKey;
 }
+
+// Места с дележом (1, 2, 2, 4) — tiedPlaces домена; здесь только правило «равных» каждой таблицы.
 
 /** Места таблицы сезона / всего времени: делят равные по очкам, победам и нокаутам (sameRank домена). */
 export function standingPlaces(rows: readonly StandingRow[]): number[] {
-  return rankPlaces(rows, sameRank);
+  return tiedPlaces(rows, sameRank);
 }
 
 /** Места денежной таблицы (moneyStandings уже отсортирован доменом): делят равные по нетто. */
 export function moneyPlaces(rows: readonly StandingRow[]): number[] {
-  return rankPlaces(rows, (a, b) => a.netRub === b.netRub);
+  return tiedPlaces(rows, (a, b) => a.netRub === b.netRub);
 }
 
 /** Места «Оракула» (порядок oracleStandings): делят равные по очкам и угаданным победителям. */
 export function oraclePlaces(rows: readonly OracleRow[]): number[] {
-  return rankPlaces(rows, (a, b) => a.total === b.total && a.winnerHits === b.winnerHits);
+  return tiedPlaces(rows, (a, b) => a.total === b.total && a.winnerHits === b.winnerHits);
 }
 
 export interface SeasonEveningMark {
@@ -139,4 +142,14 @@ export function reigningChampions(
   }
   const entry = hall.find((h) => h.seasonKey === previous);
   return entry ? { seasonKey: entry.seasonKey, champions: [...entry.champions] } : null;
+}
+
+/** Сдвиг строки для Rank: у таблицы без сдвигов — undefined, у строки без сдвига — null. */
+export function moveOf(moves: TableMoves | null, id: PlayerId): PlaceMove | null | undefined {
+  return moves ? (moves.moves[id] ?? null) : undefined;
+}
+
+/** Класс своей строки в таблицах рейтинга: подложка и полоса слева (у имени ещё и «ты»). */
+export function meRowClass(meId: PlayerId | null, id: PlayerId): string | undefined {
+  return meId !== null && meId === id ? 'rt-item--me' : undefined;
 }

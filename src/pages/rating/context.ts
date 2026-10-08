@@ -8,6 +8,8 @@ export interface RatingContext {
   /** Чемпионы прошлого сезона — носят значок до конца текущего. */
   champions: ReadonlySet<PlayerId>;
   championSeason: string | null;
+  /** Кто смотрит рейтинг: его строка в таблицах выделена. */
+  meId: PlayerId | null;
 }
 
 /** Имя игрока по id; удалённый или скрытый RLS игрок — понятной заглушкой, а не пустотой. */

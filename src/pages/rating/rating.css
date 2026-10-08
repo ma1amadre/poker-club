@@ -30,6 +30,87 @@
   color: var(--ink);
 }
 
+/*
+ * Стрелка сдвига места после последнего вечера — под номером места, мелко. Вверх — positive, вниз —
+ * приглушённо: смысл несут шеврон и число (и подпись для скринридера), цвет только помогает. Пустая
+ * стрелка держит ту же высоту — номера мест в столбце стоят ровно.
+ */
+.rt-place-col {
+  display: grid;
+  justify-items: end;
+  gap: 0;
+}
+
+.rt-move {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1px;
+  /* Одна ширина у всех строк таблицы: «^12» не сдвигает аватар и номер места. */
+  min-width: 28px;
+  height: 14px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-muted);
+}
+
+.rt-move--up {
+  color: var(--positive);
+}
+
+/*
+ * Своя строка: подложка surface-sunken и полоса accent слева, у имени — «ты». Не accent-soft: на нём
+ * пропадал аватар (его круг того же цвета).
+ */
+
+.rt-row--me .rt-row__btn,
+.ui-list-item.rt-item--me {
+  background: var(--surface-sunken);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.rt-row--me .rt-row__btn:hover,
+.ui-list-item--interactive.rt-item--me:hover {
+  background: var(--fill-hover);
+}
+
+.rt-row--me .rt-row__btn:focus-visible,
+.ui-list-item--interactive.rt-item--me:focus-visible {
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 0 0 2px var(--focus);
+}
+
+.rt-name__me {
+  flex: none;
+  font-size: var(--m-small-size);
+  font-weight: 400;
+  color: var(--ink-muted);
+}
+
+/*
+ * Плашка «Финальная таблица»: две кнопки не помещаются справа от текста (действие Notice — flex: none),
+ * поэтому ряд кнопок уходит под текст, с отступом на ширину значка (18 px) и зазор Notice; на узком
+ * экране кнопки переносятся друг под друга.
+ */
+.rt-final.m-notice {
+  flex-wrap: wrap;
+}
+
+.rt-final .m-notice-action {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding-left: calc(18px + var(--space-3));
+}
+
+.rt-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 /* ---------- Имя, строка сыгранного, очки ---------- */
 
 .rt-name {
@@ -398,6 +479,40 @@
 }
 
 .rt-fame__icon {
+  color: var(--ink-muted);
+}
+
+/* Завершённый сезон в зале славы: шапка с переходом к итогам, подиум, лауреаты строками. */
+.rt-season {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.rt-season__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.rt-season__title {
+  margin: 0;
+}
+
+.rt-laureates {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.rt-laureates li {
+  overflow-wrap: anywhere;
+}
+
+.rt-laureates__title {
   color: var(--ink-muted);
 }
 

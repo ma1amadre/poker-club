@@ -58,6 +58,7 @@ import {
   settleDirection,
   settleLabel,
   settleOrder,
+  settleShareText,
   settleTotals,
   signedPayment,
   stacksAmountText,
@@ -302,6 +303,53 @@ describe('расчёт', () => {
     expect(settleLabel(before.b ?? { remainingRub: 0 }, rub)).toBe('Должен банкиру 200 ₽'); // 500 − 30 % от фонда 1000
     expect(settleLabel(before.a ?? { remainingRub: 0 }, rub)).toMatch(/^Банкир должен /);
     expect(settleLabel({ remainingRub: 0 }, rub)).toBe('В расчёте');
+  });
+
+  it('расчёт текстом для чата: кто банкиру, кому банкир, кто в расчёте; строки банкира нет', () => {
+    // 4 игрока по 500 ₽, фонд 2 000 → 1 400 / 600. Женя (a) выигрывает, Саша (b) второй.
+    const j = journal().join('a', 'b', 'c', 'd');
+    j.start();
+    j.bust('d', ['a']);
+    j.bust('c', ['a']);
+    j.bust('b', ['a']);
+    j.finish();
+    j.payment('c', 500);
+    const s = replay(DEFAULT_FORMAT, j.events, j.now());
+    const table = settlement(computeMoney(DEFAULT_FORMAT, s), paymentsFromEvents(j.events));
+    const ids = settleOrder(s, Object.keys(table));
+    const text = settleShareText({
+      dateLabel: '9 октября',
+      bankerId: 'b',
+      ids,
+      table,
+      nameOf,
+      formatRub: rub,
+    });
+    expect(text).toBe(
+      [
+        'Расчёт за вечер 9 октября · банкир — Саша',
+        'Лёша → банкиру: 500 ₽',
+        'Банкир → Женя: 900 ₽',
+        'В расчёте: Дима',
+      ].join('\n'),
+    );
+    // Без банкира — без подписи; всё закрыто — «Все в расчёте».
+    expect(
+      settleShareText({
+        dateLabel: '9 октября',
+        bankerId: null,
+        ids: ['a', 'b'],
+        table: { a: { remainingRub: 0 }, b: { remainingRub: 0 } },
+        nameOf,
+        formatRub: rub,
+      }),
+    ).toBe('Расчёт за вечер 9 октября\nВсе в расчёте');
+    // Сумма строк текста — те же остатки, что в settlement (без строки банкира).
+    const owed = Object.entries(table)
+      .filter(([id]) => id !== 'b')
+      .reduce((sum, [, row]) => sum + Math.abs(row.remainingRub), 0);
+    const inText = [...text.matchAll(/: (\d+) ₽/g)].reduce((sum, m) => sum + Number(m[1]), 0);
+    expect(inText).toBe(owed);
   });
 
   it('parseRub', () => {
