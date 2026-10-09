@@ -161,6 +161,151 @@ export function nextEmptySlot(d: ShowdownDraft, from: Slot | null): Slot | null 
   return null;
 }
 
+/** Карта, положенная `placeCards`, и что лежало на её месте до неё (замена на подсвеченном месте). */
+export interface PlacedCard {
+  slot: Slot;
+  code: CardCode;
+  prev: CardCode | null;
+}
+
+export interface PlaceCardsResult {
+  draft: ShowdownDraft;
+  /** Что легло и куда — по порядку. */
+  placed: PlacedCard[];
+  /**
+   * Названные карты, которые уже лежат на своих местах: на очередном месте фразы (подсвеченном или
+   * следующем) или подряд прямо перед подсвеченным — банкир повторил фразу, оборванную паузой.
+   * Остаются, место идёт дальше.
+   */
+  kept: { code: CardCode; slot: Slot }[];
+  /** Карта уже лежит в другом месте (касанием её тоже не выбрать: в колоде она недоступна) — не трогаем. */
+  taken: { code: CardCode; slot: Slot }[];
+  /** Карты после той, что лежит в другом месте: где кончилась её очередь — неясно, не кладём. */
+  held: CardCode[];
+  /** Свободные места кончились. */
+  overflow: CardCode[];
+  /** Подсвеченное место после раскладки: следующее пустое за последней картой фразы. */
+  active: Slot | null;
+}
+
+/** Место следующей карты фразы после `from`: первое по кругу пустое или то, где она уже лежит. */
+function nextPlaceFor(
+  d: ShowdownDraft,
+  from: Slot,
+  code: CardCode,
+): { slot: Slot; kept: boolean } | null {
+  const order = slotOrder(d);
+  const at = order.findIndex((s) => sameSlot(s, from));
+  for (let k = 1; k < order.length; k += 1) {
+    const slot = order[(at + k) % order.length];
+    const card = slot ? cardIn(d, slot) : undefined;
+    if (slot && (card === null || card === code)) return { slot, kept: card === code };
+  }
+  return null;
+}
+
+/**
+ * Сколько первых карт фразы — повтор уже выложенного: они лежат подряд на местах прямо перед
+ * подсвеченным (так их положила прошлая фраза, оборванная паузой). Иначе 0.
+ */
+function repeatedHead(d: ShowdownDraft, target: Slot | null, codes: readonly CardCode[]): number {
+  if (!target) return 0;
+  const used = usedCards(d);
+  let count = 0;
+  for (const code of codes) {
+    const holder = used.get(code);
+    if (!holder || sameSlot(holder, target)) break;
+    count += 1;
+  }
+  const order = slotOrder(d);
+  const at = order.findIndex((s) => sameSlot(s, target));
+  if (count === 0 || at < count) return 0;
+  return codes
+    .slice(0, count)
+    .every((code, j) => sameSlot(used.get(code) ?? null, order[at - count + j] ?? null))
+    ? count
+    : 0;
+}
+
+/**
+ * Несколько карт подряд — так же, как касаниями: первая — на подсвеченное место (на нём другая карта —
+ * заменяет её, как касание), каждая следующая — в следующее пустое. Карта, которая уже лежит на
+ * очередном месте фразы, остаётся (`kept`), место идёт дальше; первые карты, лежащие подряд прямо
+ * перед подсвеченным местом, — повтор (`kept`). Карту, которая лежит в другом месте, не
+ * перекладываем (`taken`) — и дальше не кладём (`held`): какое место она занимала в очереди, неясно,
+ * а сдвиг увёл бы следующие карты к чужим рукам. Мест не хватило — `overflow`. Голосовой ввод.
+ */
+export function placeCards(
+  d: ShowdownDraft,
+  active: Slot | null,
+  codes: readonly CardCode[],
+): PlaceCardsResult {
+  const target = active ?? nextEmptySlot(d, null);
+  const head = repeatedHead(d, target, codes);
+  const used = usedCards(d);
+  let draft = d;
+  const placed: PlacedCard[] = [];
+  const kept: { code: CardCode; slot: Slot }[] = codes.slice(0, head).flatMap((code) => {
+    const slot = used.get(code);
+    return slot ? [{ code, slot }] : [];
+  });
+  const taken: { code: CardCode; slot: Slot }[] = [];
+  let held: CardCode[] = [];
+  const overflow: CardCode[] = [];
+  // Последнее место этой фразы: от него ищется место следующей карты.
+  let last: Slot | null = null;
+  for (let i = head; i < codes.length; i += 1) {
+    const code = codes[i];
+    if (!code) continue;
+    const next: { slot: Slot; kept: boolean } | null = last
+      ? nextPlaceFor(draft, last, code)
+      : target && { slot: target, kept: cardIn(draft, target) === code };
+    if (next?.kept) {
+      kept.push({ code, slot: next.slot });
+      last = next.slot;
+      continue;
+    }
+    const holder = usedCards(draft).get(code);
+    if (holder) {
+      taken.push({ code, slot: holder });
+      held = codes.slice(i + 1);
+      break;
+    }
+    if (!next) {
+      overflow.push(code);
+      continue;
+    }
+    placed.push({ slot: next.slot, code, prev: cardIn(draft, next.slot) });
+    draft = withCard(draft, next.slot, code);
+    last = next.slot;
+  }
+  return {
+    draft,
+    placed,
+    kept,
+    taken,
+    held,
+    overflow,
+    active: last ? nextEmptySlot(draft, last) : active,
+  };
+}
+
+/**
+ * Снять карты одного `placeCards`: только те, что ещё лежат на своих местах (поправленные касанием
+ * не трогаем, убранного игрока — тоже); на место замены возвращается прежняя карта, если её никто не
+ * занял.
+ */
+export function unplaceCards(d: ShowdownDraft, placed: readonly PlacedCard[]): ShowdownDraft {
+  let draft = d;
+  for (const p of [...placed].reverse()) {
+    const exists = slotOrder(draft).some((s) => sameSlot(s, p.slot));
+    if (!exists || cardIn(draft, p.slot) !== p.code) continue;
+    const back = p.prev && !usedCards(draft).has(p.prev) ? p.prev : null;
+    draft = withCard(draft, p.slot, back);
+  }
+  return draft;
+}
+
 export type DraftCheck = { ok: true; payload: ShowdownPayload } | { ok: false; reason: string };
 
 /** Можно ли отправить черновик и что именно уйдёт; иначе — что сделать, на «ты». */

@@ -33,3 +33,4 @@ export {
 export * from './stories';
 export * from './seasonView';
 export * from './welcome';
+export * from './speech';

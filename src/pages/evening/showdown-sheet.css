@@ -255,3 +255,156 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+
+/*
+ * Голосовой ввод (ShowdownVoice.tsx, DESIGN.md «Терминал»): кнопка «Сказать карты» (secondary; пока
+ * слушает — рамка и текст accent, подпись «Остановить»). Под ней — что слышно: моно, приглашение «>»
+ * accent, курсор мигает step-end раз в секунду (reduced-motion — без мигания); метка итога в скобках
+ * ([ ЛЕГЛО ], [ НЕ РАЗОБРАНО ], [ ОШИБКА ]); карты строкой — моно-ранг и значок масти в две краски, как
+ * значки мастей вне карты (♠♣ ink, ♥♦ critical); замечания — caution; под итогом — ghost «Отменить»
+ * (отдельной строкой: рядом с «Сказать карты» на 320 px не помещается); подсказки — m-small
+ * ink-muted. Блок отделён линиями 1px line сверху и снизу.
+ */
+.ev-voice {
+  display: grid;
+  gap: var(--space-2);
+  padding-block: var(--space-3);
+  border-block: 1px solid var(--line);
+}
+
+/* Прилипшие места уже подведены линией снизу — вторая линия над блоком не нужна. */
+@media (min-height: 600px) {
+  .ev-sd-slots--sticky1 + .ev-voice,
+  .ev-sd-slots--sticky2 + .ev-voice {
+    border-top: none;
+  }
+}
+
+@media (min-height: 760px) {
+  .ev-sd-slots--sticky3 + .ev-voice {
+    border-top: none;
+  }
+}
+
+.ev-voice__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ev-voice__undo {
+  justify-self: start;
+}
+
+.ev-voice__say[data-listening='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ev-voice__out {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ev-voice__out:empty {
+  display: none;
+}
+
+.ev-voice__line,
+.ev-voice__note,
+.ev-voice__hint,
+.ev-voice__heard {
+  margin: 0;
+}
+
+.ev-voice__heard {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.ev-voice__heard--live {
+  color: var(--ink);
+}
+
+.ev-voice__prompt {
+  color: var(--accent);
+}
+
+.ev-voice__cursor {
+  display: inline-block;
+  inline-size: 8px;
+  block-size: 16px;
+  margin-inline-start: 2px;
+  vertical-align: -3px;
+  background: var(--accent);
+  animation: ev-voice-blink 1s step-end infinite;
+}
+
+@keyframes ev-voice-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.ev-voice__hint {
+  color: var(--ink-muted);
+}
+
+.ev-voice__queue {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.ev-voice__note {
+  color: var(--caution);
+}
+
+.ev-voice__placed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.ev-voice__group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ev-voice__owner {
+  font-size: var(--m-small-size);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ev-voice__cards {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ev-voice__card {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  font-family: var(--m-font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ev-voice__card .ui-suit {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ev-voice__cursor {
+    animation: none;
+  }
+}

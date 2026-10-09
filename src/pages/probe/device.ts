@@ -165,51 +165,17 @@ export async function imageSize(file: Blob): Promise<{ width: number; height: nu
   }
 }
 
-// ---------- Распознавание речи (в lib.dom его нет) ----------
+// ---------- Распознавание речи ----------
 
-export interface SpeechAlternativeLike {
-  transcript: string;
-  confidence: number;
-}
-
-export interface SpeechResultLike {
-  readonly isFinal: boolean;
-  readonly length: number;
-  [index: number]: SpeechAlternativeLike;
-}
-
-export interface SpeechRecognitionLike {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  maxAlternatives: number;
-  onstart: (() => void) | null;
-  onresult: ((event: { resultIndex: number; results: ArrayLike<SpeechResultLike> }) => void) | null;
-  onerror: ((event: { error: string; message?: string }) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
-  abort(): void;
-}
-
-export interface SpeechRecognitionCtor {
-  new (): SpeechRecognitionLike;
-  /** Chrome 139+: доступно ли распознавание на самом устройстве (без сервера). */
-  available?: (options: { langs: string[]; processLocally: boolean }) => Promise<string>;
-}
-
-export interface SpeechApis {
-  standard: SpeechRecognitionCtor | null;
-  webkit: SpeechRecognitionCtor | null;
-}
-
-export function speechApis(): SpeechApis {
-  const w = window as Window & {
-    SpeechRecognition?: SpeechRecognitionCtor;
-    webkitSpeechRecognition?: SpeechRecognitionCtor;
-  };
-  return { standard: w.SpeechRecognition ?? null, webkit: w.webkitSpeechRecognition ?? null };
-}
+// Типы и поиск конструктора — общие с голосовым вводом карт олл-ина (shared/lib/speech.ts).
+export {
+  speechApis,
+  type SpeechAlternativeLike,
+  type SpeechApis,
+  type SpeechRecognitionCtor,
+  type SpeechRecognitionLike,
+  type SpeechResultLike,
+} from '../../shared/lib/speech';
 
 // ---------- AudioContext ----------
 

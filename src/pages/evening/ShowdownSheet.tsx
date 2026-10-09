@@ -9,6 +9,8 @@
 // закрывает раздачу. Открыта с пульта по «Записать вылеты» или «Вылет и ребай» (river) — на раздаче
 // после ривера, даже если табло её уже спрятало.
 // В игре ровно двое (хедз-ап вечера) — новый олл-ин начинается с обоими отмеченными.
+// Карты можно и сказать голосом («Сказать карты», ShowdownVoice.tsx): они ложатся в те же места по
+// очереди, на табло уходят той же главной кнопкой; пока телефон слушает, кнопки внизу недоступны.
 import { riverBustSuggestion } from '@domain/riverBusts.ts';
 import { CARD_RANKS, CARD_SUITS, streetOf, visibleShowdown } from '@domain/showdown.ts';
 import type { PlayerId } from '@domain/types.ts';
@@ -42,6 +44,7 @@ import {
 import './showdown-sheet.css';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
+import { ShowdownVoice, type VoiceResult } from './ShowdownVoice';
 
 export interface ShowdownSheetProps {
   open: boolean;
@@ -92,6 +95,11 @@ function ShowdownSheetInner({
   );
   const [editPlayers, setEditPlayers] = useState(start.draft.players.length === 0);
   const [sending, setSending] = useState(false);
+  // Итог последней фразы голосом: что легло — для «Отменить».
+  const [voice, setVoice] = useState<VoiceResult | null>(null);
+  // Телефон слушает фразу: её итог ляжет в черновик позже — пока не отправляем (иначе он лёг бы во
+  // время отправки и остался неотправленным, а подсветка встала бы по отправленному черновику).
+  const [listening, setListening] = useState(false);
 
   // Раздача этого черновика (после первой отправки — она же), пока она в состоянии вечера: на табло
   // или уже спрятанная им. Шторка, открытая на раздаче, её не теряет — ни когда табло вернулось к
@@ -105,6 +113,8 @@ function ShowdownSheetInner({
   const used = usedCards(draft);
   const current = active ? cardIn(draft, active) : null;
   const busy = sending || actions.busy;
+  // Кнопки внизу шторки: ещё и пока телефон слушает.
+  const footerBusy = busy || listening;
   // После ривера: кто проиграл раздачу и ещё в игре — предложение записать вылет (здесь — и после
   // «Не записывать» на пульте: шторка открыта нарочно).
   const suggestion =
@@ -128,6 +138,7 @@ function ShowdownSheetInner({
     // Состав сменился — к первому пустому месту: карты нового игрока раньше стола, а места
     // убранного больше нет.
     setActive(nextEmptySlot(next, null));
+    setVoice(null);
   };
 
   const pick = (code: string) => {
@@ -154,6 +165,8 @@ function ShowdownSheetInner({
     if (record) {
       setEditPlayers(false);
       setActive(nextEmptySlot(draft, null));
+      // Карты на табло — снимать их голосовым «Отменить» поздно (отмена — в тосте).
+      setVoice(null);
     }
   };
 
@@ -190,19 +203,21 @@ function ShowdownSheetInner({
     if (record) onClose();
   };
 
-  const hint = !check.ok
-    ? draft.players.length === 0 && editPlayers
-      ? 'Отметь, кто вскрылся, — потом их карты.'
-      : check.reason
-    : domainProblem
-      ? domainProblem
-      : riverDone && suggestion
-        ? 'Запись закроет раздачу. Никто не вылетел — «Закрыть раздачу».'
-        : riverDone
-          ? published === visible
-            ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
-            : 'Закрой раздачу — она больше не нужна. Поправить карту: нажми на неё выше.'
-          : null;
+  const hint = listening
+    ? 'Телефон слушает — дождись конца фразы или нажми «Остановить».'
+    : !check.ok
+      ? draft.players.length === 0 && editPlayers
+        ? 'Отметь, кто вскрылся, — потом их карты.'
+        : check.reason
+      : domainProblem
+        ? domainProblem
+        : riverDone && suggestion
+          ? 'Запись закроет раздачу. Никто не вылетел — «Закрыть раздачу».'
+          : riverDone
+            ? published === visible
+              ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
+              : 'Закрой раздачу — она больше не нужна. Поправить карту: нажми на неё выше.'
+            : null;
 
   const description = published
     ? published === visible
@@ -231,12 +246,17 @@ function ShowdownSheetInner({
                 block
                 icon={rebuys.length > 0 ? 'refresh-cw' : 'user-x'}
                 loading={sending}
-                disabled={busy || choice.byChips.length === 0}
+                disabled={footerBusy || choice.byChips.length === 0}
                 onClick={() => void recordBusts()}
               >
                 {riverBustLabel(choice.byChips.map(nameOf), rebuys.length)}
               </Button>
-              <Button variant="ghost" block disabled={busy} onClick={() => void closeShowdown()}>
+              <Button
+                variant="ghost"
+                block
+                disabled={footerBusy}
+                onClick={() => void closeShowdown()}
+              >
                 Закрыть раздачу
               </Button>
             </>
@@ -246,7 +266,7 @@ function ShowdownSheetInner({
               block
               icon="check"
               loading={sending}
-              disabled={busy}
+              disabled={footerBusy}
               onClick={() => void closeShowdown()}
             >
               Закрыть раздачу
@@ -258,13 +278,18 @@ function ShowdownSheetInner({
                 block
                 icon="eye"
                 loading={sending}
-                disabled={busy || !payload || !changed || Boolean(domainProblem)}
+                disabled={footerBusy || !payload || !changed || Boolean(domainProblem)}
                 onClick={() => void send()}
               >
                 {sendLabel(payload, published)}
               </Button>
               {published && (
-                <Button variant="ghost" block disabled={busy} onClick={() => void closeShowdown()}>
+                <Button
+                  variant="ghost"
+                  block
+                  disabled={footerBusy}
+                  onClick={() => void closeShowdown()}
+                >
                   Закрыть раздачу
                 </Button>
               )}
@@ -352,6 +377,22 @@ function ShowdownSheetInner({
               </div>
             </div>
           </div>
+        )}
+
+        {draft.players.length > 0 && (
+          <ShowdownVoice
+            draft={draft}
+            active={active}
+            nameOf={nameOf}
+            disabled={busy}
+            result={voice}
+            onResult={setVoice}
+            onDraft={(next, slot) => {
+              setDraft(next);
+              setActive(slot);
+            }}
+            onListening={setListening}
+          />
         )}
 
         <div
