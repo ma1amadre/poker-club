@@ -173,8 +173,13 @@ export function PlayersList({
             before={<Avatar name={nameOf(p.playerId)} photoUrl={info?.photo_url} size="lg" />}
             title={
               <>
-                {nameOf(p.playerId)}
-                {p.playerId === meId && ' (ты)'}
+                <span className="ui-name">{nameOf(p.playerId)}</span>
+                {p.playerId === meId && (
+                  <>
+                    {' '}
+                    <span className="ui-me-tag">ты</span>
+                  </>
+                )}
                 {info?.is_guest && <span className="m-small"> · гость</span>}
               </>
             }
@@ -303,18 +308,21 @@ export function EventRow({
   const subtitle = [line.detail, error ? `не принято: ${error}` : null].filter(Boolean).join(' · ');
   return (
     <ListItem
-      before={<EventIcon type={event.type} />}
+      // Строка лога, как на холсте «Терминала»: время · вид записи (иконка) · текст.
+      before={
+        <span className="ev-row-before">
+          <span className="m-mono ev-row-time">{formatTime(event.at)}</span>
+          <EventIcon type={event.type} />
+        </span>
+      }
       title={event.voided ? <span className="ev-voided">{line.title}</span> : line.title}
       subtitle={subtitle || undefined}
       after={
-        <span className="ev-row-after">
-          <span className="m-mono m-small">{formatTime(event.at)}</span>
-          {event.voided ? (
-            <Badge tone="neutral">Отменено</Badge>
-          ) : error ? (
-            <Badge tone="caution">Не принято</Badge>
-          ) : null}
-        </span>
+        event.voided ? (
+          <Badge tone="neutral">Отменено</Badge>
+        ) : error ? (
+          <Badge tone="caution">Не принято</Badge>
+        ) : undefined
       }
       onClick={onSelect && !event.voided ? () => onSelect(event) : undefined}
       chevron={Boolean(onSelect) && editable && !event.voided}

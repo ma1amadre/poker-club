@@ -44,8 +44,9 @@ function Standalone({ children }: { children: ReactNode }) {
 
 /**
  * Маршруты из контракта (ARCHITECTURE.md → «Фронт»). Табло /board/:token и табло клуба /tv/:code —
- * публичные, вне AuthProvider: на ТВ нет Telegram, и попытка входа там не нужна. Регистр табло — Янтарь
- * (ThemeScope), при уходе с табло регистр возвращается к Кобальту. Остальное — под AuthGate.
+ * публичные, вне AuthProvider: на ТВ нет Telegram, и попытка входа там не нужна. Регистр табло —
+ * «Терминал», как у всего приложения (ThemeScope — явно, чтобы табло не зависело от базового).
+ * Витрины dev — на своих регистрах. Остальное — под AuthGate.
  */
 export function AppRoutes() {
   return (
@@ -53,7 +54,7 @@ export function AppRoutes() {
       <Route
         path="/board/:token"
         element={
-          <ThemeScope theme="yantar">
+          <ThemeScope theme="terminal">
             <Standalone>
               <BoardPage />
             </Standalone>
@@ -63,7 +64,7 @@ export function AppRoutes() {
       <Route
         path="/tv/:code"
         element={
-          <ThemeScope theme="yantar">
+          <ThemeScope theme="terminal">
             <Standalone>
               <ClubBoardPage />
             </Standalone>

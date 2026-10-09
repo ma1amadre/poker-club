@@ -1,0 +1,208 @@
+/*
+ * Регистр «Терминал» — главный и единственный регистр приложения и ТВ-табло (решение пользователя,
+ * 08.10.2026; спека — DESIGN.md). Брутализм, сырой лог: только тёмная тема, радиус 0, теней нет —
+ * глубину дают линия 1px --line и разница поверхностей. Inter — текст и имена, JetBrains Mono — цифры,
+ * метки, заголовки экранов.
+ *
+ * Контракт — как у регистров «Материи» (src/vendor/materia/materia.css): семантические токены, шкалы,
+ * графики, тени, примитивы формы и движения, роли --m-*. data-theme висит на <html>, он же :root, —
+ * блок «Материи» `:root, [data-theme="kobalt"]` тоже применяется к нему, поэтому здесь переопределено
+ * ВСЁ, что он задаёт (иначе протекает синий Кобальт). Файл подключается сразу после materia.css
+ * (main.tsx): при равной специфичности побеждает он. Компонентные правила — styles/terminal.css.
+ *
+ * --ground — литерал #RRGGBB: syncTelegramChrome (useTheme.ts) красит им шапку и фон Telegram.
+ * Своё сверх «Материи»: --font-inter; игральная карта — --card-face / --card-ink / --suit-red.
+ */
+[data-theme='terminal'] {
+  color-scheme: dark;
+
+  /* ---------- Цвет: семантика ---------- */
+  --ground: #0a0a0a;
+  --surface: #141414;
+  --surface-sunken: #000000;
+  --line: #262626;
+  --line-strong: #606060;
+  --ink: #e5e5e5;
+  --ink-muted: #858585;
+  --accent: #f5a623;
+  --accent-hover: #ffb84d;
+  --accent-soft: rgba(245, 166, 35, 0.15);
+  --on-accent: #0a0a0a;
+  --positive: #27ae60;
+  --positive-soft: rgba(39, 174, 96, 0.15);
+  --caution: #f2c94c;
+  --caution-soft: rgba(242, 201, 76, 0.15);
+  --critical: #eb4046;
+  --critical-soft: rgba(235, 64, 70, 0.15);
+  --mat-kobalt: #2233d9;
+  --mat-farfor: #1e4b3e;
+  --mat-yantar: #ffb23f;
+  --focus: var(--accent);
+  --link: var(--accent);
+
+  /* ---------- Шкалы: нейтральная (серая, без оттенка) и accent (янтарь на чёрном) ---------- */
+  --neutral-1: #000000;
+  --neutral-2: #0a0a0a;
+  --neutral-3: #141414;
+  --neutral-4: #1a1a1a;
+  --neutral-5: #202020;
+  --neutral-6: #262626;
+  --neutral-7: #363636;
+  --neutral-8: #4a4a4a;
+  --neutral-9: #606060;
+  --neutral-10: #737373;
+  --neutral-11: #858585;
+  --neutral-12: #e5e5e5;
+  --accent-1: #140f06;
+  --accent-2: #1c1407;
+  --accent-3: #2d210e;
+  --accent-4: #3a2a10;
+  --accent-5: #4b3612;
+  --accent-6: #614514;
+  --accent-7: #7f5a17;
+  --accent-8: #a3731b;
+  --accent-9: #f5a623;
+  --accent-10: #ffb84d;
+  --accent-11: #f7b955;
+  --accent-12: #fde8c4;
+  --fill-hover: var(--neutral-4);
+  --fill-pressed: var(--neutral-5);
+  --scrim: #000000cc;
+
+  /* ---------- Графики: первый слот — accent ---------- */
+  --chart-1: #f5a623;
+  --chart-2: #e5e5e5;
+  --chart-3: #27ae60;
+  --chart-4: #eb4046;
+  --chart-5: #4c9aff;
+  --chart-6: #b07cf0;
+  --chart-7: #f2c94c;
+  --chart-8: #858585;
+  --chart-seq-1: var(--accent-4);
+  --chart-seq-2: var(--accent-6);
+  --chart-seq-3: var(--accent-8);
+  --chart-seq-4: var(--accent-9);
+  --chart-seq-5: var(--accent-12);
+  --chart-div-1: #4c9aff;
+  --chart-div-2: #2f5b94;
+  --chart-div-3: #363636;
+  --chart-div-4: #a3731b;
+  --chart-div-5: #f5a623;
+
+  /* ---------- Теней нет; фокус — outline 1px accent (styles/terminal.css), не кольцо ---------- */
+  --shadow-raise: none;
+  --shadow-float: none;
+  /* Токен остаётся валидной тенью для составных значений «inset …, var(--focus-ring)». */
+  --focus-ring: 0 0 0 0 transparent;
+
+  /* ---------- Игральная карта: светлое лицо, две краски ---------- */
+  --card-face: #e5e5e5;
+  --card-ink: #0a0a0a;
+  --suit-red: #e0282e;
+
+  /* ---------- Примитивы формы и движения ---------- */
+  --radius-0: 0px;
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-full: 0px;
+  /* Движение «механическое»: 100–200 мс, linear (step-end — у мигания); пружин и ease нет. */
+  --dur-instant: 100ms;
+  --dur-quick: 120ms;
+  --dur-brisk: 160ms;
+  --dur-calm: 200ms;
+  --dur-slow: 200ms;
+  --dur-cinema: 200ms;
+  --ease-precise: linear;
+  --ease-gallery: linear;
+  --ease-stage: linear;
+  --ease-exit: linear;
+  --scale-press: 1;
+  --scale-enter: 1;
+
+  --font-inter: 'Inter', 'Segoe UI', system-ui, sans-serif;
+
+  /* ---------- Роли «Материи» ---------- */
+  --m-font-display: var(--font-jetbrains);
+  --m-font-text: var(--font-inter);
+  --m-font-mono: var(--font-jetbrains);
+  --m-font-eyebrow: var(--font-jetbrains);
+  /* Заголовки экранов (display, h1, h2) — моноширинные прописные; шкала телефона — 24. */
+  --m-display-weight: 700;
+  --m-display-case: uppercase;
+  --m-display-vary: normal;
+  --m-display-size: clamp(40px, 4.4vw + 16px, 64px);
+  --m-display-lh: 1;
+  --m-display-track: -0.02em;
+  --m-h1-size: 24px;
+  --m-h1-lh: 1.34;
+  --m-h1-track: 0.02em;
+  --m-h2-size: 24px;
+  --m-h2-lh: 1.34;
+  --m-h2-track: 0.02em;
+  /* h3 — заголовок группы: моно 15, прописные (styles/terminal.css). */
+  --m-h3-family: var(--font-jetbrains);
+  --m-h3-weight: 700;
+  --m-h3-size: 15px;
+  --m-h3-lh: 1.6;
+  --m-h3-track: 0.04em;
+  --m-h3-vary: normal;
+  --m-em-style: normal;
+  --m-em-color: var(--accent);
+  /* Текст 15, подпись 12, моно 14, моно-заголовок 24. */
+  --m-lede-size: 15px;
+  --m-lede-lh: 1.6;
+  --m-body-size: 15px;
+  --m-body-lh: 1.6;
+  --m-small-size: 12px;
+  --m-eyebrow-size: 12px;
+  --m-eyebrow-track: 0.08em;
+  --m-figure-family: var(--font-jetbrains);
+  --m-figure-weight: 700;
+  --m-figure-size: 24px;
+  --m-figure-track: 0;
+  --m-price-size: 24px;
+  --m-quote-family: var(--font-inter);
+  --m-quote-size: 20px;
+  --m-quote-lh: 1.5;
+  --m-quote-weight: 400;
+  --m-quote-style: normal;
+  --m-quote-track: 0;
+  --m-quote-case: none;
+  /* Подписи кнопок — прописные. */
+  --m-btn-size: 14px;
+  --m-btn-weight: 600;
+  --m-btn-case: uppercase;
+  --m-btn-track: 0.06em;
+  --m-control-h: 44px;
+  --m-r-control: 0px;
+  --m-r-card: 0px;
+  --m-r-badge: 0px;
+  --m-r-check: 0px;
+  --m-r-switch: 0px;
+  --m-r-tip: 0px;
+  --m-r-menu: 0px;
+  --m-r-avatar: 0px;
+  --m-r-progress: 0px;
+  --m-card-shadow: none;
+  --m-raised-border: var(--line);
+  --m-rule: var(--line);
+  --m-icon-stroke: 1.5;
+  --m-dur: var(--dur-quick);
+  --m-ease: linear;
+  --m-section: var(--space-7);
+  --m-slide-display: 6.4cqw;
+  --m-slide-h1: 4.2cqw;
+  --m-dialog-title: 24px;
+  --m-marquee-size: 44px;
+}
+
+/*
+ * Высота контрола — 44 px и на тач-экранах: base.css поднимает --m-control-h до 48 правилом
+ * `:root` в (pointer: coarse), которое грузится позже, — здесь специфичность выше.
+ */
+:root[data-theme='terminal'] {
+  --m-control-h: 44px;
+}

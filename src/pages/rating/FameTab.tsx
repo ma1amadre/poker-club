@@ -93,7 +93,7 @@ function TrophyCard({ ctx, entry }: { ctx: RatingContext; entry: HallOfFameEntry
             <Icon name="trophy" size={16} />
             Переходящий трофей
           </p>
-          <p className="m-h3 rt-trophy__name">{names}</p>
+          <p className="m-h3 ui-name rt-trophy__name">{names}</p>
           <p className="m-small">
             Чемпион {formatSeasonGenitive(entry.seasonKey)} · {formatPointsWithUnit(entry.total)}
           </p>

@@ -6,12 +6,13 @@
 // этого вечера; кнопка видна и 6 ч после финала — столько живёт ссылка вечера.
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { EVENING_STATUS_META, isTrainingEvening, useSettings } from '../../shared/api';
+import { isTrainingEvening, useSettings } from '../../shared/api';
 import { formatDate, formatWeekdayDate, formatTime, paths } from '../../shared/lib';
 import {
   ButtonLink,
   Empty,
   ErrorView,
+  EveningStatusBadge,
   IconButton,
   Notice,
   Page,
@@ -85,12 +86,12 @@ function EveningScreen({ model }: { model: EveningModel }) {
   const showTv =
     Boolean(evening.board_token) &&
     (evening.status === 'announced' || evening.status === 'live' || recentlyFinished);
-  const statusTitle = EVENING_STATUS_META[evening.status].title;
 
   return (
     <Page
       back
-      eyebrow={statusTitle}
+      // Статус — метка «[ ИДЁТ ИГРА ]», как на холсте «Терминала» (слово то же, что у бейджа везде).
+      eyebrow={<EveningStatusBadge status={evening.status} />}
       title={`${training ? 'Тренировка' : 'Вечер'} ${formatDate(evening.scheduled_at, model.nowMs)}`}
       subtitle={tableMode ? undefined : subtitle}
       className={tableMode ? 'ev-page--table' : undefined}

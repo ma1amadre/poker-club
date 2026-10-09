@@ -1,6 +1,7 @@
 /*
- * Экраны вечера и расчёта (Кобальт). Только токены и роли «Материи»: цвета — семантика,
- * отступы — space-N, радиусы и тени — роли регистра, движение — токены dur и ease.
+ * Экраны вечера и расчёта («Терминал», DESIGN.md). Только токены и роли регистра: цвета — семантика,
+ * отступы — space-N, радиусы и тени — роли регистра (в «Терминале» 0 и none), движение — токены dur и
+ * ease.
  */
 
 /* ---------- «Ты за столом» (MySeatCard) ---------- */
@@ -362,4 +363,59 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(96px, 100%), 1fr));
   gap: var(--space-2);
+}
+
+/* ---------- «Терминал» (DESIGN.md) ---------- */
+
+/* Строка ленты — строка лога: время моно 12, значок вида записи без подложки, текст. */
+.ev-row-before {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ev-row-time {
+  font-size: var(--m-small-size);
+  color: var(--ink-muted);
+}
+
+[data-theme='terminal'] .ev-feed-icon {
+  width: 20px;
+  height: 20px;
+  background: transparent;
+}
+
+[data-theme='terminal'] .ev-feed-icon--bust {
+  color: var(--critical);
+}
+
+/* Место в итоге — моно 14 двумя знаками («01»). */
+[data-theme='terminal'] .ev-place {
+  min-width: 24px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+/* Расчёт: длинная метка «[ БАНКИР ДОЛЖЕН 1 300 ₽ ]» переносится по словам, а не раздвигает строку. */
+[data-theme='terminal'] .ev-settle-sub .m-badge {
+  display: inline;
+  max-width: 100%;
+  white-space: normal;
+}
+
+[data-theme='terminal'] .ev-row-after .m-small {
+  font-family: var(--m-font-mono);
+  text-transform: uppercase;
+}
+
+/* Часы уровня (карточка «Подробно», шторка «Часы и уровень») — accent, как таймер холста; на паузе
+   — приглушённые (правило выше). */
+[data-theme='terminal'] .ev-clock__time:not(.ev-clock__time--paused) {
+  color: var(--accent);
+}
+
+/* Строка перерыва у часов — моно, как строка под полосой часов пульта. */
+[data-theme='terminal'] .ev-clock__break {
+  font-family: var(--m-font-mono);
 }

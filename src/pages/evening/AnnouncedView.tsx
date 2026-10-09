@@ -324,6 +324,7 @@ function MyRsvp({
       <Segmented<RsvpStatus | ''>
         label="Твой ответ на анонс"
         block
+        className="ui-seg--buttons"
         value={value}
         options={RSVP_OPTIONS}
         onChange={(status) => {

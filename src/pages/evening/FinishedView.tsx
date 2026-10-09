@@ -181,14 +181,14 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
             />
             <div className="ev-winner__text">
               <p className="m-eyebrow">Победитель вечера</p>
-              <p className="m-h2 ev-winner__name">{nameOf(winnerId)}</p>
+              <p className="m-h2 ui-name ev-winner__name">{nameOf(winnerId)}</p>
               <p className="m-small">Приз {formatRub(money[winnerId]?.prizeRub ?? 0)}</p>
             </div>
           </div>
         </Card>
       )}
 
-      <Stats>
+      <Stats className="ui-stats--cells">
         <Stat label="Призовой фонд" value={formatNumber(state.prizePoolRub)} unit="₽" />
         <Stat
           label="Входов"
@@ -284,13 +284,19 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
                       className="m-mono ev-place"
                       aria-label={p.place ? `${ordinalPlace(p.place)} место` : undefined}
                     >
-                      {p.place ?? '—'}
+                      {/* «01» — место двумя знаками, как в таблицах «Терминала». */}
+                      {p.place ? String(p.place).padStart(2, '0') : '—'}
                     </span>
                   }
                   title={
                     <>
-                      {nameOf(p.playerId)}
-                      {p.playerId === player?.id && ' (ты)'}
+                      <span className="ui-name">{nameOf(p.playerId)}</span>
+                      {p.playerId === player?.id && (
+                        <>
+                          {' '}
+                          <span className="ui-me-tag">ты</span>
+                        </>
+                      )}
                       {playersById.get(p.playerId)?.is_guest && (
                         <span className="m-small"> · гость</span>
                       )}
@@ -452,8 +458,13 @@ function EveningPredictions({ model, meId }: { model: EveningModel; meId: string
               before={<Avatar name={nameOf(row.playerId)} photoUrl={who?.photo_url} size="md" />}
               title={
                 <>
-                  {nameOf(row.playerId)}
-                  {row.playerId === meId && ' (ты)'}
+                  <span className="ui-name">{nameOf(row.playerId)}</span>
+                  {row.playerId === meId && (
+                    <>
+                      {' '}
+                      <span className="ui-me-tag">ты</span>
+                    </>
+                  )}
                 </>
               }
               subtitle={predictionPickLine(row, nameOf)}

@@ -12,8 +12,9 @@
 //                                                  подключён из src/styles/base.css
 //
 // Какие шрифты — только регистры, которые использует приложение (ARCHITECTURE.md → «Фронт»):
-//   Кобальт (всё приложение) — Geologica и Martian Mono;
-//   Янтарь (табло /board)    — Sofia Sans Condensed, Sofia Sans, JetBrains Mono.
+//   Терминал (всё приложение и табло) — Inter (текст) и JetBrains Mono (цифры, метки, заголовки);
+//   Кобальт (витрина /dev/kit)        — Geologica и Martian Mono;
+//   Янтарь (витрина /dev/kit-yantar)  — Sofia Sans Condensed, Sofia Sans, JetBrains Mono.
 // Фарфор (Literata, Commissioner) не используется и не скачивается.
 //
 // Оси. Geologica — вариативная с осями wght и SHRP: «Материя» пишет заголовкам
@@ -29,7 +30,7 @@
 // (в Sofia Sans знака рубля нет — на табло он, как и раньше, из фолбэка).
 //
 // Браузер скачивает файл шрифта, только когда на экране есть текст этим семейством и символом из
-// unicode-range файла. Поэтому шрифты Янтаря грузятся только на табло (и в витрине /dev/kit-yantar),
+// unicode-range файла. Поэтому шрифты Кобальта и Янтаря грузятся только в своих dev-витринах,
 // а на основном экране их нет даже в очереди.
 //
 // Почему не @fontsource-variable/*: у Geologica там тоже есть файлы с wght + SHRP (shrp.css, проверено),
@@ -56,6 +57,9 @@ const cssPath = join(root, 'src', 'styles', 'fonts.css');
  * ofl — папка семейства в github.com/google/fonts/tree/main/ofl.
  */
 const FAMILIES = [
+  // Регистр «Терминал» (src/styles/terminal-theme.css, DESIGN.md) — главный. Inter: только ось wght
+  // (opsz зафиксирован на значении по умолчанию — рисунок текстового кегля, файл легче).
+  { family: 'Inter', register: 'Терминал', axes: 'wght@400..700', ofl: 'inter' },
   { family: 'Geologica', register: 'Кобальт', axes: 'wght,SHRP@100..900,0..100', ofl: 'geologica' },
   {
     family: 'Martian Mono',
@@ -70,7 +74,13 @@ const FAMILIES = [
     ofl: 'sofiasanscondensed',
   },
   { family: 'Sofia Sans', register: 'Янтарь', axes: 'wght@300..700', ofl: 'sofiasans' },
-  { family: 'JetBrains Mono', register: 'Янтарь', axes: 'wght@400..700', ofl: 'jetbrainsmono' },
+  // JetBrains Mono — общий у Янтаря и Терминала; 800 — цифры табло в Терминале.
+  {
+    family: 'JetBrains Mono',
+    register: 'Терминал, Янтарь',
+    axes: 'wght@400..800',
+    ofl: 'jetbrainsmono',
+  },
 ];
 const SUBSETS = ['cyrillic', 'latin'];
 /** Символы интерфейса вне latin и cyrillic. Новый такой символ в UI — дописать сюда и перезапустить. */
@@ -317,10 +327,10 @@ writeFileSync(
 
 const css = [
   '/*',
-  ' * Шрифты «Материи» — свои файлы из public/fonts, без Google Fonts. Сгенерировано',
+  ' * Шрифты регистров — свои файлы из public/fonts, без Google Fonts. Сгенерировано',
   ' * scripts/fetch-fonts.mjs — руками не править. Пути от корня сайта: Vite допишет к ним BASE_PATH.',
-  ' * Файл шрифта браузер качает, только когда текст этим семейством есть на экране: шрифты Янтаря',
-  ' * грузятся только на табло. Лицензия — public/fonts/OFL.txt.',
+  ' * Файл шрифта браузер качает, только когда текст этим семейством есть на экране: шрифты Кобальта',
+  ' * и Янтаря грузятся только в dev-витринах. Лицензия — public/fonts/OFL.txt.',
   ' */',
   '',
   cssBlocks.join('\n\n'),

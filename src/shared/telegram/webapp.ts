@@ -118,12 +118,6 @@ export function getStartParam(): string | null {
   }
 }
 
-/** Цветовая схема: в Telegram — схема клиента (светлая/тёмная), в браузере — системная. */
-export function getColorScheme(): ColorScheme {
-  if (isInTelegram()) return getWebApp()?.colorScheme ?? 'light';
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
 /** Клиенты Telegram для компьютера, где Mini App живёт в отдельном окне. */
 const DESKTOP_PLATFORMS: ReadonlySet<string> = new Set(['tdesktop', 'macos']);
 

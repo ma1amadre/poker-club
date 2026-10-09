@@ -36,8 +36,9 @@ export function Rank({
     <span className="rt-rank">
       <span className="rt-place-col">
         <span className={cn('rt-place', 'm-mono', place <= 3 && 'rt-place--top')}>
-          <span className="sr-only">Место </span>
-          {place}
+          <span className="sr-only">Место {place}</span>
+          {/* Номер места двумя знаками — «01», как строки таблиц «Терминала». */}
+          <span aria-hidden="true">{String(place).padStart(2, '0')}</span>
         </span>
         {move !== undefined && <MoveMark move={move} />}
       </span>
@@ -99,7 +100,7 @@ export function PlayerName({ ctx, id }: { ctx: RatingContext; id: PlayerId }) {
           label={`Чемпион ${formatSeasonGenitive(champion)}`}
         />
       )}
-      {ctx.meId === id && <span className="rt-name__me">ты</span>}
+      {ctx.meId === id && <span className="rt-name__me ui-me-tag">ты</span>}
     </span>
   );
 }

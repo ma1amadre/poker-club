@@ -1,13 +1,16 @@
 /*
- * Табло для ТВ — регистр Янтарь (всегда тёмный): плакатные заголовки, крупные цифры, разделы через
- * space-9. Единственный градиент — мягкое радиальное свечение accent до 16 % за главным числом
- * (исключение из правил «Материи» именно для Янтаря). Раскладка: телефон вертикально — колонка;
+ * Табло для ТВ — регистр «Терминал» (DESIGN.md; ThemeScope в routes.tsx, всегда тёмный): крупные
+ * моноширинные цифры, без свечения, ореолов и плавных волн. Раскладка: телефон вертикально — колонка;
  * от 1024 px в горизонтали — таймер слева, стол и деньги справа, своя шкала шрифтов ТВ (ниже).
  * Сигналы без звука (решение клуба: звук — только голос): пауза — на весь блок часов, последняя
- * минута уровня — цвет цифр, смена уровня — вспышка блока (prefers-reduced-motion — без анимации).
+ * минута уровня — цвет цифр, смена уровня и «перерыв вышел» — механическое мигание фона блока часов
+ * (prefers-reduced-motion — неподвижная подсветка). Типографика, которая спорит с правилами кита
+ * (styles/terminal.css, они с префиксом регистра), — фрагментом [data-theme='terminal'] в конце файла.
  */
 
 .bd {
+  /* Плитки телефона (В игре, Фонд, выплаты) — 40 px; на ТВ — шкала .bd-screen. */
+  --m-figure-size: 40px;
   display: grid;
   align-content: start;
   gap: var(--space-7);
@@ -72,36 +75,41 @@
   justify-items: start;
   gap: var(--space-4);
   min-width: 0;
-  border-radius: var(--m-r-card);
-  /* Контейнер для cqi: блайнды последнего уровня вписываются в ширину колонки (.bd-big--wide). */
+  /* Контейнер для cqi: часы и блайнды последнего уровня вписываются в ширину колонки (.bd-big). */
   container-type: inline-size;
-  /* Насколько подложка паузы и вспышка выходят за блок: на телефоне меньше бокового поля. */
+  /*
+   * Насколько подложка паузы и мигание выходят за блок (на телефоне меньше бокового поля): поле
+   * блока с тем же отрицательным отступом — раскладка не двигается, когда пауза начинается и
+   * кончается; граница 1px прозрачная, пока нет сигнала.
+   */
   --bd-halo: var(--space-3);
+  margin: calc(-1 * var(--bd-halo));
+  padding: calc(var(--bd-halo) - 1px);
+  border: 1px solid transparent;
 }
 
-/* Пауза — на весь блок: подложка accent-soft вокруг всего блока. Тенью без размытия, а не
-   отступом, — раскладка не прыгает, когда пауза начинается и кончается. */
+/* Пауза — на весь блок: подложка accent-soft и рамка accent. */
 .bd-clock--paused {
   background: var(--accent-soft);
-  box-shadow: 0 0 0 var(--bd-halo) var(--accent-soft);
+  border-color: var(--accent);
 }
 
 /*
- * Перерыв на N минут вышел (миграция 022): таймер сам не продолжает — блок часов медленно дышит
- * (4 с на волну, 0,25 Гц — далеко от опасных частот мигания), строка «пора продолжать» — critical.
+ * Перерыв на N минут вышел (миграция 022): таймер сам не продолжает — фон блока часов механически
+ * мигает (step-end, 2 с на цикл, 0,5 Гц — далеко от опасных частот), рамка и строка «пора
+ * продолжать» — critical.
  */
 .bd-clock--due {
-  animation: bd-break-due 2000ms var(--ease-exit) infinite alternate;
+  border-color: var(--critical);
+  animation: bd-due 2s step-end infinite;
 }
 
-@keyframes bd-break-due {
+@keyframes bd-due {
   0% {
     background-color: var(--accent-soft);
-    box-shadow: 0 0 0 var(--bd-halo) var(--accent-soft);
   }
-  100% {
-    background-color: var(--accent-6);
-    box-shadow: 0 0 0 var(--bd-halo) var(--accent-6);
+  50% {
+    background-color: transparent;
   }
 }
 
@@ -116,67 +124,64 @@
   flex: none;
 }
 
-/* Смена уровня — вспышка блока часов (две волны, ~0,7 Гц — далеко от опасных частот мигания). */
+/* Смена уровня — три механических мигания блока часов (step-end, 1 с на цикл). */
 .bd-clock--fresh {
-  animation: bd-level-flash 1500ms var(--ease-exit) 2;
+  animation: bd-flash 1s step-end 3;
 }
 
-@keyframes bd-level-flash {
+@keyframes bd-flash {
   0% {
-    background-color: var(--accent-5);
-    box-shadow: 0 0 0 var(--bd-halo) var(--accent-5);
+    background-color: var(--accent-soft);
+    border-color: var(--accent);
   }
-  100% {
+  50% {
     background-color: transparent;
-    box-shadow: 0 0 0 var(--bd-halo) transparent;
+    border-color: transparent;
   }
 }
 
-.bd-glow {
-  position: relative;
-  isolation: isolate;
+/* Обёртка главного числа (часы, слово паузы, блайнды, заголовок) — не шире колонки. */
+.bd-lead {
   max-width: 100%;
 }
 
-.bd-glow::before {
-  content: '';
-  position: absolute;
-  /* По горизонтали свечение не выходит за блок: иначе на телефоне 320–393 px оно раздвигало
-     документ и появлялась горизонтальная прокрутка. */
-  inset: -40% 0;
-  z-index: -1;
-  background: radial-gradient(
-    closest-side,
-    color-mix(in srgb, var(--accent) 16%, transparent),
-    transparent
-  );
-  pointer-events: none;
-}
-
-/* Главное число (или слово): m-display регистра, растянутое под экран; табличные цифры. */
+/*
+ * Главное число (или слово): m-display регистра — JetBrains Mono 800, табличные цифры. Слово паузы и
+ * часы с часами («1:05:00») вписаны в колонку часов: кегль не больше 100cqi / 4,2 em. Без единиц
+ * контейнера (старый браузер ТВ) — просто кегль: декларацию с cqi такой браузер отбрасывает целиком.
+ */
 .bd-big {
-  font-size: clamp(96px, 26vw, 200px);
+  font-size: clamp(64px, 26vw, 200px);
+  font-weight: 800;
   line-height: 0.9;
+  letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--accent);
   white-space: nowrap;
   transition: color var(--dur-calm) var(--ease-stage);
 }
 
+@supports (width: 1cqi) {
+  .bd-big {
+    font-size: min(clamp(64px, 26vw, 200px), calc(100cqi / 4.2));
+  }
+}
+
 /*
  * Блайнды последнего уровня шире цифр часов («1 000/2 000») — ступенью мельче и одной строкой,
  * вписанной в колонку часов: кегль не больше, чем 100cqi / ширина строки в em (--bd-em,
- * boardView.bigBlinds). Рвать число посреди разряда нельзя: перенос — только после «/» (<wbr>), на
- * случай браузера без единиц контейнера.
+ * boardView.bigBlinds). Оценка ширины сделана под узкие цифры прежнего табло: у моноширинного шрифта
+ * строка до 1,32 раза шире — делитель с запасом. Рвать число посреди разряда нельзя: перенос — только
+ * после «/» (<wbr>), на случай браузера без единиц контейнера.
  */
 .bd-big--wide {
-  font-size: clamp(64px, 17vw, 160px);
+  font-size: clamp(56px, 15vw, 160px);
   white-space: normal;
 }
 
 @supports (width: 1cqi) {
   .bd-big--wide {
-    font-size: min(clamp(64px, 17vw, 160px), calc(100cqi / var(--bd-em, 5)));
+    font-size: min(clamp(56px, 15vw, 160px), calc(100cqi / (var(--bd-em, 5) * 1.32)));
   }
 }
 
@@ -398,15 +403,15 @@
 
   .bd-screen {
     --bd-px: calc(min(100vw / 1920, 100vh / 1080) * var(--bd-fit, 1));
-    --m-eyebrow-size: calc(var(--bd-px) * 40);
-    --m-small-size: calc(var(--bd-px) * 40);
+    --m-eyebrow-size: calc(var(--bd-px) * 24);
+    --m-small-size: calc(var(--bd-px) * 24);
     --m-body-size: calc(var(--bd-px) * 48);
     --m-lede-size: calc(var(--bd-px) * 48);
-    --m-h3-size: calc(var(--bd-px) * 60);
-    --m-h2-size: calc(var(--bd-px) * 84);
-    --m-h1-size: calc(var(--bd-px) * 112);
-    --m-figure-size: calc(var(--bd-px) * 112);
-    --m-display-size: calc(var(--bd-px) * 180);
+    --m-h3-size: calc(var(--bd-px) * 32);
+    --m-h2-size: calc(var(--bd-px) * 48);
+    --m-h1-size: calc(var(--bd-px) * 72);
+    --m-figure-size: calc(var(--bd-px) * 72);
+    --m-display-size: calc(var(--bd-px) * 120);
     --space-1: calc(var(--bd-px) * 4);
     --space-2: calc(var(--bd-px) * 8);
     --space-3: calc(var(--bd-px) * 12);
@@ -421,8 +426,9 @@
     align-self: center;
   }
 
+  /* Колонка часов шире (60 %, как на холсте): моноширинный таймер в 240 px помещается целиком. */
   .bd-main {
-    grid-template-columns: minmax(0, 5fr) minmax(0, 4fr);
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
     align-items: center;
     gap: var(--space-7) var(--space-9);
   }
@@ -431,22 +437,32 @@
     --bd-halo: var(--space-6);
   }
 
+  /* Таймер — до 240 px макета, блайнды последнего уровня — до 200; без единиц контейнера — ровно
+     эти кегли (декларация с var() и cqi в таком браузере стала бы недействительной целиком). */
   .bd-big {
-    font-size: calc(var(--bd-px) * 300);
+    font-size: calc(var(--bd-px) * 240);
   }
 
   .bd-big--wide {
-    font-size: calc(var(--bd-px) * 220);
+    font-size: calc(var(--bd-px) * 200);
   }
 
   @supports (width: 1cqi) {
+    .bd-big {
+      font-size: min(calc(var(--bd-px) * 240), calc(100cqi / 4.2));
+    }
+
     .bd-big--wide {
-      font-size: min(calc(var(--bd-px) * 220), calc(100cqi / var(--bd-em, 5)));
+      font-size: min(calc(var(--bd-px) * 200), calc(100cqi / (var(--bd-em, 5) * 1.32)));
     }
   }
 
-  .bd-blinds__value {
-    font-size: calc(var(--m-figure-size) * 1.25);
+  /* Блайнды сейчас и дальше — 120 px макета, моно 800. */
+  .bd-blinds__value,
+  .bd-blinds__next .m-figure {
+    font-size: calc(var(--bd-px) * 120);
+    font-weight: 800;
+    letter-spacing: -0.02em;
   }
 
   /* Иконки строк растут с текстом. */
@@ -501,6 +517,15 @@
     align-items: start;
     gap: var(--space-7);
   }
+
+  /* Экран сообщения («Табло погасло») — вне .bd-screen: своя шкала ТВ, иначе 24 px на весь экран. */
+  .bd--message {
+    --bd-px: min(100vw / 1920, 100vh / 1080);
+    --m-eyebrow-size: calc(var(--bd-px) * 24);
+    --m-h1-size: calc(var(--bd-px) * 72);
+    --m-body-size: calc(var(--bd-px) * 32);
+    max-width: calc(var(--bd-px) * 1200);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -508,18 +533,16 @@
     transition: none;
   }
 
-  /* Без анимации: перерыв вышел — неподвижная подсветка блока. */
+  /* Без мигания: перерыв вышел — неподвижная подсветка блока. */
   .bd-clock--due {
     animation: none;
     background-color: var(--accent-5);
-    box-shadow: 0 0 0 var(--bd-halo) var(--accent-5);
   }
 
-  /* Без анимации: вспышка — неподвижная подсветка блока на те же секунды. */
+  /* Без мигания: смена уровня — неподвижная подсветка блока на те же секунды. */
   .bd-clock--fresh {
     animation: none;
     background-color: var(--accent-4);
-    box-shadow: 0 0 0 var(--bd-halo) var(--accent-4);
   }
 }
 
@@ -536,5 +559,89 @@
 .bd-story > li {
   margin: 0;
   padding-inline-start: var(--space-4);
-  border-inline-start: 3px solid var(--accent);
+  border-inline-start: 1px solid var(--accent);
+}
+
+/*
+ * Типографика «Терминала» на табло: моно прописными — строки состояния и списки, имена — Inter
+ * прописными. Часть этих правил перебивает кит (styles/terminal.css — правила с префиксом регистра),
+ * поэтому фрагмент с тем же префиксом. Шкала ТВ — выше (.bd-screen, --bd-px; холст 1920×1080).
+ */
+
+/* Имена за столом и последний нокаут — Inter прописными; выбитый — critical, как на холсте. */
+[data-theme='terminal'] .bd-names {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+[data-theme='terminal'] .bd-ko {
+  color: var(--critical);
+}
+
+/* Строки списков табло — моно прописными (выплаты: «1-Е МЕСТО · 70 %»); места на итоге — имя Inter
+   прописными, номер — моно, приз и нокауты — моно приглушённо. */
+[data-theme='terminal'] .bd-screen .ui-list-item__title {
+  font-family: var(--m-font-mono);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+[data-theme='terminal'] .bd-screen .bd-place-row .ui-list-item__title {
+  font-family: var(--m-font-text);
+}
+
+@media (min-width: 1024px) and (orientation: landscape) {
+  /* Моно шире Inter: строка выплат — ступенью мельче (32 px макета), иначе «1-Е МЕСТО · 70 %» рвётся. */
+  [data-theme='terminal'] .bd-screen .ui-list-item__title {
+    font-size: var(--m-h3-size);
+  }
+
+  [data-theme='terminal'] .bd-screen .bd-place-row .ui-list-item__title {
+    font-size: var(--m-body-size);
+  }
+}
+
+[data-theme='terminal'] .bd-plan__note {
+  font-family: var(--m-font-mono);
+  text-transform: uppercase;
+}
+
+[data-theme='terminal'] .bd-place {
+  font-family: var(--m-font-mono);
+  font-weight: 700;
+}
+
+[data-theme='terminal'] .bd-place-after,
+[data-theme='terminal'] .bd-amount {
+  font-family: var(--m-font-mono);
+  text-transform: uppercase;
+}
+
+/* Строки состояния у часов (ребаи, «на часах», «блайнды не растут») — моно прописными, как статусы
+   холста; число в них — то же, что на часах. */
+[data-theme='terminal'] .bd-rebuy,
+[data-theme='terminal'] .bd-clock > .m-body {
+  font-family: var(--m-font-mono);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Кнопки шапки (голос, полный экран) — моно, как «[ ГОЛОС: ВКЛ ]» холста. */
+[data-theme='terminal'] .bd-tools .m-btn {
+  font-family: var(--m-font-mono);
+  font-weight: 700;
+}
+
+@media (min-width: 1024px) and (orientation: landscape) {
+  /* Строки состояния у часов — ступенью мельче текста (32 px макета): моно шире Inter. */
+  [data-theme='terminal'] .bd-rebuy,
+  [data-theme='terminal'] .bd-clock > .m-body {
+    font-size: var(--m-h3-size);
+  }
+
+  [data-theme='terminal'] .bd-tools .m-btn {
+    font-size: max(13px, calc(min(100vw / 1920, 100vh / 1080) * 16));
+  }
 }

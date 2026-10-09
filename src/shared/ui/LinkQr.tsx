@@ -4,17 +4,18 @@ import { useEffect, useState } from 'react';
 import { Skeleton } from './materia';
 
 /**
- * Цвета кода — токены светлого Кобальта (ink на surface): тёмный код на светлом поле читает любая
- * камера, а инвертированный QR из тёмной темы — далеко не каждая. Токены берём из CSS, а не пишем hex.
+ * Цвета кода — игральная карта «Терминала» (card-ink на card-face): тёмный код на светлом поле
+ * читает любая камера, а инвертированный QR из тёмной темы — далеко не каждая. Токены берём из CSS
+ * (проба с data-theme='terminal' — так же и в витринах других регистров), а не пишем hex.
  */
 function lightTokens(): { dark: string; light: string } {
   const probe = document.createElement('div');
-  probe.setAttribute('data-theme', 'kobalt');
+  probe.setAttribute('data-theme', 'terminal');
   probe.hidden = true;
   document.body.append(probe);
   const style = getComputedStyle(probe);
-  const dark = style.getPropertyValue('--ink').trim();
-  const light = style.getPropertyValue('--surface').trim();
+  const dark = style.getPropertyValue('--card-ink').trim();
+  const light = style.getPropertyValue('--card-face').trim();
   probe.remove();
   const hex = /^#[0-9a-f]{6}$/i;
   return {

@@ -1,6 +1,6 @@
 // «Режим стола» — пульт банкира без прокрутки (аудит 07.10.2026, «Пульт банкира»). Сверху узкая
 // закреплённая полоса часов: уровень, блайнды, время, пауза; касание полосы — шторка «Часы и
-// уровень» (±1 мин, уровень вручную). Под ней — места за столом сеткой аватаров в порядке посадки:
+// уровень» (±1 мин, уровень вручную). Под ней — места за столом сеткой ячеек в порядке посадки:
 // живой — тап = вылет, вылетевший остаётся на своём месте приглушённым (сетка не прыгает), «+» —
 // посадить опоздавшего. Ряд вылетевших — тап = ребай, пока можно докупиться, иначе карточка
 // игрока. Ниже — олл-ин, «Записать вылет» после ривера, «Отменить последнее». Статы, расчёт и
@@ -8,7 +8,7 @@
 import type { PlayerState } from '@domain/types.ts';
 import { useNavigate } from 'react-router-dom';
 import { cn, formatBlinds, formatRub, formatTime, NBSP, paths } from '../../shared/lib';
-import { Avatar, Button, Icon, IconButton } from '../../shared/ui';
+import { Button, Icon, IconButton } from '../../shared/ui';
 import { clockView, describeEvent, levelLabel, rebuyWindow, triggerProgress } from './lib';
 import { riverBustLabel } from './riverBusts';
 import { bustedRow, rebuyShortText, seatTiles, stripStatus } from './table';
@@ -44,7 +44,7 @@ export function TableView({
   onPause,
   onClock,
 }: TableViewProps) {
-  const { state, evening, nameOf, playersById, nowMs } = model;
+  const { state, evening, nameOf, nowMs } = model;
   const format = evening.format;
   const navigate = useNavigate();
   const tiles = seatTiles(state);
@@ -96,8 +96,13 @@ export function TableView({
                 }
                 onClick={() => (t.alive && p ? onPlayer(p) : openOut(t.playerId))}
               >
-                <Avatar name={name} photoUrl={playersById.get(t.playerId)?.photo_url} size="lg" />
+                {/* Ячейка, как на холсте «Терминала»: имя прописными, под ним — статус моно. */}
                 <span className="ev-seat__name">{name}</span>
+                <span className="ev-seat__note">
+                  {t.alive
+                    ? `${p && p.kos > 0 ? `KO${NBSP}${p.kos}` : 'в игре'}${p && p.rebuys > 0 ? `${NBSP}· +${p.rebuys}` : ''}`
+                    : t.note}
+                </span>
               </button>
             );
           })}
@@ -106,7 +111,7 @@ export function TableView({
               <span className="ev-seat__plus" aria-hidden="true">
                 <Icon name="user-plus" size={20} />
               </span>
-              <span className="ev-seat__name">Посадить</span>
+              <span className="ev-seat__note">Посадить</span>
             </button>
           )}
         </div>
@@ -127,11 +132,6 @@ export function TableView({
                     aria-label={b.rebuy ? `Записать ребай: ${name}` : `Карточка игрока: ${name}`}
                     onClick={() => openOut(b.playerId)}
                   >
-                    <Avatar
-                      name={name}
-                      photoUrl={playersById.get(b.playerId)?.photo_url}
-                      size="sm"
-                    />
                     <span className="ev-out__name">{name}</span>
                     <span className="ev-out__note">
                       {b.rebuy && <Icon name="refresh-cw" size={12} />}

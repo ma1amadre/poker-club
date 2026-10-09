@@ -177,7 +177,7 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
 
   const statsBlock = (
     <>
-      <Stats>
+      <Stats className="ui-stats--cells">
         <Stat
           label="Призовой фонд"
           value={formatNumber(state.prizePoolRub)}

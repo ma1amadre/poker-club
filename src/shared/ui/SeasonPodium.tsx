@@ -63,7 +63,12 @@ export function SeasonPodium({ steps, label, compact, className }: SeasonPodiumP
                   ) : (
                     <span className="ui-podium__name">{p.name}</span>
                   )}
-                  {p.me && <span className="ui-podium__me"> (ты)</span>}
+                  {p.me && (
+                    <>
+                      {' '}
+                      <span className="ui-podium__me ui-me-tag">ты</span>
+                    </>
+                  )}
                 </span>
               ))}
             </span>

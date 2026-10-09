@@ -195,3 +195,63 @@
     transform: none;
   }
 }
+
+/*
+ * «Терминал» (DESIGN.md): колода — карты, как на столе: светлое лицо card-face, рамка line-strong,
+ * моно-ранг, две краски (♠♣ card-ink, ♥♦ suit-red). Занятая карта — пустой слот: пунктир, без лица.
+ * Карта на подсвеченном месте — рамка accent. Рамки только 1px.
+ */
+[data-theme='terminal'] .ev-sd-cell {
+  --suit-s: var(--card-ink);
+  --suit-c: var(--card-ink);
+  --suit-h: var(--suit-red);
+  --suit-d: var(--suit-red);
+  background: var(--card-face);
+  border-color: var(--line-strong);
+  font-family: var(--m-font-mono);
+}
+
+/* Наведение — только у мыши и только у свободной карты: на таче :hover «залипает» на карте, которая
+   только что ушла в слот, и пустое место выглядело бы выбранным (accent здесь — «выбрано»). */
+@media (hover: hover) {
+  [data-theme='terminal'] .ev-sd-cell:not(:disabled):hover {
+    border-color: var(--accent);
+  }
+}
+
+[data-theme='terminal'] .ev-sd-cell[aria-pressed='true'] {
+  background: var(--card-face);
+  border-color: var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+[data-theme='terminal'] .ev-sd-cell:disabled {
+  --suit-s: var(--ink-muted);
+  --suit-c: var(--ink-muted);
+  --suit-h: var(--ink-muted);
+  --suit-d: var(--ink-muted);
+  background: transparent;
+  border-style: dashed;
+  color: var(--ink-muted);
+  opacity: 1;
+}
+
+[data-theme='terminal'] .ev-sd-cell:disabled .ev-sd-cell__rank {
+  color: var(--ink-muted);
+}
+
+[data-theme='terminal'] .ev-sd-slot {
+  border-width: 1px;
+  padding: 4px;
+}
+
+[data-theme='terminal'] .ev-sd-slot__caption {
+  font-family: var(--m-font-mono);
+  text-transform: uppercase;
+}
+
+[data-theme='terminal'] .ev-sd-hand__name {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}

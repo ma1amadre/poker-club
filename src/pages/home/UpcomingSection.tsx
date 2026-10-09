@@ -62,7 +62,6 @@ import {
 } from '../../shared/ui';
 import {
   groupRsvps,
-  nameWithMe,
   playerName,
   type RsvpGroups,
   STALE_ANNOUNCE_MS,
@@ -197,7 +196,9 @@ export function AnnouncedEvening({
           </Notice>
         )}
         <Card>
-          <p className="m-eyebrow">Анонс</p>
+          <p className="home-tag">
+            <Badge tone="accent">Анонс</Badge>
+          </p>
           <h3 className="m-h3">{whenTitle(evening.scheduled_at)}</h3>
           <ul className="home-facts">
             {finaleSeasonKey && <Fact icon="trophy">{finaleText(finaleSeasonKey)}</Fact>}
@@ -259,7 +260,7 @@ export function AnnouncedEvening({
         >
           <Segmented
             block
-            className="home-rsvp"
+            className="home-rsvp ui-seg--buttons"
             label="Твой ответ на анонс"
             value={myRsvp ?? ''}
             options={RSVP_OPTIONS}
@@ -513,7 +514,17 @@ function LivePredictions({
                     size="md"
                   />
                 }
-                title={nameWithMe(playersById, p.player_id, me.id)}
+                title={
+                  <>
+                    {playerName(playersById, p.player_id) ?? UNKNOWN_PLAYER}
+                    {p.player_id === me.id && (
+                      <>
+                        {' '}
+                        <span className="ui-me-tag">ты</span>
+                      </>
+                    )}
+                  </>
+                }
                 subtitle={`Победитель — ${playerName(playersById, p.winner_id) ?? 'не выбран'} · первый вылет — ${playerName(playersById, p.first_out_id) ?? 'не выбран'}`}
                 after={
                   score && score.total > 0 ? (

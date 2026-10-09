@@ -1,8 +1,8 @@
 import { useState, type CSSProperties } from 'react';
 import { cn } from '../lib/cn';
 
-// Аватар — анатомия Avatar «Материи» (m-avatar, m-avatar--{size}): круг в Кобальте и Янтаре,
-// инициалы на accent-soft. Свой JSX вместо <Avatar> из бандла ради фото из Telegram: без Referer
+// Аватар — анатомия Avatar «Материи» (m-avatar, m-avatar--{size}); в «Терминале» — плашка с рамкой
+// и моноширинными инициалами без заливки (styles/terminal.css). Свой JSX вместо <Avatar> из бандла ради фото из Telegram: без Referer
 // (адрес приложения не утекает на t.me) и с откатом на инициалы, если фото не загрузилось.
 
 /** sm 24, md 32, lg 40, xl 56 px — или число в пикселях. */

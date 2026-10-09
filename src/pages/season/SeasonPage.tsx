@@ -7,7 +7,7 @@ import { tiedPlaces } from '@domain/placeMoves.ts';
 import { RECORD_META } from '@domain/records.ts';
 import { playerSeason, seasonRecap, type SeasonRecap } from '@domain/seasonRecap.ts';
 import type { PlayerId } from '@domain/types.ts';
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { useClubHistory, type ClubHistory, type Player } from '../../shared/api';
 import { useCurrentPlayer } from '../../shared/auth';
@@ -212,7 +212,7 @@ function Champion({
         <Icon name="trophy" size={16} />
         {champions.length > 1 ? 'Чемпионы сезона' : 'Чемпион сезона'}
       </p>
-      <p className="m-h2 ss-champion__name">
+      <p className="m-h2 ui-name ss-champion__name">
         {champions.length > 0 ? joinNames(champions) : 'Без чемпиона'}
       </p>
       {steps.length > 0 ? (
@@ -303,8 +303,18 @@ function Score({ value }: { value: number }) {
   );
 }
 
-const withMe = (player: Player | undefined, id: string, meId: string): string =>
-  `${player?.display_name ?? 'Игрок не найден'}${id === meId ? ' (ты)' : ''}`;
+/** Имя в строке таблицы; своя строка — с меткой «[ ТЫ ]» (ui-me-tag). */
+const withMe = (player: Player | undefined, id: string, meId: string): ReactNode => (
+  <>
+    {player?.display_name ?? 'Игрок не найден'}
+    {id === meId && (
+      <>
+        {' '}
+        <span className="ui-me-tag">ты</span>
+      </>
+    )}
+  </>
+);
 
 function Standings({
   recap,

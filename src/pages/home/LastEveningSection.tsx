@@ -34,7 +34,7 @@ import {
 } from '../../shared/ui';
 import { EveningRecapList } from '../evening/EveningRecap';
 import { useEveningRecap } from '../evening/useEveningRecap';
-import { myResult, nameWithMe, playerName, UNKNOWN_PLAYER } from './lib';
+import { myResult, playerName, UNKNOWN_PLAYER } from './lib';
 
 export interface LastEveningSectionProps {
   history: UseQueryResult<ClubHistory>;
@@ -146,7 +146,15 @@ function Winner({
       <Avatar name={winner?.display_name ?? '?'} photoUrl={winner?.photo_url} size="lg" />
       <div className="home-winner__text">
         <p className="m-small">Победитель</p>
-        <p className="m-h3">{nameWithMe(playersById, winnerId, me.id)}</p>
+        <p className="m-h3 ui-name">
+          {playerName(playersById, winnerId) ?? UNKNOWN_PLAYER}
+          {winnerId === me.id && (
+            <>
+              {' '}
+              <span className="ui-me-tag">ты</span>
+            </>
+          )}
+        </p>
       </div>
       <Icon name="crown" size={20} className="home-winner__icon" />
     </div>

@@ -5,8 +5,8 @@ import { Badge, type Tone } from './materia';
 
 const STATUS_TONE: Record<EveningStatus, { tone: Tone; dot?: boolean }> = {
   announced: { tone: 'neutral' },
-  // Точка — признак «живого» состояния.
-  live: { tone: 'positive', dot: true },
+  // «Терминал»: идущая игра — метка accent «[ ИДЁТ ИГРА ]», как на холсте (точка там не рисуется).
+  live: { tone: 'accent', dot: true },
   // Игра окончена, но расчёт не закрыт — есть что доделать.
   finished: { tone: 'caution' },
   settled: { tone: 'neutral' },

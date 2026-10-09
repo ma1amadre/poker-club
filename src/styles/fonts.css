@@ -1,9 +1,41 @@
 /*
- * Шрифты «Материи» — свои файлы из public/fonts, без Google Fonts. Сгенерировано
+ * Шрифты регистров — свои файлы из public/fonts, без Google Fonts. Сгенерировано
  * scripts/fetch-fonts.mjs — руками не править. Пути от корня сайта: Vite допишет к ним BASE_PATH.
- * Файл шрифта браузер качает, только когда текст этим семейством есть на экране: шрифты Янтаря
- * грузятся только на табло. Лицензия — public/fonts/OFL.txt.
+ * Файл шрифта браузер качает, только когда текст этим семейством есть на экране: шрифты Кобальта
+ * и Янтаря грузятся только в dev-витринах. Лицензия — public/fonts/OFL.txt.
  */
+
+/* Терминал · Inter · cyrillic */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* Терминал · Inter · latin */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Терминал · Inter · extra */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-extra.woff2') format('woff2');
+  unicode-range: U+20BD, U+2192;
+}
 
 /* Кобальт · Geologica · cyrillic */
 @font-face {
@@ -136,21 +168,21 @@
   unicode-range: U+2192;
 }
 
-/* Янтарь · JetBrains Mono · cyrillic */
+/* Терминал, Янтарь · JetBrains Mono · cyrillic */
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 400 800;
   font-display: swap;
   src: url('/fonts/jetbrains-mono-cyrillic.woff2') format('woff2');
   unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
 }
 
-/* Янтарь · JetBrains Mono · latin */
+/* Терминал, Янтарь · JetBrains Mono · latin */
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 400 800;
   font-display: swap;
   src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
   unicode-range:
@@ -158,11 +190,11 @@
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Янтарь · JetBrains Mono · extra */
+/* Терминал, Янтарь · JetBrains Mono · extra */
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 400 800;
   font-display: swap;
   src: url('/fonts/jetbrains-mono-extra.woff2') format('woff2');
   unicode-range: U+20BD, U+2192;

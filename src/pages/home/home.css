@@ -250,3 +250,38 @@
 .home-race__final {
   font-weight: 500;
 }
+
+/* ---------- «Терминал» (DESIGN.md) ---------- */
+
+/* Метка над датой анонса — «[ АНОНС ]» accent, как на холсте. */
+.home-tag {
+  margin: 0;
+}
+
+/* «Моя карточка» — ghost без иконки с узкими полями (холст): заголовок помещается в строку. */
+.home-card-btn.m-btn {
+  padding-inline: var(--space-2);
+  margin-right: calc(-1 * var(--space-2));
+}
+
+/* 320–359 px: заголовку и кнопке тесно в одной строке — кнопка уходит под заголовок, к левому краю. */
+@media (max-width: 359px) {
+  .home-page .ui-page__head {
+    flex-wrap: wrap;
+  }
+  .home-page .ui-page__actions {
+    flex-basis: 100%;
+    margin-left: calc(-1 * var(--space-2));
+  }
+  .home-card-btn.m-btn {
+    margin-right: 0;
+  }
+}
+
+/* Подпись-указатель в карточке-ссылке — как ghost-кнопка холста: Inter 600 прописными. */
+[data-theme='terminal'] .home-card-link {
+  font-size: var(--m-btn-size);
+  font-weight: var(--m-btn-weight);
+  letter-spacing: var(--m-btn-track);
+  text-transform: uppercase;
+}

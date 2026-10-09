@@ -1,4 +1,7 @@
-/* Табло во время олл-ина: строка часов в шапке раздачи (Янтарь, табличные цифры). */
+/*
+ * Табло во время олл-ина: строка часов в шапке раздачи — моно прописными, табличные цифры; подпись
+ * уровня на ТВ — в масштабе панели (а не 12 px телефона), как «УРОВЕНЬ 2/8 · 10/20» холста.
+ */
 
 /* Обёртка панели: --sd-fit (useFitToScreen) ставится на неё; панель растянута на высоту ряда. */
 .bd-sd {
@@ -17,10 +20,11 @@
 .bd-sd-clock__time,
 .bd-sd-clock__blinds {
   font-family: var(--m-figure-family);
-  font-weight: var(--m-figure-weight);
+  font-weight: 700;
   font-size: var(--m-h3-size);
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -39,9 +43,14 @@
     max-width: none;
   }
 
+  .bd-sd-clock .m-eyebrow {
+    font-size: calc(var(--sd-u) * 2.2);
+    line-height: 1.2;
+  }
+
   /* --sd-u — доля экрана панели олл-ина (showdown.css). */
   .bd-sd-clock__time,
   .bd-sd-clock__blinds {
-    font-size: calc(var(--sd-u) * 5.5);
+    font-size: calc(var(--sd-u) * 4.4);
   }
 }

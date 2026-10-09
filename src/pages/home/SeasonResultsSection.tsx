@@ -56,7 +56,7 @@ export function SeasonResultsSection({
           <Icon name="trophy" size={16} />
           {recap.champions.length > 1 ? 'Чемпионы сезона' : 'Чемпион сезона'}
         </p>
-        <p className="m-h3 home-season-results__champion">
+        <p className="m-h3 ui-name home-season-results__champion">
           {recap.champions.length > 0 ? joinNames(recap.champions.map(name)) : 'Без чемпиона'}
         </p>
         {steps.length > 0 && (

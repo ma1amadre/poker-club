@@ -1,0 +1,577 @@
+/*
+ * «Терминал» — компонентные правила там, где токенов «Материи» не хватает (спека — DESIGN.md).
+ * Вендоренный лист руками не правим — только переопределяем, и только под [data-theme='terminal']:
+ * витрины /dev/kit, /dev/kit-yantar и /dev/brand остаются на своих регистрах. Подключается после
+ * styles/terminal-theme.css (main.tsx); стили кита и экранов грузятся позже, поэтому здесь
+ * специфичность выше их (префикс регистра), а правила экранов — в их файлах.
+ */
+
+/* ---------- Геометрия: радиус 0 и без теней — везде, включая литералы экранов ---------- */
+
+[data-theme='terminal'] *,
+[data-theme='terminal'] *::before,
+[data-theme='terminal'] *::after {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+/* ---------- Фокус с клавиатуры: outline 1px accent вместо колец ---------- */
+
+[data-theme='terminal'] :focus-visible {
+  outline: 1px solid var(--accent) !important;
+  outline-offset: 2px;
+}
+
+/* Строки и пункты во всю ширину (их рамка или прокрутка режет внешний контур) — контур внутри. */
+[data-theme='terminal']
+  :is(
+    .ui-list-item,
+    .m-seg-item,
+    .m-tab,
+    .m-tabs-panel,
+    .m-menu-item,
+    .m-acc-trigger,
+    .ui-bottomnav__link,
+    .m-table-wrap
+  ):focus-visible {
+  outline-offset: -1px;
+}
+
+/*
+ * Панель шторки и диалога получает фокус программно (tabindex="-1") — это не контрол, контур ей не
+ * нужен. Только эти два контейнера: у пунктов Menu тоже tabindex="-1", а по ним ходят стрелками —
+ * им контур нужен (правило выше, внутрь).
+ */
+[data-theme='terminal'] :is(.ui-sheet, .m-dialog):focus-visible {
+  outline: none !important;
+}
+
+/* Поле показывает фокус своей линией (ниже), контур вокруг самого <input> не нужен. */
+[data-theme='terminal'] .m-field-control:focus-visible {
+  outline: none !important;
+}
+
+/* Checkbox и Radio: настоящий input прозрачен — контур у видимого квадрата. */
+[data-theme='terminal'] .m-check-input:focus-visible + .m-check-box {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- Движение ---------- */
+
+/* Заглушка загрузки мигает «механически», спиннер шагает. */
+[data-theme='terminal'] .m-skel {
+  animation-timing-function: step-end;
+}
+[data-theme='terminal'] .m-spinner svg {
+  animation-timing-function: steps(8, end);
+}
+
+/* Нажатие — без «проседания» карточки-ссылки; ответ — цвет линии. */
+[data-theme='terminal'] .m-card--link:hover {
+  border-color: var(--ink-muted);
+  transform: none;
+}
+
+/* reduced-motion — 0 мс везде: переходы мгновенные, мигания и появления нет. */
+@media (prefers-reduced-motion: reduce) {
+  [data-theme='terminal'] *,
+  [data-theme='terminal'] *::before,
+  [data-theme='terminal'] *::after {
+    transition-duration: 0ms !important;
+    transition-delay: 0ms !important;
+    animation: none !important;
+  }
+  /* Заглушка загрузки появляется с той же задержкой, но сразу, без проявления: задержка — не
+     движение, а защита от мигания заглушки при быстрой загрузке. */
+  [data-theme='terminal'] .ui-page-skeleton {
+    animation: m-fade 0ms linear calc(var(--dur-slow) + var(--dur-quick)) both !important;
+  }
+}
+
+/* ---------- Типографика: заголовки и подписи ---------- */
+
+/* h3 — заголовок группы, как заголовок экрана: моно, прописные (размер — токен роли). */
+[data-theme='terminal'] .m-h3 {
+  text-transform: uppercase;
+}
+
+/* Заголовок раздела экрана (Section) — строка-подпись в цвет текста: моно 12, прописные. */
+[data-theme='terminal'] .ui-section__title {
+  font-size: var(--m-eyebrow-size);
+  font-weight: 500;
+  line-height: 1.34;
+  letter-spacing: var(--m-eyebrow-track);
+}
+
+[data-theme='terminal'] .m-eyebrow,
+[data-theme='terminal'] .m-stat-label,
+[data-theme='terminal'] .m-table th,
+[data-theme='terminal'] .m-footer-head {
+  font-weight: 400;
+}
+
+[data-theme='terminal'] .m-table th {
+  font-size: var(--m-eyebrow-size);
+}
+
+/* ---------- Кнопки ---------- */
+
+/*
+ * Подписи прописные и с разрядкой — шире, чем в «Материи»: длинная подпись («Отправить проверочное
+ * сообщение») на узком экране переносится на вторую строку, а не раздвигает колонку. Высота — не
+ * меньше высоты контрола своего размера.
+ */
+[data-theme='terminal'] .m-btn {
+  height: auto;
+  min-height: var(--m-control-h);
+  padding-block: var(--space-1);
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+}
+[data-theme='terminal'] .m-btn--sm {
+  min-height: var(--control-h-sm);
+}
+[data-theme='terminal'] .m-btn--lg {
+  min-height: var(--control-h-lg);
+}
+
+/* primary — accent без рамки; secondary — прозрачная, рамка line-strong; ghost — текст accent. */
+[data-theme='terminal'] .m-btn--primary,
+[data-theme='terminal'] .m-btn--primary:hover {
+  --_bd: transparent;
+}
+[data-theme='terminal'] .m-btn--secondary:hover {
+  --_bg: transparent;
+  --_bd: var(--ink);
+}
+[data-theme='terminal'] .m-btn--ghost {
+  --_fg: var(--accent);
+}
+[data-theme='terminal'] .m-btn--ghost:hover {
+  --_bg: var(--accent-soft);
+}
+
+/* Необратимое действие (ui.css) — critical и поверх ghost. */
+[data-theme='terminal'] .ui-btn--danger {
+  --_fg: var(--critical);
+  --_bd: var(--critical);
+}
+[data-theme='terminal'] .ui-btn--danger:hover {
+  --_bg: var(--critical-soft);
+  --_bd: var(--critical);
+}
+
+/* Недоступная — пунктир line-strong и приглушённый текст вместо полупрозрачности. */
+[data-theme='terminal'] .m-btn:disabled:not(.ui-btn--loading) {
+  --_bg: transparent;
+  --_fg: var(--ink-muted);
+  --_bd: var(--line-strong);
+  border-style: dashed;
+  opacity: 1;
+}
+
+/* ---------- Метки: моно, прописные, в ASCII-скобках — «[ ВЫЛЕТ ]» ---------- */
+
+[data-theme='terminal'] .m-badge {
+  gap: 0;
+  height: auto;
+  padding: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+}
+[data-theme='terminal'] .m-badge::before {
+  content: '[\a0';
+}
+[data-theme='terminal'] .m-badge::after {
+  content: '\a0]';
+}
+/* Смысл несёт слово в скобках; точка «живого» статуса в Терминале не рисуется. */
+[data-theme='terminal'] .m-badge-dot {
+  display: none;
+}
+
+/* ---------- Segmented: рамка line, выбранный — surface, accent и линия снизу ---------- */
+
+[data-theme='terminal'] .m-seg {
+  gap: 0;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--line);
+}
+[data-theme='terminal'] .m-seg-item {
+  height: calc(var(--m-control-h) - 2px);
+  border-bottom: 1px solid transparent;
+  font-family: var(--m-font-eyebrow);
+  font-size: var(--m-eyebrow-size);
+  font-weight: 400;
+  letter-spacing: var(--m-eyebrow-track);
+  text-transform: uppercase;
+}
+[data-theme='terminal'] .m-seg-item.is-on {
+  background: var(--surface);
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  outline: none;
+}
+
+/* ---------- Вкладки ---------- */
+
+[data-theme='terminal'] .m-tab {
+  font-family: var(--m-font-eyebrow);
+  font-size: var(--m-eyebrow-size);
+  font-weight: 400;
+  letter-spacing: var(--m-eyebrow-track);
+  text-transform: uppercase;
+}
+[data-theme='terminal'] .m-tab.is-on {
+  color: var(--accent);
+}
+[data-theme='terminal'] .m-tab::after {
+  height: 1px;
+}
+
+/* ---------- Поля ввода — «терминальные»: моно, приглашение «>», линия снизу ---------- */
+
+[data-theme='terminal'] .m-field-label,
+[data-theme='terminal'] .m-radios-legend {
+  font-family: var(--m-font-eyebrow);
+  font-size: var(--m-eyebrow-size);
+  font-weight: 400;
+  line-height: 1.34;
+  letter-spacing: var(--m-eyebrow-track);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+[data-theme='terminal'] .m-field-box {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--line-strong);
+  font-family: var(--m-font-mono);
+}
+[data-theme='terminal'] .m-field-box::before {
+  content: '>';
+  flex: none;
+  color: var(--accent);
+  font-family: var(--m-font-mono);
+  font-size: 14px;
+  line-height: 1;
+}
+[data-theme='terminal'] .m-field-box:hover {
+  border-bottom-color: var(--ink-muted);
+}
+[data-theme='terminal'] .m-field-box:focus-within {
+  border-bottom-color: var(--accent);
+}
+[data-theme='terminal'] .m-field--error .m-field-box {
+  border-bottom-color: var(--critical);
+}
+[data-theme='terminal'] .m-field--error .m-field-box::before {
+  color: var(--critical);
+}
+[data-theme='terminal'] .m-field-control {
+  font-family: var(--m-font-mono);
+  font-size: 14px;
+  caret-color: var(--accent);
+}
+/* iOS приближает страницу при фокусе на поле мельче 16 px (ui.css) — на тач-экранах 16. */
+@media (pointer: coarse) {
+  [data-theme='terminal'] .m-field-control {
+    font-size: 16px;
+  }
+}
+[data-theme='terminal'] .m-field--multiline .m-field-box::before {
+  padding-top: var(--space-3);
+  line-height: 1.5;
+}
+[data-theme='terminal'] .m-select-control {
+  padding-left: 0;
+}
+[data-theme='terminal'] .m-select-chevron {
+  right: 0;
+}
+[data-theme='terminal'] .m-field-msg {
+  font-size: var(--m-small-size);
+}
+[data-theme='terminal'] .m-field--error .m-field-msg {
+  display: block;
+  font-family: var(--m-font-mono);
+}
+/* Ошибка поля — метка «[ ОШИБКА ]» перед текстом, как на холсте. Только вид: скринридеру метка не
+   читается (пустой альтернативный текст), смысл несёт текст ошибки и aria-invalid поля. */
+[data-theme='terminal'] .m-field--error .m-field-msg::before {
+  content: '[\a0ОШИБКА\a0]\a0' / '';
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+/* Значок ошибки заменяет метка — без него строка читается как запись лога. */
+[data-theme='terminal'] .m-field--error .m-field-msg .m-icon {
+  display: none;
+}
+
+/* ---------- Checkbox, Switch, Progress: рамки 1px ---------- */
+
+[data-theme='terminal'] .m-check-box,
+[data-theme='terminal'] .m-switch-track {
+  border-width: 1px;
+}
+
+/* Полоса — как на холсте: 8 px, рамка line-strong, утопленный фон. */
+[data-theme='terminal'] .m-progress-track {
+  height: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-sunken);
+}
+
+/* ---------- Оверлеи: глубина — линией, а не тенью ---------- */
+
+[data-theme='terminal'] .m-dialog {
+  border: 1px solid var(--line);
+}
+[data-theme='terminal'] .ui-sheet {
+  border: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+/* ---------- Нижняя навигация: моно прописные, выбранный раздел — accent и линия сверху ---------- */
+
+[data-theme='terminal'] .ui-bottomnav {
+  background: var(--ground);
+}
+[data-theme='terminal'] .ui-bottomnav__link {
+  font-family: var(--m-font-eyebrow);
+  font-size: var(--m-eyebrow-size);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+[data-theme='terminal'] .ui-bottomnav__link.is-on {
+  color: var(--accent);
+}
+[data-theme='terminal'] .ui-bottomnav__link::before {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* ---------- Иконки: прямые концы линий, как у холста ---------- */
+
+[data-theme='terminal'] .m-icon {
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+/* ---------- Списки: строки на фоне экрана без зазоров, разделитель 1px снизу (холст) ---------- */
+
+[data-theme='terminal'] .ui-list {
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+[data-theme='terminal'] .ui-list-row {
+  border-bottom: 1px solid var(--line);
+}
+[data-theme='terminal'] .ui-list-row + .ui-list-row {
+  border-top: 0;
+}
+[data-theme='terminal'] .ui-list-item {
+  padding-inline: var(--space-2);
+}
+/* Наведение — заметная ступень и на ground, и на surface (в карточке, в шторке). */
+[data-theme='terminal'] .ui-list-item--interactive:hover {
+  background: var(--fill-hover);
+}
+/* Список внутри карточки или шторки: без черты сверху и под последней строкой, текст по краю. */
+[data-theme='terminal'] .ui-list--plain {
+  border-top: 0;
+}
+[data-theme='terminal'] .ui-list--plain > .ui-list-row:last-child {
+  border-bottom: 0;
+}
+[data-theme='terminal'] .ui-list--plain .ui-list-item {
+  padding-inline: 0;
+}
+/* Пометка «ты» рядом с именем — метка accent в скобках: «[ ТЫ ]». */
+[data-theme='terminal'] .ui-me-tag {
+  font-family: var(--m-font-eyebrow);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  white-space: nowrap;
+}
+[data-theme='terminal'] .ui-me-tag::before {
+  content: '[\a0';
+}
+[data-theme='terminal'] .ui-me-tag::after {
+  content: '\a0]';
+}
+
+/* ---------- Аватар — плашка с инициалами: рамка line-strong, моно, без заливки ---------- */
+
+[data-theme='terminal'] .m-avatar {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-muted);
+  font-family: var(--m-font-mono);
+  font-weight: 700;
+}
+[data-theme='terminal'] .m-avatar--more {
+  border-style: dashed;
+}
+/* Группы (AvatarGroup, ступень подиума): плашки рядом с зазором — разделительные кольца были
+   тенями, а прозрачные плашки внахлёст рисуют двойные рамки. */
+[data-theme='terminal'] :is(.m-avatars, .ui-podium__avatars) {
+  gap: var(--space-1);
+}
+[data-theme='terminal'] .m-avatars .m-avatar + .m-avatar,
+[data-theme='terminal'] .ui-podium__avatars > * + * {
+  margin-left: 0;
+}
+
+/* ---------- Accordion: заголовок — как заголовок группы, моно 15 прописными ---------- */
+
+[data-theme='terminal'] .m-acc-trigger {
+  font-size: var(--m-h3-size);
+  text-transform: uppercase;
+}
+[data-theme='terminal'] .m-acc-trigger:hover .m-acc-title {
+  text-decoration: none;
+}
+[data-theme='terminal'] .m-acc-trigger:hover {
+  color: var(--accent);
+}
+
+/* ---------- Выбор игроков (PlayerPicker): имя — Inter 600 прописными, как ячейка пульта ---------- */
+
+[data-theme='terminal'] .ui-picker__name {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+[data-theme='terminal'] .ui-picker__option:hover {
+  border-color: var(--ink-muted);
+}
+[data-theme='terminal'] .ui-picker__option[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+[data-theme='terminal'] .ui-picker__option[aria-pressed='true'] .m-avatar {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---------- Показатели рядом ячейками (Stats className="ui-stats--cells"): ряд под рамкой ---------- */
+
+[data-theme='terminal'] .ui-stats--cells {
+  /* 88 px: три ячейки в ряд и на 320 px (колонка 288 px минус рамка). */
+  grid-template-columns: repeat(auto-fit, minmax(min(88px, 100%), 1fr));
+  gap: 0;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+[data-theme='terminal'] .ui-stats--cells > * {
+  min-width: 0;
+  padding: var(--space-3);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+/* Единица рядом с числом («из 6», «₽», «BB») — часть числа, моно, как на холсте («5/6», «3 500 ₽»). */
+[data-theme='terminal'] .m-stat-unit {
+  font-family: var(--m-font-mono);
+}
+[data-theme='terminal'] .ui-stats--cells .m-stat-num {
+  font-size: var(--m-h3-size);
+  font-weight: 700;
+}
+[data-theme='terminal'] .ui-stats--cells .m-stat-label {
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Нижняя навигация: только подписи, как на холсте ---------- */
+
+[data-theme='terminal'] .ui-bottomnav__link .m-icon {
+  display: none;
+}
+
+/* ---------- Ответ на анонс (Segmented className="ui-seg--buttons"): кнопки, как на холсте ---------- */
+/* Выбранный — primary (accent), остальные — secondary; подписи не переносятся. */
+
+[data-theme='terminal'] .ui-seg--buttons.m-seg {
+  gap: var(--space-2);
+  border: 0;
+}
+[data-theme='terminal'] .ui-seg--buttons .m-seg-item {
+  min-width: max-content;
+  height: var(--m-control-h);
+  padding-inline: var(--space-3);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-family: var(--m-font-text);
+  font-size: var(--m-btn-size);
+  font-weight: var(--m-btn-weight);
+  letter-spacing: var(--m-btn-track);
+  white-space: nowrap;
+}
+[data-theme='terminal'] .ui-seg--buttons .m-seg-item:hover {
+  border-color: var(--ink);
+}
+[data-theme='terminal'] .ui-seg--buttons .m-seg-item.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+[data-theme='terminal'] .ui-seg--buttons .m-seg-item.is-on:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+/* Фокус — снаружи, как у кнопок: внутренний контур лёг бы на рамку accent выбранного ответа. */
+[data-theme='terminal'] .ui-seg--buttons .m-seg-item:focus-visible {
+  outline-offset: 2px;
+}
+@media (max-width: 359px) {
+  [data-theme='terminal'] .ui-seg--buttons .m-seg-item {
+    padding-inline: var(--space-2);
+    letter-spacing: 0.02em;
+  }
+}
+
+/*
+ * Имя игрока (className="ui-name") — Inter прописными, как на холсте: в строке таблицы 600, в заголовке
+ * (m-h1/m-h2/m-h3 — иначе моно) 700. Моноширинный — только цифры, метки и заголовки экранов.
+ */
+[data-theme='terminal'] .ui-name {
+  font-family: var(--m-font-text);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+[data-theme='terminal'] :is(.m-display, .m-h1, .m-h2, .m-h3).ui-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Заголовок диалога — без балансировки: иначе «6-й» рвётся на «6-» и «Й» (перенос после дефиса). */
+[data-theme='terminal'] .m-dialog-title {
+  text-wrap: wrap;
+}
+
+/*
+ * Notice с действием: подписи кнопок прописные и шире — на узком экране кнопка уходит под текст
+ * (перенос ряда), а не растягивает плашку за экран.
+ */
+[data-theme='terminal'] .m-notice {
+  flex-wrap: wrap;
+}
+[data-theme='terminal'] .m-notice-body {
+  flex: 1 1 12rem;
+}
+[data-theme='terminal'] .m-notice-action {
+  margin-left: auto;
+}

@@ -1,4 +1,4 @@
-// Табло /board/:token для ТВ и ноутбука — регистр Янтарь (data-theme ставит ThemeScope в
+// Табло /board/:token для ТВ и ноутбука — регистр «Терминал» (data-theme ставит ThemeScope в
 // routes.tsx). Публичное и вне AuthProvider: данные только через useBoardState (RPC board_state
 // для anon, опрос раз в 3 с), время — useNow + replay на клиенте, как у всех экранов вечера.
 // Табло клуба /tv/:code (ClubBoardPage) показывает тот же Board для вечера, который сейчас важен.
@@ -364,7 +364,7 @@ function LiveBoard({
           // Пауза — на весь блок часов: слово вместо цифр и сколько уже стоим; перерыв на N минут —
           // сколько осталось до конца или «пора продолжать».
           <>
-            <div className="bd-glow">
+            <div className="bd-lead">
               <p
                 className="m-display bd-big"
                 role="timer"
@@ -392,7 +392,7 @@ function LiveBoard({
           <>
             <p className="m-h2 bd-hot">Последний уровень</p>
             {/* Одной строкой, вписанной в колонку (board.css, --bd-em); анте — строкой ниже. */}
-            <div className="bd-glow">
+            <div className="bd-lead">
               <p
                 className="m-display bd-big bd-big--wide"
                 style={{ '--bd-em': String(big.em) } as CSSProperties}
@@ -406,8 +406,7 @@ function LiveBoard({
           </>
         ) : (
           <>
-            {/* Единственное свечение экрана — за главным числом (исключение правил Янтаря). */}
-            <div className="bd-glow">
+            <div className="bd-lead">
               <p className="m-display bd-big bd-time" role="timer" aria-label={clock.aria}>
                 {clock.text}
               </p>
@@ -524,7 +523,7 @@ function WaitingBoard({
     <div ref={screenRef} className="bd-wait bd-screen" aria-label="Вечер ещё не начался">
       <section className="bd-wait__main">
         {known ? (
-          <div className="bd-glow">
+          <div className="bd-lead">
             <h1 className="m-display bd-headline">
               {sameDay
                 ? `Начинаем в ${formatTime(scheduledMs)}`
@@ -532,7 +531,7 @@ function WaitingBoard({
             </h1>
           </div>
         ) : (
-          <div className="bd-glow">
+          <div className="bd-lead">
             <h1 className="m-display bd-headline">Скоро начнём</h1>
           </div>
         )}
@@ -640,8 +639,10 @@ function FinishedBoard({
     <div ref={screenRef} className="bd-wait bd-screen" aria-label="Итог вечера">
       <section className="bd-wait__main">
         <p className="m-eyebrow">Игра окончена · победитель</p>
-        <div className="bd-glow">
-          <h1 className="m-display bd-headline">{winner ? nameOf(winner) : 'Итог считается'}</h1>
+        <div className="bd-lead">
+          <h1 className={winner ? 'm-display ui-name bd-headline' : 'm-display bd-headline'}>
+            {winner ? nameOf(winner) : 'Итог считается'}
+          </h1>
         </div>
         {winner && (
           <p className="m-h2 bd-hot">
@@ -681,6 +682,7 @@ function FinishedBoard({
                 return (
                   <ListItem
                     key={p.playerId}
+                    className="bd-place-row"
                     before={<span className="m-mono bd-place">{p.place ?? '—'}</span>}
                     title={nameOf(p.playerId)}
                     after={

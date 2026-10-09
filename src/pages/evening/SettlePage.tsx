@@ -188,7 +188,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
         </Notice>
       ) : null}
 
-      <Stats>
+      <Stats className="ui-stats--cells">
         <Stat label="Взносы" value={formatNumber(totals.inRub)} unit="₽" />
         <Stat
           label="Выплаты"

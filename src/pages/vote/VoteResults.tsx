@@ -3,7 +3,7 @@
 // остальные номинанты — строкой. Админ может удалить любой
 // голос (концепция: «админ может удалить») — ему под номинацией полный список «кто → за кого».
 import { VOTE_CATEGORIES, VOTE_CATEGORY_META, type VoteCategory } from '@domain/votes.ts';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   errorMessage,
   removeVotePhoto,
@@ -37,9 +37,25 @@ const VOTES_FORMS = ['голос', 'голоса', 'голосов'] as const;
 
 type PlayersById = ReadonlyMap<string, Player>;
 
+/** Имя для текста (подпись, сообщение, перечень через запятую): своё — «Саша (ты)». */
 function nameOf(playersById: PlayersById, id: string, meId: string): string {
   const name = playersById.get(id)?.display_name ?? 'Игрок без имени';
   return id === meId ? `${name} (ты)` : name;
+}
+
+/** Имя в заголовке и строке списка: своё — с меткой «[ ТЫ ]» (ui-me-tag), как в таблицах. */
+function nameNode(playersById: PlayersById, id: string, meId: string): ReactNode {
+  return (
+    <>
+      {playersById.get(id)?.display_name ?? 'Игрок без имени'}
+      {id === meId && (
+        <>
+          {' '}
+          <span className="ui-me-tag">ты</span>
+        </>
+      )}
+    </>
+  );
 }
 
 export interface VoteResultsProps {
@@ -191,7 +207,12 @@ function AdminVotes({
           return (
             <ListItem
               key={vote.voter_id}
-              title={`${voter} → ${nameOf(playersById, vote.nominee_id, meId)}`}
+              title={
+                <>
+                  {nameNode(playersById, vote.voter_id, meId)} →{' '}
+                  {nameNode(playersById, vote.nominee_id, meId)}
+                </>
+              }
               subtitle={
                 [vote.caption ? 'с подписью' : null, vote.photo_path ? 'с фото' : null]
                   .filter(Boolean)
@@ -235,7 +256,7 @@ function WinnerCard({
       <div className="vote-winner">
         <Avatar name={player?.display_name ?? '?'} photoUrl={player?.photo_url} size="lg" />
         <div className="vote-winner__text">
-          <p className="m-h3">{name}</p>
+          <p className="m-h3 ui-name">{nameNode(playersById, winner.nomineeId, meId)}</p>
           <p className="m-small m-mono">{pluralWithNumber(winner.count, VOTES_FORMS)}</p>
           {badge.note && (
             <p className="m-small vote-winner__note">

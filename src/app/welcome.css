@@ -98,3 +98,9 @@
     transition: none;
   }
 }
+
+/* «Терминал» (DESIGN.md): значок карточки — в рамке 1px без заливки, как плашки холста. */
+[data-theme='terminal'] .wl-card__icon {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+}

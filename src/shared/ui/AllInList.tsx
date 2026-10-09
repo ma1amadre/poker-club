@@ -121,7 +121,12 @@ function AllInCard({
                   <span className="ui-allin__who">
                     <span className="ui-allin__name">
                       {nameOf(h.playerId)}
-                      {h.playerId === meId && ' (ты)'}
+                      {h.playerId === meId && (
+                        <>
+                          {' '}
+                          <span className="ui-me-tag">ты</span>
+                        </>
+                      )}
                     </span>
                     <span className="ui-allin__cards">
                       <PlayingCard code={h.cards[0]} size="sm" />

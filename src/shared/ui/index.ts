@@ -1,6 +1,6 @@
-// UI-кит клуба на дизайн-системе «Материя» (src/vendor/materia). Регистр — на <html data-theme>
-// (src/app/useTheme.ts): kobalt / kobalt-dark, табло — yantar. Свои стили кита — ui.css, только на
-// переменных «Материи». Карточки компонентов «Материи»: D:/dev/materia/docs/components/<Имя>.md.
+// UI-кит клуба на компонентах «Материи» (src/vendor/materia). Регистр — на <html data-theme>
+// (src/app/useTheme.ts): приложение и табло — terminal («Терминал», DESIGN.md; правила кита —
+// styles/terminal.css). Свои стили кита — ui.css, только на переменных регистра. Карточки компонентов «Материи»: D:/dev/materia/docs/components/<Имя>.md.
 //
 // Текст вне компонентов — классы ролей «Материи»: m-display (один на экран), m-h1, m-h2, m-h3,
 // m-body, m-small, m-eyebrow, m-figure, m-mono (табличные цифры), m-link.

@@ -276,7 +276,10 @@ export function playerName(
   return playersById.get(id)?.display_name ?? UNKNOWN_PLAYER;
 }
 
-/** «Саша (ты)» — чтобы в списках себя было видно сразу. */
+/**
+ * «Саша (ты)» — себя видно сразу. Для текста (лента, перечень через запятую); в строке списка и в
+ * заголовке «ты» — отдельной меткой ui-me-tag («[ ТЫ ]»).
+ */
 export function nameWithMe(
   playersById: ReadonlyMap<string, Pick<Player, 'display_name'>>,
   id: string,

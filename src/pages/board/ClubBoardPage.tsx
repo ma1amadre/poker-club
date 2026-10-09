@@ -3,7 +3,7 @@
 // сегодняшний анонс — тот же экран, что у ссылки вечера (Board), с голосом, олл-ином и отметкой
 // «табло на связи». Между вечерами — «Следующая игра» по ближайшему анонсу или расписанию клуба.
 // Админ может перевыпустить ссылку: старая сразу показывает «Ссылка табло устарела».
-// Регистр — Янтарь (ThemeScope в routes.tsx), публично и вне AuthProvider, как /board/:token.
+// Регистр — «Терминал» (ThemeScope в routes.tsx), публично и вне AuthProvider, как /board/:token.
 import { useEffect, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import {
@@ -122,7 +122,7 @@ function IdleBoard({
       >
         <section className="bd-wait__main">
           <p className="m-eyebrow">{view.eyebrow}</p>
-          <div className="bd-glow">
+          <div className="bd-lead">
             <h1 className="m-display bd-headline">{view.headline}</h1>
           </div>
           {view.when && <p className="m-h2 bd-hot">{view.when}</p>}

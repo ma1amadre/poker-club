@@ -524,3 +524,49 @@
     transition: none;
   }
 }
+
+/*
+ * «Терминал» (DESIGN.md): теней нет — полоса accent слева у своей строки пропала бы вместе с ними.
+ * Своя строка — подложка accent-soft, как на холсте; аватар на ней виден (его фон полупрозрачный).
+ */
+[data-theme='terminal'] .rt-row--me .rt-row__btn,
+[data-theme='terminal'] .ui-list-item.rt-item--me {
+  background: var(--accent-soft);
+}
+
+/* Место — моно 14 двумя знаками («01»), первые три — цветом текста; имя — Inter 600 прописными. */
+[data-theme='terminal'] .rt-place {
+  font-size: 14px;
+}
+[data-theme='terminal'] .rt-place--top {
+  font-weight: 700;
+}
+[data-theme='terminal'] .rt-name__text {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  /* Имя не рвётся по буквам: на узком экране «[ ТЫ ]» уходит под имя (перенос ряда). */
+  overflow-wrap: break-word;
+}
+[data-theme='terminal'] .rt-name {
+  flex-wrap: wrap;
+}
+[data-theme='terminal'] .rt-score__num {
+  font-weight: 700;
+}
+/* Сдвиг места — моно, как метки: вверх positive, вниз critical (холст). */
+[data-theme='terminal'] .rt-move {
+  font-family: var(--m-font-mono);
+  font-weight: 700;
+}
+[data-theme='terminal'] .rt-move--down {
+  color: var(--critical);
+}
+/* Чемпионы в карточке трофея — плашки рядом с зазором, а не внахлёст: прозрачные плашки внахлёст
+   рисуют двойные рамки (разделительные кольца были тенями). */
+[data-theme='terminal'] .rt-trophy__avatars {
+  gap: var(--space-1);
+}
+[data-theme='terminal'] .rt-trophy__avatars > * + * {
+  margin-left: 0;
+}

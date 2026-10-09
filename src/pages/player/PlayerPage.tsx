@@ -224,7 +224,7 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
       <header className="pl-head">
         <Avatar name={name} photoUrl={player.photo_url} size="xl" />
         <div className="pl-head__text">
-          <h1 className="m-h1 pl-head__name">{name}</h1>
+          <h1 className="m-h1 ui-name pl-head__name">{name}</h1>
           {badges.length > 0 && <div className="pl-head__badges">{badges.slice(0, 2)}</div>}
           {canVoice && (
             <div className="pl-head__actions">
