@@ -1,5 +1,8 @@
 // Шторка «кто за столом»: отметить пришедших (на старте) или опоздавшего (по ходу игры) и вписать
-// гостя без Telegram. Каждый выбранный игрок — отдельный join; гость — RPC add_guest (сразу с join).
+// гостя без Telegram. Ответившие «иду», кто ещё не за столом, отмечены заранее на старте, а у
+// опоздавшего — только если такой один (seatPreselected): неявившихся банкир уже снимал на старте.
+// Каждый выбранный игрок — отдельный join; гость — RPC add_guest (сразу с join). Посадка
+// опоздавших — тост с именами и «Отменить» (всё действие: входы и оплата).
 // Кратность входа (×1 по умолчанию) — одна на всех, кого сажают этим нажатием, и на гостя: кто
 // входит на другую сумму, того сажают отдельно. После гостя кратность возвращается к ×1 — иначе
 // выбранная для него сумма молча досталась бы всем отмеченным; при ×k сумма видна на кнопке.
@@ -21,7 +24,7 @@ import {
   usePlayers,
   type Rsvp,
 } from '../../shared/api';
-import { formatRub, pluralWithNumber } from '../../shared/lib';
+import { formatRub, joinNames, pluralWithNumber } from '../../shared/lib';
 import { Button, Field, Notice, PlayerPicker, Sheet, useToast } from '../../shared/ui';
 import {
   entryPayload,
@@ -30,6 +33,7 @@ import {
   normalizeGuestName,
   seatButtonLabel,
   seatCandidates,
+  seatPreselected,
   seatSpectator,
   seatDrafts,
 } from './lib';
@@ -58,9 +62,9 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
   const addGuest = useAddGuest(model.evening.id);
   const candidates = seatCandidates(players, model.state, rsvps);
 
-  const [selected, setSelected] = useState<string[]>(() =>
-    mode === 'start' ? candidates.filter((c) => c.rsvp === 'yes').map((c) => c.player.id) : [],
-  );
+  // Кандидаты — только кто ещё не за столом: у опоздавшего это «иду» и пока не сел, если он один.
+  const preselected = seatPreselected(candidates, mode);
+  const [selected, setSelected] = useState<string[]>(() => preselected);
   const [guestName, setGuestName] = useState('');
   const [guestError, setGuestError] = useState<string | null>(null);
   const [seating, setSeating] = useState(false);
@@ -103,13 +107,24 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
     setSeating(true);
     // Одно действие: все входы (и платежи, если «Оплачено сразу») — вместе или ничего.
     const seated = selected.length;
-    const records = await actions.sendAll(seatDrafts(format, selected, stacks, paid));
+    const success = `За стол ${seated === 1 ? 'сел' : 'сели'} ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}`;
+    // Опоздавшие: в тосте — кто сел и «Отменить» (входы и оплата одной отменой): лишняя отметка
+    // видна сразу, а не только в ленте.
+    const late = mode === 'late';
+    const names = `${joinNames(selected.map(model.nameOf))}.`;
+    const records = await actions.sendAll(
+      seatDrafts(format, selected, stacks, paid),
+      late
+        ? {
+            success,
+            detail: [names, seatDetail(seated > 1)].filter(Boolean).join(' '),
+            undo: true,
+          }
+        : {},
+    );
     setSeating(false);
     if (!records) return;
-    toast.show(
-      `За стол ${seated === 1 ? 'сел' : 'сели'} ${pluralWithNumber(seated, ['игрок', 'игрока', 'игроков'])}`,
-      { tone: 'positive', detail: seatDetail(seated > 1) },
-    );
+    if (!late) toast.show(success, { tone: 'positive', detail: seatDetail(seated > 1) });
     onClose();
   };
 
@@ -169,7 +184,9 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
         closedReason ??
         (mode === 'start'
           ? 'Ответившие «иду» уже отмечены. Сними отметку с тех, кто не пришёл.'
-          : 'Опоздавший входит с полным стеком, пока открыта регистрация.')
+          : preselected.length > 0
+            ? 'Отметка уже стоит у того, кто ответил «иду» и ещё не за столом: пришёл другой — сними её. Опоздавший входит с полным стеком, пока открыта регистрация.'
+            : 'Опоздавший входит с полным стеком, пока открыта регистрация.')
       }
       actions={
         <Button

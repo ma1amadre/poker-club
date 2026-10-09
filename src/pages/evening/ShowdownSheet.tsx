@@ -4,8 +4,14 @@
 // в журнал полное состояние раздачи ('showdown'); ошибку правят следующей отправкой или «Отменить»
 // в тосте — вечер она не ломает (на игру и деньги раздача не влияет).
 // После ривера — «Записать вылет: X, выбивает Y» (useRiverBusts.ts): проигравшие раздачу отмечены,
-// банкир снимает отметку с того, кому фишек хватило; несколько вылетевших — с порядком по фишкам.
+// банкир снимает отметку с того, кому фишек хватило; кто выбил — по картам (при побочном банке —
+// выбор), несколько вылетевших — с порядком по фишкам, «Сразу ребай» — тем же действием. Запись
+// закрывает раздачу. Открыта с пульта по «Записать вылеты» или «Вылет и ребай» (river) — на раздаче
+// после ривера, даже если табло её уже спрятало.
+// В игре ровно двое (хедз-ап вечера) — новый олл-ин начинается с обоими отмеченными.
+import { riverBustSuggestion } from '@domain/riverBusts.ts';
 import { CARD_RANKS, CARD_SUITS, streetOf, visibleShowdown } from '@domain/showdown.ts';
+import type { PlayerId } from '@domain/types.ts';
 import { useState } from 'react';
 import { newClientId } from '../../shared/api';
 import { cardLabel, cardName, rankLabel, type SuitCode } from '../../shared/lib/poker';
@@ -13,14 +19,14 @@ import { STREET_LABEL } from '../../shared/lib/poker/display';
 import { haptic } from '../../shared/telegram';
 import { Button, PlayerPicker, PlayingCard, Sheet, SuitPip } from '../../shared/ui';
 import { RiverBustsChoice } from './RiverBustsChoice';
-import { useRiverBusts, useRiverChoice } from './useRiverBusts';
+import { useRiverChoice, type RiverBusts } from './useRiverBusts';
 import { riverBustLabel } from './riverBusts';
 import {
   cardIn,
   checkDraft,
   clearSlot,
   draftFromShowdown,
-  emptyDraft,
+  newShowdownDraft,
   nextEmptySlot,
   placeCard,
   sameSlot,
@@ -42,8 +48,12 @@ export interface ShowdownSheetProps {
   onClose: () => void;
   model: EveningModel;
   actions: EveningActions;
-  /** «Ребай» в тосте после вылета, записанного после ривера. */
-  onRebuy?: (playerId: string) => void;
+  /** Предложение вылета после ривера и его запись (useRiverBusts в LiveView). */
+  river: RiverBusts;
+  /** Открыта с пульта ради вылета после ривера: на этой раздаче, даже если табло её спрятало. */
+  riverMode?: boolean;
+  /** «Вылет и ребай» с пульта: у этих вылетевших «Сразу ребай» уже отмечен. */
+  rebuyFor?: readonly PlayerId[];
 }
 
 export function ShowdownSheet(props: ShowdownSheetProps) {
@@ -56,20 +66,37 @@ const GRID_RANKS = [...CARD_RANKS].reverse();
 const GRID_SUITS = [...CARD_SUITS] as SuitCode[];
 const BOARD_LABELS = ['Флоп', 'Флоп', 'Флоп', 'Тёрн', 'Ривер'];
 
-function ShowdownSheetInner({ onClose, model, actions, onRebuy }: ShowdownSheetProps) {
-  const { state, nameOf, playersById, nowMs } = model;
-  const onBoard = visibleShowdown(state.showdown, nowMs);
-  const [draft, setDraft] = useState<ShowdownDraft>(() =>
-    onBoard ? draftFromShowdown(onBoard) : emptyDraft(newClientId()),
-  );
+function ShowdownSheetInner({
+  onClose,
+  model,
+  actions,
+  river,
+  riverMode = false,
+  rebuyFor,
+}: ShowdownSheetProps) {
+  const { state, nameOf, playersById, nowMs, applied } = model;
+  const isAlive = (id: PlayerId) => Boolean(state.players[id]?.alive);
+  const visible = visibleShowdown(state.showdown, nowMs);
+  // С чего начать: раздача на табло; с пульта ради вылета после ривера — она же, даже спрятанная
+  // табло; иначе новая — в хедз-апе вечера оба игрока уже отмечены, сразу их карты.
+  const [start] = useState(() => {
+    const hand = (riverMode ? river.showdown : null) ?? visible;
+    const draft = hand
+      ? draftFromShowdown(hand)
+      : newShowdownDraft(newClientId(), state.joinOrder.filter(isAlive));
+    return { draft, headsUp: !hand && draft.players.length === 2 };
+  });
+  const [draft, setDraft] = useState<ShowdownDraft>(start.draft);
   const [active, setActive] = useState<Slot | null>(() =>
-    onBoard ? nextEmptySlot(draftFromShowdown(onBoard), null) : null,
+    start.draft.players.length > 0 ? nextEmptySlot(start.draft, null) : null,
   );
-  const [editPlayers, setEditPlayers] = useState(!onBoard);
+  const [editPlayers, setEditPlayers] = useState(start.draft.players.length === 0);
   const [sending, setSending] = useState(false);
 
-  // Раздача этого черновика на табло (после первой отправки — она же); чужая или скрытая — нет.
-  const published = onBoard && onBoard.showdownId === draft.showdownId ? onBoard : null;
+  // Раздача этого черновика (после первой отправки — она же), пока она в состоянии вечера: на табло
+  // или уже спрятанная им. Шторка, открытая на раздаче, её не теряет — ни когда табло вернулось к
+  // таймеру, ни когда у предложения на пульте вышел срок; закрыли или начали новую — уже нет.
+  const published = state.showdown?.showdownId === draft.showdownId ? state.showdown : null;
   const check = checkDraft(draft, nameOf);
   const payload = check.ok ? check.payload : null;
   const changed = payload !== null && !samePayload(payload, published);
@@ -78,10 +105,13 @@ function ShowdownSheetInner({ onClose, model, actions, onRebuy }: ShowdownSheetP
   const used = usedCards(draft);
   const current = active ? cardIn(draft, active) : null;
   const busy = sending || actions.busy;
-  // После ривера: кто проиграл раздачу и ещё в игре — предложение записать вылет.
-  const river = useRiverBusts(model, actions, onRebuy);
-  const suggestion = riverDone ? river.suggestion : null;
-  const choice = useRiverChoice(suggestion);
+  // После ривера: кто проиграл раздачу и ещё в игре — предложение записать вылет (здесь — и после
+  // «Не записывать» на пульте: шторка открыта нарочно).
+  const suggestion =
+    riverDone && published ? riverBustSuggestion(published, isAlive, applied) : null;
+  const choice = useRiverChoice(published, suggestion, isAlive, rebuyFor);
+  const rebuyable = new Set(choice.byChips.filter((id) => river.canRebuyAfter(choice, id)));
+  const rebuys = choice.rebuys.filter((id) => rebuyable.has(id));
 
   // Кого можно отметить: кто в игре, и те, кто уже в раздаче на табло или в черновике
   // (вылетевшего участника можно поправить и вернуть, если галочку с него сняли по ошибке).
@@ -128,9 +158,21 @@ function ShowdownSheetInner({ onClose, model, actions, onRebuy }: ShowdownSheetP
   };
 
   const recordBusts = async () => {
+    if (!published) return;
     setSending(true);
-    await river.record(choice.byChips, false);
+    const done = await river.record(
+      {
+        showdownId: published.showdownId,
+        byChips: choice.byChips,
+        killers: choice.killers,
+        rebuys,
+        paid: choice.paid,
+      },
+      false,
+    );
     setSending(false);
+    // Записано — раздача закрыта (или скроется сама): шторке больше нечего показывать.
+    if (done) onClose();
   };
 
   const closeShowdown = async () => {
@@ -155,14 +197,22 @@ function ShowdownSheetInner({ onClose, model, actions, onRebuy }: ShowdownSheetP
     : domainProblem
       ? domainProblem
       : riverDone && suggestion
-        ? null
+        ? 'Запись закроет раздачу. Никто не вылетел — «Закрыть раздачу».'
         : riverDone
-          ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
+          ? published === visible
+            ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
+            : 'Закрой раздачу — она больше не нужна. Поправить карту: нажми на неё выше.'
           : null;
 
   const description = published
-    ? `На табло — ${STREET_LABEL[streetOf(published.board.length)]}. Отмечай карты стола по мере выкладки.`
-    : 'Отметь игроков и их карты — табло покажет руки, стол и шансы.';
+    ? published === visible
+      ? `На табло — ${STREET_LABEL[streetOf(published.board.length)]}. Отмечай карты стола по мере выкладки.`
+      : suggestion
+        ? 'Табло уже вернулось к таймеру, а вылет по этой раздаче не записан.'
+        : 'Табло уже вернулось к таймеру.'
+    : start.headsUp && draft.players.length === 2 && !editPlayers
+      ? 'В игре двое — оба отмечены. Отметь их карты — табло покажет руки, стол и шансы.'
+      : 'Отметь игроков и их карты — табло покажет руки, стол и шансы.';
 
   return (
     <Sheet
@@ -179,12 +229,12 @@ function ShowdownSheetInner({ onClose, model, actions, onRebuy }: ShowdownSheetP
               <Button
                 variant="primary"
                 block
-                icon="user-x"
+                icon={rebuys.length > 0 ? 'refresh-cw' : 'user-x'}
                 loading={sending}
                 disabled={busy || choice.byChips.length === 0}
                 onClick={() => void recordBusts()}
               >
-                {riverBustLabel(choice.byChips.map(nameOf))}
+                {riverBustLabel(choice.byChips.map(nameOf), rebuys.length)}
               </Button>
               <Button variant="ghost" block disabled={busy} onClick={() => void closeShowdown()}>
                 Закрыть раздачу
@@ -225,7 +275,12 @@ function ShowdownSheetInner({ onClose, model, actions, onRebuy }: ShowdownSheetP
     >
       <div className="ev-sd">
         {suggestion && (
-          <RiverBustsChoice model={model} suggestion={suggestion} choice={choice} disabled={busy} />
+          <RiverBustsChoice
+            model={model}
+            choice={choice}
+            canRebuy={(id) => rebuyable.has(id)}
+            disabled={busy}
+          />
         )}
         {editPlayers ? (
           <PlayerPicker

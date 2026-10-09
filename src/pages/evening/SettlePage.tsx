@@ -27,6 +27,7 @@ import {
   Page,
   PageSkeleton,
   Section,
+  ShareTextSheet,
   Stat,
   Stats,
   useToast,
@@ -47,9 +48,10 @@ import {
 } from './lib';
 import { EventRow, StaleNotice } from './parts';
 import { PaymentSheet, type PaymentTarget } from './PaymentSheet';
-import { ShareTextSheet } from './ShareTextSheet';
 import { useEveningActions } from './useEveningActions';
 import { useEveningModel, type EveningModel } from './useEveningModel';
+
+const SETTLE_COPIED = 'Расчёт скопирован — вставь его в чат';
 
 const STATUS_TONE: Record<ReturnType<typeof settleDirection>, Tone> = {
   to_banker: 'caution',
@@ -153,8 +155,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
       nameOf,
       formatRub,
     });
-    if (await copyText(text))
-      toast.show('Расчёт скопирован — вставь его в чат', { tone: 'positive' });
+    if (await copyText(text)) toast.show(SETTLE_COPIED, { tone: 'positive' });
     else setShareText(text);
   };
 
@@ -333,7 +334,12 @@ function SettleScreen({ model }: { model: EveningModel }) {
         actions={actions}
         payments={target ? playerPayments(target.playerId) : []}
       />
-      <ShareTextSheet text={shareText} onClose={() => setShareText(null)} title="Расчёт для чата" />
+      <ShareTextSheet
+        text={shareText}
+        onClose={() => setShareText(null)}
+        title="Расчёт для чата"
+        copiedMessage={SETTLE_COPIED}
+      />
       {actions.confirmElement}
     </Page>
   );

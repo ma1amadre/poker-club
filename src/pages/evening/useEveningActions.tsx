@@ -11,6 +11,8 @@
 // ребаем, отменяется вместе с ним и при отмене из ленты (linkedPayment). Если журнал принял не всё
 // (ребай пришёл после закрытия), кнопка тоста отменяет только непринятое и оплату с ним
 // (rejectedPart), а принятый вылет остаётся.
+// then — запись следом отдельным запросом («Закрыть раздачу» после вылетов): не прошла — действие
+// остаётся записанным, тост говорит об этом; «Отменить» отменяет и её.
 import { canAmend } from '@domain/amend.ts';
 import { canApply, canApplySequence, replayLog, type EventDraft } from '@domain/replay.ts';
 import { isShowdownEvent } from '@domain/showdown.ts';
@@ -31,6 +33,7 @@ import {
   describeEvent,
   landedQuestion,
   linkedPayment,
+  paidWithText,
   rejectedPart,
   rejectedToast,
   voidImpact,
@@ -64,6 +67,14 @@ export interface SendOptions {
    * принимать null за «ответа нет».
    */
   onRejected?: () => void;
+  /**
+   * Запись следом, отдельным запросом, когда действие записано и журнал его принял: «Закрыть
+   * раздачу» после вылетов (add_events закрытие раздачи не принимает). Свой ключ повтора, без
+   * своего тоста: done или failed дописываются в тост действия, «Отменить» в нём отменяет и её.
+   * Не прошла (ошибка, тайм-аут) — действие остаётся записанным. Уже не нужна (раздачу закрыли
+   * с другого устройства) — не уходит, в тосте done.
+   */
+  then?: { type: EventType; payload: EventPayload; done: string; failed: string };
 }
 
 export interface VoidCopy {
@@ -92,6 +103,15 @@ export interface EveningActions {
   ) => Promise<EveningEventRecord[] | null>;
   /** Отменить событие с подтверждением, где видно, что именно отменяется. */
   voidWithConfirm: (event: EveningEventRecord, copy?: VoidCopy) => Promise<boolean>;
+  /**
+   * Отменить действие целиком (одна транзакция) с тем же подтверждением: event — главная запись,
+   * extra — остальные записи действия («Отменить последнее»: вылет и закрытие раздачи следом).
+   */
+  voidGroupWithConfirm: (
+    event: EveningEventRecord,
+    extra: readonly EveningEventRecord[],
+    copy?: VoidCopy,
+  ) => Promise<boolean>;
   /** Текст, почему событие сейчас нельзя добавить (или null), — по состоянию этого рендера. */
   check: (type: EventType, payload?: EventPayload) => string | null;
   /** Состояние вечера на эту секунду по последнему журналу (не по замыканию рендера). */
@@ -129,6 +149,8 @@ function hasSideEffects(impact: ReturnType<typeof voidEffect>): boolean {
 export function useEveningActions(model: EveningModel): EveningActions {
   const { evening, state, nowMs } = model;
   const addEvent = useAddEvent(evening.id);
+  // Запись следом за действием (SendOptions.then): её неудачу объясняет тост действия.
+  const addFollowUp = useAddEvent(evening.id, { silent: true });
   const addEvents = useAddEvents(evening.id);
   const voidEvent = useVoidEvent(evening.id);
   const voidEvents = useVoidEvents(evening.id);
@@ -188,9 +210,14 @@ export function useEveningActions(model: EveningModel): EveningActions {
       const line = describeEvent(event, current.nameOf, formatRub, format, current.feed);
       // Оплата при входе — по каждой отменяемой записи входа или ребая.
       const group = [event, ...extra.filter((e) => e.id !== event.id && !e.voided)];
-      const paid = group
-        .map((e) => linkedPayment(current.events, e, format))
-        .filter((e): e is EveningEventRecord => e !== null && !group.some((g) => g.id === e.id));
+      // Оплата и запись, с которой она записана (вход или ребай): от неё зависит подпись.
+      const paidWith = group
+        .map((e) => ({ with: e.type, payment: linkedPayment(current.events, e, format) }))
+        .filter(
+          (p): p is { with: EveningEventRecord['type']; payment: EveningEventRecord } =>
+            p.payment !== null && !group.some((g) => g.id === p.payment?.id),
+        );
+      const paid = paidWith.map((p) => p.payment);
       const ids = [...group, ...paid].map((e) => e.id);
       const impact = voidEffect(current, ids);
       const consequence =
@@ -217,7 +244,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
           : '';
       const paidText =
         paid.length > 0
-          ? ` Оплата, записанная вместе ${paid.length > 1 ? 'со входами' : event.type === 'rebuy' ? 'с ребаем' : 'со входом'}, тоже отменится: ${paid
+          ? ` Оплата, записанная вместе ${paidWithText(paidWith.map((p) => p.with))}, тоже отменится: ${paid
               .map((e) => quoteEvent(current, e))
               .join('; ')} — банкир возвращает эти деньги игроку.`
           : '';
@@ -356,6 +383,53 @@ export function useEveningActions(model: EveningModel): EveningActions {
     [toast, undo],
   );
 
+  /**
+   * Запись следом за действием (SendOptions.then): проверка по свежему журналу и свой ключ повтора
+   * (повтор после тайм-аута не задвоит её). Запись; null — уже не нужна; false — не прошла.
+   */
+  const followUp = useCallback(
+    async (then: NonNullable<SendOptions['then']>): Promise<EveningEventRecord | null | false> => {
+      const m = modelRef.current;
+      if (canApply(m.evening.format, freshState(), then.type, then.payload, serverNow()))
+        return null;
+      const intent = retryIntent(m.evening.id, then.type, then.payload);
+      const clientId = retryKeys.keyFor(intent, Date.now(), (key) =>
+        m.events.some((e) => e.clientId === key),
+      );
+      try {
+        const record = await addFollowUp.mutateAsync({
+          type: then.type,
+          payload: then.payload,
+          clientId,
+        });
+        retryKeys.succeeded(intent);
+        return record;
+      } catch {
+        retryKeys.failed(intent, clientId, Date.now());
+        return false;
+      }
+    },
+    [freshState, addFollowUp],
+  );
+
+  /** После записи: запись следом (если есть) и тост — про всё действие, «Отменить» — всё вместе. */
+  const afterRecorded = useCallback(
+    async (options: SendOptions, records: EveningEventRecord[]) => {
+      const then = options.then;
+      if (!then) {
+        successToast(options, records);
+        return;
+      }
+      const extra = await followUp(then);
+      const note = extra === false ? then.failed : then.done;
+      successToast(
+        { ...options, detail: [options.detail, note].filter(Boolean).join(' ') },
+        extra ? [...records, extra] : records,
+      );
+    },
+    [followUp, successToast],
+  );
+
   const send = useCallback(
     async (type: EventType, payload: EventPayload = {}, options: SendOptions = {}) => {
       const problemNow = () => {
@@ -408,10 +482,10 @@ export function useEveningActions(model: EveningModel): EveningActions {
 
       if (reportRejected([record], options)) return null;
 
-      successToast(options, [record]);
+      await afterRecorded(options, [record]);
       return record;
     },
-    [freshState, confirmIfLanded, toast, addEvent, reportRejected, successToast, evening.id],
+    [freshState, confirmIfLanded, toast, addEvent, reportRejected, afterRecorded, evening.id],
   );
 
   const sendAll = useCallback(
@@ -472,20 +546,26 @@ export function useEveningActions(model: EveningModel): EveningActions {
 
       if (reportRejected(records, options)) return null;
 
-      successToast(options, records);
+      await afterRecorded(options, records);
       return records;
     },
-    [freshState, confirmIfLanded, toast, addEvents, reportRejected, successToast, evening.id],
+    [freshState, confirmIfLanded, toast, addEvents, reportRejected, afterRecorded, evening.id],
   );
 
   return {
     send,
     sendAll,
     voidWithConfirm,
+    voidGroupWithConfirm,
     check,
     freshState,
     confirmIfLanded,
-    busy: addEvent.isPending || addEvents.isPending || voidEvent.isPending || voidEvents.isPending,
+    busy:
+      addEvent.isPending ||
+      addFollowUp.isPending ||
+      addEvents.isPending ||
+      voidEvent.isPending ||
+      voidEvents.isPending,
     confirm,
     confirmElement,
   };

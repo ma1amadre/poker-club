@@ -242,6 +242,12 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
                   Как всё устроено
                 </Button>
               )}
+              {/* Камера, микрофон и распознавание на этом телефоне — отчёт для чата. */}
+              {isMe && (
+                <ButtonLink size="sm" variant="ghost" icon="shield-check" to={paths.probe}>
+                  Проверка устройства
+                </ButtonLink>
+              )}
             </div>
           )}
         </div>

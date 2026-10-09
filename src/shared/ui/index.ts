@@ -108,6 +108,7 @@ export { PlayingCard, SuitPip, type PlayingCardProps, type PlayingCardSize } fro
 export { AllInList, type AllInListProps } from './AllInList';
 export { ShowdownView, type ShowdownViewProps } from './ShowdownView';
 export { Sheet, type SheetProps } from './Sheet';
+export { ShareTextSheet, type ShareTextSheetProps } from './ShareTextSheet';
 export {
   SeasonPodium,
   type PodiumPerson,

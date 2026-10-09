@@ -21,6 +21,7 @@ import {
   initialKillers,
   killersHint,
   lastBust,
+  lastUndoAction,
   lastUndoable,
   levelLabel,
   levelNextClosesRebuys,
@@ -32,6 +33,7 @@ import {
   normalizeGuestName,
   orderedPlayers,
   ordinalPlace,
+  paidWithText,
   parsePayouts,
   parseRub,
   payoutTextSum,
@@ -53,6 +55,7 @@ import {
   rebuyWindow,
   seatButtonLabel,
   seatCandidates,
+  seatPreselected,
   seatSpectator,
   seatDrafts,
   settleDirection,
@@ -64,6 +67,7 @@ import {
   stacksAmountText,
   totalRebuys,
   triggerProgress,
+  undoActionText,
   voidImpact,
   voidImpactText,
 } from './lib';
@@ -184,6 +188,109 @@ describe('lastUndoable / feedEvents', () => {
 
   it('пустой журнал — null', () => {
     expect(lastUndoable([])).toBeNull();
+  });
+});
+
+describe('lastUndoAction: «Отменить последнее» после «Записать вылет» по раздаче', () => {
+  const SD = '00000000-0000-4000-8000-0000000000aa';
+  const BOARD = ['2c', '7h', '9s', 'Jc', '3d'];
+  /** Журнал с автором записей (как в БД): по умолчанию всё пишет банкир. */
+  const records = (j: ReturnType<typeof journal>, by: Record<number, string> = {}) =>
+    j.events.map((e) => ({ ...e, createdBy: by[e.id] ?? 'bank' }));
+  /** Вечер, олл-ин a против b и c до ривера. */
+  function river() {
+    const j = journal().join('a', 'b', 'c', 'd');
+    j.start();
+    j.wait(1).showdown(
+      SD,
+      [
+        ['a', 'As', 'Ah'],
+        ['b', 'Kd', 'Ks'],
+        ['c', 'Qs', 'Qh'],
+      ],
+      BOARD,
+    );
+    return j.wait(0.5);
+  }
+
+  it('вылеты, ребай с оплатой одним действием и закрытие следом — отменяются вместе', () => {
+    const j = river();
+    // Одна транзакция add_events: одно серверное время.
+    const bustC = j.bust('c', ['a']);
+    const bustB = j.bust('b', ['a']);
+    const rebuyB = j.rebuy('b');
+    j.payment('b', 1000);
+    const close = j.wait(0.02).closeShowdown(SD);
+    const undo = lastUndoAction(records(j));
+    expect(undo?.main.id).toBe(bustC);
+    // Оплату ребая отмена находит сама (linkedPayment) — в extra её нет.
+    expect(undo?.extra.map((e) => e.id)).toEqual([bustB, rebuyB, close]);
+  });
+
+  it('один вылет и закрытие — вылет главный, закрытие вместе с ним', () => {
+    const j = river();
+    const bust = j.bust('b', ['a']);
+    const close = j.wait(0.05).closeShowdown(SD);
+    const undo = lastUndoAction(records(j));
+    expect(undo?.main.id).toBe(bust);
+    expect(undo?.extra.map((e) => e.id)).toEqual([close]);
+  });
+
+  it('закрытие позже минуты, другим банкиром или после другой записи — отдельное действие', () => {
+    const late = river();
+    late.bust('b', ['a']);
+    const lateClose = late.wait(2).closeShowdown(SD);
+    expect(lastUndoAction(records(late))).toEqual({
+      main: expect.objectContaining({ id: lateClose }),
+      extra: [],
+    });
+
+    const other = river();
+    other.bust('b', ['a']);
+    const otherClose = other.wait(0.05).closeShowdown(SD);
+    expect(lastUndoAction(records(other, { [otherClose]: 'bank2' }))?.extra).toEqual([]);
+
+    const between = river();
+    between.bust('b', ['a']);
+    between.wait(0.02).hand();
+    const afterHand = between.wait(0.02).closeShowdown(SD);
+    expect(lastUndoAction(records(between))?.main.id).toBe(afterHand);
+    expect(lastUndoAction(records(between))?.extra).toEqual([]);
+  });
+
+  it('вылет отменён, раздачу закрыли руками — только закрытие', () => {
+    const j = river();
+    const bust = j.bust('b', ['a']);
+    j.voidEvent(bust);
+    const close = j.wait(0.05).closeShowdown(SD);
+    expect(lastUndoAction(records(j))).toEqual({
+      main: expect.objectContaining({ id: close }),
+      extra: [],
+    });
+  });
+
+  it('последняя запись не закрытие — как раньше, одна запись; пустой журнал — null', () => {
+    const j = river();
+    const bust = j.bust('b', ['a']);
+    expect(lastUndoAction(records(j))).toEqual({
+      main: expect.objectContaining({ id: bust }),
+      extra: [],
+    });
+    expect(lastUndoAction([])).toBeNull();
+  });
+
+  it('оплата отменяется вместе с ребаем — «с ребаем», а не «со входом»', () => {
+    expect(paidWithText(['rebuy'])).toBe('с ребаем');
+    expect(paidWithText(['rebuy', 'rebuy'])).toBe('с ребаями');
+    expect(paidWithText(['join'])).toBe('со входом');
+    expect(paidWithText(['join', 'join', 'join'])).toBe('со входами');
+    expect(paidWithText(['join', 'rebuy'])).toBe('со входом и ребаем');
+  });
+
+  it('подпись: что отменится', () => {
+    expect(undoActionText('Вылет: Миша', 0)).toBe('«Вылет: Миша»');
+    expect(undoActionText('Вылет: Миша', 1)).toBe('«Вылет: Миша» и ещё 1 запись');
+    expect(undoActionText('Вылет: Миша', 2)).toBe('«Вылет: Миша» и ещё 2 записи');
   });
 });
 
@@ -511,6 +618,19 @@ describe('seatCandidates / normalizeGuestName', () => {
     // Алла сказала «иду» — на этот вечер игрок и сверху; Аня — болельщик среди молчащих.
     expect(list.map((c) => c.player.id)).toEqual(['t', 'b', 'd', 's', 'c']);
     expect(list.map(seatSpectator)).toEqual([false, false, false, true, false]);
+  });
+
+  it('seatPreselected: на старте — все «иду»; опоздавший — только если такой «иду» один', () => {
+    const c = (id: string, rsvp: 'yes' | 'maybe' | 'no' | null) => ({ player: { id }, rsvp });
+    // «Иду» ответили 8, пришли 6: двоих банкир снял на старте. Опоздавшего отмечать не за кого.
+    const two = [c('x', 'yes'), c('y', 'yes'), c('l', 'maybe'), c('g', null)];
+    expect(seatPreselected(two, 'start')).toEqual(['x', 'y']);
+    expect(seatPreselected(two, 'late')).toEqual([]);
+    // «Иду», кто не сел, один — вероятнее всего, он и пришёл.
+    const one = [c('x', 'yes'), c('l', 'maybe')];
+    expect(seatPreselected(one, 'late')).toEqual(['x']);
+    expect(seatPreselected([c('l', 'maybe'), c('n', 'no')], 'late')).toEqual([]);
+    expect(seatPreselected([], 'start')).toEqual([]);
   });
 
   it('имя гостя: пробелы схлопываются, 1–40 символов', () => {

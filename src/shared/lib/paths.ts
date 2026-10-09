@@ -17,6 +17,8 @@ export const paths = {
   season: (key: string) => `/season/${key}`,
   history: '/history',
   historyMoments: '/history?tab=moments',
+  /** «Проверка устройства»: камера, микрофон, распознавание речи на телефоне игрока. */
+  probe: '/probe',
   admin: '/admin',
   adminEveningNew: '/admin/evening/new',
   adminEvening: (id: string) => `/admin/evening/${id}`,

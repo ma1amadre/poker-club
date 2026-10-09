@@ -18,7 +18,7 @@ import {
   type EventDraft,
   type ReplayLog,
 } from '@domain/replay.ts';
-import { readShowdown, streetOf } from '@domain/showdown.ts';
+import { readShowdown, readShowdownId, streetOf } from '@domain/showdown.ts';
 import { spectatesEvening } from '@domain/spectators.ts';
 import type {
   BlindLevel,
@@ -440,6 +440,67 @@ export function lastUndoable<T extends EveningEvent>(events: readonly T[]): T | 
     if (!best || ev.id > best.id) best = ev;
   }
   return best;
+}
+
+/**
+ * Закрытие раздачи после вылетов уходит следом сразу после ответа сервера (SendOptions.then) —
+ * секунды, с тайм-аутом записи — до 15 с. Закрытие позже — уже отдельное действие банкира.
+ */
+export const FOLLOW_UP_MAX_MS = 60_000;
+
+export interface UndoAction<T> {
+  /** Главная запись: её называют кнопка и вопрос перед отменой. */
+  main: T;
+  /** Остальные записи того же действия; оплату ребая отмена находит сама (linkedPayment). */
+  extra: T[];
+}
+
+/**
+ * Что отменяет «Отменить последнее»: последняя неотменённая игровая запись (lastUndoable). Если
+ * это «Раздача закрыта», ушедшая следом за вылетами по этой раздаче («Записать вылет» после
+ * ривера: действие add_events и закрытие отдельным запросом), — всё действие, как «Отменить» в
+ * тосте: вылеты, ребаи и закрытие. Иначе отменилось бы только закрытие, а вылет остался. Признаки:
+ * прямо перед закрытием в журнале — записи одного действия (одно серверное время и один автор;
+ * только вылеты, ребаи и оплата, хотя бы один вылет), вылеты — после открытия этой раздачи,
+ * закрытие — того же автора и не позже FOLLOW_UP_MAX_MS после них.
+ */
+export function lastUndoAction<T extends EveningEvent & { createdBy?: string | null }>(
+  events: readonly T[],
+): UndoAction<T> | null {
+  const last = lastUndoable(events);
+  if (!last) return null;
+  const single: UndoAction<T> = { main: last, extra: [] };
+  const showdownId = last.type === 'showdown_close' ? readShowdownId(last.payload) : null;
+  if (showdownId === null) return single;
+  const live = events.filter((e) => !e.voided).sort((a, b) => a.id - b.id);
+  const at = live.findIndex((e) => e.id === last.id);
+  const prev = live[at - 1];
+  if (!prev) return single;
+  const author = prev.createdBy ?? null;
+  const gap = Date.parse(last.at) - Date.parse(prev.at);
+  if ((last.createdBy ?? null) !== author || !(gap >= 0 && gap <= FOLLOW_UP_MAX_MS)) return single;
+  const batch: T[] = [];
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const e = live[i] as T;
+    if (e.at !== prev.at || (e.createdBy ?? null) !== author) break;
+    batch.unshift(e);
+  }
+  if (!batch.every((e) => e.type === 'bust' || e.type === 'rebuy' || e.type === 'payment'))
+    return single;
+  const opened = live.find(
+    (e) => e.type === 'showdown' && readShowdownId(e.payload) === showdownId,
+  );
+  const game = batch.filter((e) => e.type !== 'payment');
+  const [first] = game;
+  if (!first || first.type !== 'bust' || !opened || first.id < opened.id) return single;
+  return { main: first, extra: [...game.slice(1), last] };
+}
+
+/** «Вылет: Миша» и ещё 2 записи — что отменит «Отменить последнее» (title — describeEvent). */
+export function undoActionText(title: string, extraCount: number): string {
+  const more =
+    extraCount > 0 ? ` и ещё ${pluralWithNumber(extraCount, ['запись', 'записи', 'записей'])}` : '';
+  return `«${title}»${more}`;
 }
 
 /** Лента: игровые события от новых к старым (платежи — на экране расчёта). */
@@ -915,6 +976,36 @@ export function bustRebuyDrafts(
   ];
 }
 
+/** Подробность тоста вылета, после которого в игре остался один (кнопка тоста — «Завершить»). */
+export const LAST_ONE_NOTE = 'В игре остался один.';
+
+/**
+ * После этих записей в игре останется один, а ребаи будут закрыты: тост вылета предлагает
+ * «Завершить» (вопрос «Завершить вечер?» — тот же, что у кнопки пульта). Записи прикладываются к
+ * журналу как в canApplySequence (сейчас, по порядку); какую-то журнал не примет — false: о ней
+ * скажет проверка перед отправкой.
+ */
+export function finishDueAfter(
+  format: TournamentFormat,
+  events: readonly EveningEvent[],
+  drafts: readonly EventDraft[],
+  nowMs: number,
+): boolean {
+  if (drafts.length === 0) return false;
+  const lastId = events.reduce((m, e) => Math.max(m, e.id), 0);
+  const at = new Date(nowMs).toISOString();
+  const tail: EveningEvent[] = drafts.map((d, i) => ({
+    id: lastId + 1 + i,
+    type: d.type,
+    payload: d.payload,
+    at,
+    voided: false,
+  }));
+  const { state } = replayLog(format, [...events, ...tail], nowMs);
+  if (state.errors.some((e) => tail.some((t) => t.id === e.eventId))) return false;
+  return !state.finished && state.aliveCount === 1 && !state.rebuysOpen;
+}
+
 /** Вторая кнопка шторки вылета: кратность — на кнопке, если ребай крупнее стандартного. */
 export function bustRebuyLabel(k: number): string {
   return k > 1 ? `Вылет и ребай ×${k}` : 'Вылет и ребай';
@@ -965,6 +1056,19 @@ export function linkedPayment<T extends EveningEvent & { createdBy?: string | nu
         (e.createdBy ?? null) === (entry.createdBy ?? null),
     ) ?? null
   );
+}
+
+/**
+ * С чем записана оплата, которая отменится вместе с записями: «со входом», «с ребаем», «со входами»,
+ * «с ребаями», «со входом и ребаем» (types — тип записи, к которой привязан каждый платёж).
+ */
+export function paidWithText(types: readonly EventType[]): string {
+  const joins = types.filter((t) => t === 'join').length;
+  const rebuys = types.length - joins;
+  const join = joins > 1 ? 'со входами' : 'со входом';
+  const rebuy = rebuys > 1 ? 'ребаями' : 'ребаем';
+  if (joins > 0 && rebuys > 0) return `${join} и ${rebuy}`;
+  return joins > 0 ? join : `с ${rebuy}`;
 }
 
 // --- Записано, но не принято журналом ------------------------------------------------------
@@ -1216,6 +1320,20 @@ export function seatCandidates<
         rank(a) - rank(b) ||
         a.player.display_name.localeCompare(b.player.display_name, 'ru'),
     );
+}
+
+/**
+ * Кто отмечен в шторке посадки заранее. На старте — все ответившие «иду». Опоздавший — только
+ * если такой «иду», кто ещё не сел, один: на старте банкир снял отметки с неявившихся, и при
+ * нескольких отмечать их снова — лишние касания и риск лишних входов (взнос в фонд, а с «Оплачено
+ * сразу» — и платёж), когда пришёл кто-то другой.
+ */
+export function seatPreselected<P extends { id: string }>(
+  candidates: readonly SeatCandidate<P>[],
+  mode: 'start' | 'late',
+): string[] {
+  const going = candidates.filter((c) => c.rsvp === 'yes').map((c) => c.player.id);
+  return mode === 'start' || going.length === 1 ? going : [];
 }
 
 /** Кандидат на посадку — болельщик на этот вечер (ещё не за столом): подпись «болельщик» в шторке. */

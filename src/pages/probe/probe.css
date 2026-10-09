@@ -1,0 +1,138 @@
+/*
+ * «Проверка устройства» (#/probe). Только токены регистра: строки списка на фоне экрана, черта 1px
+ * --line сверху списка и под каждым пунктом, номер — моно двумя знаками, факты — подпись и моно-значение.
+ * Префикс pr-.
+ */
+
+.pr-list {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.pr-item {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-block: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.pr-item__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.pr-item__num {
+  flex: none;
+  font-size: var(--m-small-size);
+  color: var(--ink-muted);
+}
+
+.pr-item__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pr-item__status {
+  flex: none;
+}
+
+.pr-item__desc {
+  max-width: 60ch;
+}
+
+.pr-item__actions {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Причина «НЕТ» и текст ошибки — строкой лога: моно, ошибка — critical. */
+.pr-item__note {
+  margin: 0;
+  font-family: var(--m-font-mono);
+  font-size: var(--m-small-size);
+  line-height: 1.5;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.pr-item__note.is-error {
+  color: var(--critical);
+}
+
+/* Факты: подпись слева, значение моно справа; длинное (userAgent) переносится где угодно. */
+.pr-facts {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+}
+
+.pr-facts__row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-3);
+}
+
+.pr-facts__label {
+  font-size: var(--m-small-size);
+  line-height: 1.5;
+  color: var(--ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.pr-facts__value {
+  margin: 0;
+  font-size: var(--m-small-size);
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* Превью камеры и снимка: во всю ширину колонки, не выше 240 px, рамка как у карты. */
+.pr-preview {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+}
+
+.pr-preview[hidden] {
+  display: none;
+}
+
+/*
+ * Поле выбора файла открывается кнопкой «Сделать фото» — само не видно. Не display: none: часть WebView
+ * не открывает выбор у скрытого так поля.
+ */
+.pr-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pr-question {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Полоса уровня обновляется 10 раз в секунду — переход короче шага, чтобы не отставать. */
+.pr-level .m-progress-bar {
+  transition-duration: var(--dur-instant);
+}
+
+/* Что слышно — строка терминала с приглашением. */
+.pr-heard {
+  margin: 0;
+  font-size: var(--m-small-size);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}

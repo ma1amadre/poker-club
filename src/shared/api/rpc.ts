@@ -496,10 +496,14 @@ function invalidateEvening(queryClient: QueryClient, eveningId: string): void {
   void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
 }
 
-/** Добавить событие в журнал вечера `eveningId`. */
-export function useAddEvent(eveningId: string) {
+/**
+ * Добавить событие в журнал вечера `eveningId`. silent — без общего тоста ошибки: запись следом за
+ * действием (закрыть раздачу после вылета), о неудаче которой говорит тост самого действия.
+ */
+export function useAddEvent(eveningId: string, { silent = false }: { silent?: boolean } = {}) {
   const queryClient = useQueryClient();
   return useMutation({
+    meta: silent ? { silent: true } : undefined,
     mutationFn: (input: Omit<AddEventInput, 'eveningId'>) => addEvent({ ...input, eveningId }),
     onSuccess: (record) => {
       // Сразу кладём событие в кеш: экран банкира не ждёт ни Realtime, ни перезапроса.

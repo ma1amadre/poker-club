@@ -13,12 +13,14 @@ import {
   moscowToIso,
   NBSP,
   nextGameSlot,
+  paths,
   useNow,
   WEEKDAYS,
 } from '../../shared/lib';
 import {
   Accordion,
   Button,
+  ButtonLink,
   Empty,
   ErrorView,
   Field,
@@ -96,6 +98,14 @@ export function ClubTab({ draft, onDraftChange }: ClubTabProps) {
       />
       {/* Вне формы: ссылка табло меняется своей кнопкой, а не «Сохранить настройки». */}
       <ClubBoardSection settings={settings.data} />
+      <Section
+        title="Проверка устройства"
+        footer="Что из камеры, микрофона и распознавания речи работает на телефоне. Та же ссылка — на карточке каждого игрока: отчёт игрок копирует в чат сам."
+      >
+        <ButtonLink to={paths.probe} block icon="shield-check" iconAfter="arrow-right">
+          Открыть проверку
+        </ButtonLink>
+      </Section>
     </div>
   );
 }

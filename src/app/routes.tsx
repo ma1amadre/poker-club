@@ -22,6 +22,7 @@ const PlayerPage = lazy(() => import('../pages/player/PlayerPage'));
 const HistoryPage = lazy(() => import('../pages/history/HistoryPage'));
 const AdminPage = lazy(() => import('../pages/admin/AdminPage'));
 const EveningEditPage = lazy(() => import('../pages/admin/EveningEditPage'));
+const ProbePage = lazy(() => import('../pages/probe/ProbePage'));
 
 // Витрина кита — только в dev: в прод-сборке import.meta.env.DEV — литерал false, ветки с
 // динамическим импортом вырезаются, и чанки витрины не собираются.
@@ -110,6 +111,7 @@ export function AppRoutes() {
         <Route path="season/:key" element={<SeasonPage />} />
         <Route path="player/:id" element={<PlayerPage />} />
         <Route path="history" element={<HistoryPage />} />
+        <Route path="probe" element={<ProbePage />} />
         <Route
           path="admin"
           element={

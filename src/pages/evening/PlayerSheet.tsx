@@ -6,6 +6,7 @@
 // Пока игрок может докупиться, в шторке вылета — «Вылет и ребай ×k» одной кнопкой (одно действие,
 // одна транзакция add_events), а в тосте после простого вылета — «Ребай» (открывает эту же шторку
 // ребая). «Оплачено сразу» у ребая — платёж на сумму взноса тем же действием (по умолчанию выключено).
+// Вылет оставил в игре одного при закрытых ребаях — в тосте «Завершить вечер» (с прежним вопросом).
 import { entryAmounts } from '@domain/money.ts';
 import { canApplySequence } from '@domain/replay.ts';
 import type { PlayerState } from '@domain/types.ts';
@@ -17,6 +18,8 @@ import {
   bustRebuyDrafts,
   bustRebuyLabel,
   entryPayload,
+  finishDueAfter,
+  LAST_ONE_NOTE,
   initialKillers,
   killersHint,
   playerLine,
@@ -38,6 +41,8 @@ export interface PlayerSheetProps {
   actions: EveningActions;
   /** «Ребай» в тосте после вылета: открыть шторку ребая этого игрока. */
   onRebuy?: (playerId: string) => void;
+  /** «Завершить вечер» в тосте после последнего вылета (ребаи закрыты). */
+  onFinish?: () => void;
 }
 
 export function PlayerSheet({ player, ...rest }: PlayerSheetProps) {
@@ -51,6 +56,7 @@ function PlayerSheetInner({
   model,
   actions,
   onRebuy,
+  onFinish,
 }: Omit<PlayerSheetProps, 'player'> & { player: PlayerState }) {
   const { state, nameOf, playersById, evening } = model;
   const name = nameOf(player.playerId);
@@ -137,17 +143,25 @@ function PlayerSheetInner({
 
   const bust = () => {
     const playerId = current.playerId;
+    // Остался один, ребаи закрыты — вечер пора завершать (ребай тогда невозможен).
+    const finishAfter =
+      onFinish !== undefined &&
+      !rebuyAfterBust &&
+      finishDueAfter(format, model.events, [{ type: 'bust', payload: bustPayload }], model.nowMs);
     return run('bust', (onRejected) =>
       actions.send('bust', bustPayload, {
         success: `Вылет записан: ${name}`,
-        detail: killersDetail,
+        detail: finishAfter ? `${killersDetail} ${LAST_ONE_NOTE}` : killersDetail,
         undo: true,
-        // Пока игрок может докупиться, в тосте — «Ребай» (у тоста одна кнопка). Ошибочный вылет
-        // отменяется «Отменить последнее» в пульте или из ленты.
+        // У тоста одна кнопка (одним глаголом): пока игрок может докупиться — «Ребай», остался
+        // один при закрытых ребаях — «Завершить» (вопрос «Завершить вечер?» — прежний). Ошибочный
+        // вылет отменяется «Отменить последнее» в пульте или из ленты.
         action:
           onRebuy && rebuyAfterBust
             ? { label: 'Ребай', onClick: () => onRebuy(playerId) }
-            : undefined,
+            : onFinish && finishAfter
+              ? { label: 'Завершить', onClick: () => onFinish() }
+              : undefined,
         onRejected,
       }),
     );

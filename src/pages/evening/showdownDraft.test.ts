@@ -9,6 +9,7 @@ import {
   clearSlot,
   draftFromShowdown,
   emptyDraft,
+  newShowdownDraft,
   nextEmptySlot,
   placeCard,
   samePayload,
@@ -58,6 +59,20 @@ function published(board: string[], hands: [string, string, string][]): Showdown
 }
 
 describe('черновик олл-ина', () => {
+  it('новая раздача в хедз-апе вечера — оба игрока отмечены, первое место — карта первого', () => {
+    const d = newShowdownDraft(SD, ['A', 'B']);
+    expect(d.players).toEqual(['A', 'B']);
+    expect(d.hands).toEqual({ A: [null, null], B: [null, null] });
+    expect(nextEmptySlot(d, null)).toEqual({ kind: 'hand', playerId: 'A', index: 0 });
+    // Четыре касания — и руки готовы к показу на табло.
+    expect(payloadOf(tapAll(d, ['As', 'Kd', 'Qh', 'Qc'])).hands).toHaveLength(2);
+  });
+
+  it('новая раздача, в игре трое (или один) — состав пустой, его отмечает банкир', () => {
+    expect(newShowdownDraft(SD, ['A', 'B', 'C']).players).toEqual([]);
+    expect(newShowdownDraft(SD, ['A']).players).toEqual([]);
+  });
+
   it('порядок мест: руки по очереди, затем флоп, тёрн, ривер', () => {
     const d = setPlayers(emptyDraft(SD), ['A', 'B']);
     const order = slotOrder(d).map((s) =>

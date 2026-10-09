@@ -140,6 +140,12 @@ export const EXTRA = {
     ['line', { x1: 12, x2: 12, y1: 6, y2: 2 }],
     ['line', { x1: 12, x2: 12, y1: 22, y2: 18 }],
   ],
+  // «Проверка устройства»: микрофон и распознавание речи.
+  mic: [
+    ['path', { d: 'M12 19v3' }],
+    ['path', { d: 'M19 10v2a7 7 0 0 1-14 0v-2' }],
+    ['rect', { x: 9, y: 2, width: 6, height: 13, rx: 3 }],
+  ],
 } as const satisfies Record<string, readonly Shape[]>;
 
 export type ExtraIconName = keyof typeof EXTRA;

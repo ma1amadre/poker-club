@@ -24,6 +24,15 @@ export function emptyDraft(showdownId: string): ShowdownDraft {
   return { showdownId, players: [], hands: {}, board: EMPTY_BOARD };
 }
 
+/**
+ * Черновик новой раздачи. В игре ровно двое (хедз-ап вечера) — вскрываться больше некому: оба
+ * отмечены сразу, банкир начинает с их карт. Иначе — пусто, состав отмечает банкир.
+ */
+export function newShowdownDraft(showdownId: string, alive: readonly PlayerId[]): ShowdownDraft {
+  const draft = emptyDraft(showdownId);
+  return alive.length === 2 ? setPlayers(draft, alive) : draft;
+}
+
 /** Черновик из раздачи на табло — правка продолжает её (тот же id). */
 export function draftFromShowdown(s: ShowdownState): ShowdownDraft {
   const hands: Record<PlayerId, readonly [CardCode | null, CardCode | null]> = {};

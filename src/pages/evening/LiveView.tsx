@@ -4,7 +4,10 @@
 // «Стол» (TableView) — всё под рукой без прокрутки: полоса часов, места сеткой, вылетевшие, олл-ин;
 // «Подробно» — прежний экран: часы карточкой, пульт кнопками, статы, список игроков.
 // Пока на табло олл-ин, его панель (руки, стол, шансы, ауты) — первой на экране у игроков и в
-// «Подробно»; в «Столе» — под пультом. После ривера — «Записать вылет: X» (useRiverBusts).
+// «Подробно»; в «Столе» — под пультом. После ривера — «Записать вылет: X» и «Вылет и ребай»
+// (useRiverBusts, RiverActions): держатся, пока раздачу не закрыли, не начали новую или не
+// записали вылет, — и после того, как табло спрятало раздачу (тогда в «Подробно» — в пульте, а не
+// под панелью).
 // У того, кто ведёт пульт, экран не гаснет (Screen Wake Lock; нельзя — подсказка отключить
 // автоблокировку), а закрытие Mini App Telegram переспрашивает: пульт — не место для случайного свайпа.
 // У игрока, который пульт не ведёт, вверху — «Ты за столом» (статус, входы, нокауты, баланс с
@@ -16,7 +19,7 @@
 import { amendField } from '@domain/amend.ts';
 import { computeMoney, paymentsFromEvents } from '@domain/money.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
-import type { PlayerState } from '@domain/types.ts';
+import type { PlayerId, PlayerState } from '@domain/types.ts';
 import { useState, type ReactNode } from 'react';
 import { useRsvps, type EveningEventRecord } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
@@ -63,6 +66,7 @@ import {
   rebuyWindow,
   timeAdjustable,
   triggerProgress,
+  undoActionText,
 } from './lib';
 import { EventFeed, MySeatCard, PlayersList } from './parts';
 import { PauseSheet } from './PauseSheet';
@@ -70,7 +74,7 @@ import { PregameRow } from './PregameCheck';
 import './pult.css';
 import { PlayerSheet } from './PlayerSheet';
 import type { PultView } from './pultView';
-import { riverBustLabel } from './riverBusts';
+import { RiverActions } from './RiverActions';
 import { SeatSheet } from './SeatSheet';
 import { ShowdownSheet } from './ShowdownSheet';
 import { TableView } from './TableView';
@@ -106,7 +110,14 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
   const rsvps = useRsvps(canControl ? evening.id : undefined).data ?? [];
   const [selected, setSelected] = useState<PlayerState | null>(null);
   const [seatOpen, setSeatOpen] = useState(false);
-  const [showdownOpen, setShowdownOpen] = useState(false);
+  // Шторка олл-ина: river — открыта ради вылета после ривера (на этой раздаче, даже спрятанной
+  // табло), rebuy — у кого «Сразу ребай» уже отмечен («Вылет и ребай» с пульта).
+  const [showdownSheet, setShowdownSheet] = useState<{
+    river: boolean;
+    rebuy: PlayerId[];
+  } | null>(null);
+  const openShowdown = () => setShowdownSheet({ river: false, rebuy: [] });
+  const openRiverSheet = (rebuy: PlayerId[]) => setShowdownSheet({ river: true, rebuy });
   const [pauseOpen, setPauseOpen] = useState(false);
   const [clockOpen, setClockOpen] = useState(false);
   const [amending, setAmending] = useState<EveningEventRecord | null>(null);
@@ -127,7 +138,11 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
         detail: 'Ребай уже записан или вылет отменён — проверь ленту.',
       });
   };
-  const river = useRiverBusts(model, actions, openRebuy);
+  // «Завершить вечер» в тосте последнего вылета — с тем же вопросом, что у кнопки пульта.
+  const river = useRiverBusts(model, actions, {
+    onRebuy: openRebuy,
+    onFinish: () => void pult.finish(),
+  });
 
   // Лента: вход, ребай и вылет — «Изменить запись» (там же «Отменить запись»), остальное — отмена.
   const selectEvent = (ev: EveningEventRecord) => {
@@ -136,21 +151,10 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
   };
   const canEdit = (ev: EveningEventRecord) => amendField(ev) !== null;
 
-  /** После ривера: один проигравший — вопрос здесь же; несколько — шторка олл-ина. */
-  const riverButton = river.suggestion ? (
-    <Button
-      variant="primary"
-      icon="user-x"
-      disabled={actions.busy}
-      onClick={() => {
-        const s = river.suggestion;
-        if (s && s.victims.length === 1) void river.record(s.victims, true);
-        else setShowdownOpen(true);
-      }}
-    >
-      {riverBustLabel(river.suggestion.victims.map(nameOf))}
-    </Button>
-  ) : null;
+  /** После ривера: один проигравший — вопрос здесь же; несколько и «Вылет и ребай» — шторка. */
+  const riverActions = (
+    <RiverActions model={model} actions={actions} river={river} primary onSheet={openRiverSheet} />
+  );
 
   const showdownPanel = showdown && (
     <ShowdownView
@@ -159,8 +163,8 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
       footer={
         canControl ? (
           <div className="ev-sd-footer">
-            {!tableMode && riverButton}
-            <Button icon="pencil" onClick={() => setShowdownOpen(true)}>
+            {!tableMode && riverActions}
+            <Button icon="pencil" onClick={openShowdown}>
               Отметить карты
             </Button>
           </div>
@@ -259,7 +263,8 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
             showdownOpen={Boolean(showdown)}
             onPlayer={setSelected}
             onSeat={() => setSeatOpen(true)}
-            onShowdown={() => setShowdownOpen(true)}
+            onShowdown={openShowdown}
+            onRiverSheet={openRiverSheet}
             onPause={() => setPauseOpen(true)}
             onClock={() => setClockOpen(true)}
           />
@@ -276,12 +281,13 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
           me={me?.id ?? null}
           payments={payments}
           showdownPanel={showdownPanel}
+          riverActions={showdownPanel ? null : riverActions}
           statsBlock={statsBlock}
           feed={feed}
           wakeHint={wakeHint}
           onPlayer={setSelected}
           onSeat={() => setSeatOpen(true)}
-          onShowdown={() => setShowdownOpen(true)}
+          onShowdown={openShowdown}
           onPause={() => setPauseOpen(true)}
         />
       )}
@@ -294,6 +300,7 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
             model={model}
             actions={actions}
             onRebuy={openRebuy}
+            onFinish={() => void pult.finish()}
           />
           <SeatSheet
             open={seatOpen}
@@ -304,11 +311,13 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
             mode="late"
           />
           <ShowdownSheet
-            open={showdownOpen}
-            onClose={() => setShowdownOpen(false)}
+            open={showdownSheet !== null}
+            onClose={() => setShowdownSheet(null)}
             model={model}
             actions={actions}
-            onRebuy={openRebuy}
+            river={river}
+            riverMode={showdownSheet?.river}
+            rebuyFor={showdownSheet?.rebuy}
           />
           <PauseSheet open={pauseOpen} onClose={() => setPauseOpen(false)} actions={actions} />
           <ClockSheet
@@ -338,6 +347,7 @@ function DetailsView({
   me,
   payments,
   showdownPanel,
+  riverActions,
   statsBlock,
   feed,
   wakeHint,
@@ -352,6 +362,8 @@ function DetailsView({
   me: string | null;
   payments: ReturnType<typeof paymentsFromEvents>;
   showdownPanel: ReactNode;
+  /** Вылет после ривера, когда панели олл-ина нет (табло её спрятало): первым в пульте. */
+  riverActions: ReactNode;
   statsBlock: ReactNode;
   feed: ReactNode;
   wakeHint: string | null;
@@ -478,6 +490,7 @@ function DetailsView({
       {canControl && (
         <Section title="Пульт">
           <div className="ev-pult">
+            {riverActions}
             {lastAlive && (
               <Button
                 variant={rebuysStillOpen ? 'secondary' : 'primary'}
@@ -574,9 +587,12 @@ function DetailsView({
             </div>
             {undoTarget && (
               <p className="m-small">
-                Последняя запись — «
-                {describeEvent(undoTarget, nameOf, formatRub, format, model.feed).title}»,{' '}
-                {formatTime(undoTarget.at)}
+                {pult.undoExtra.length > 0 ? 'Последнее действие' : 'Последняя запись'} —{' '}
+                {undoActionText(
+                  describeEvent(undoTarget, nameOf, formatRub, format, model.feed).title,
+                  pult.undoExtra.length,
+                )}
+                , {formatTime(undoTarget.at)}
               </p>
             )}
             {wakeHint && <p className="m-small">{wakeHint}</p>}

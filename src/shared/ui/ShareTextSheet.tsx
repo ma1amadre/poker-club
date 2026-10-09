@@ -1,16 +1,21 @@
-// Запасной путь «Скопировать расчёт»: окно не дало записать в буфер (WebView без доступа к clipboard) —
-// шторка с текстом в поле только для чтения, текст уже выделен: остаётся скопировать его жестом
-// системы и вставить в чат. Повтор кнопкой — тот же copyText, а не вышло — копирование выделенного
-// текста (execCommand).
+// Запасной путь «Скопировать расчёт» и «Скопировать отчёт»: окно не дало записать в буфер (WebView без
+// доступа к clipboard) — шторка с текстом в поле только для чтения, текст уже выделен: остаётся
+// скопировать его жестом системы и вставить в чат. Повтор кнопкой — тот же copyText, а не вышло —
+// копирование выделенного текста (execCommand).
 import { useEffect, useId } from 'react';
-import { copyText } from '../../shared/lib';
-import { Button, Field, Sheet, useToast } from '../../shared/ui';
+import { copyText } from '../lib/clipboard';
+import { Button } from './Button';
+import { Field } from './materia';
+import { Sheet } from './Sheet';
+import { useToast } from './toastContext';
 
 export interface ShareTextSheetProps {
   /** Текст для чата; null — шторка закрыта. */
   text: string | null;
   onClose: () => void;
   title: string;
+  /** Тост после копирования: «Расчёт скопирован — вставь его в чат». */
+  copiedMessage: string;
 }
 
 /** Выделить весь текст поля: select() и диапазон — iOS выделяет только по setSelectionRange. */
@@ -37,7 +42,7 @@ function copySelection(id: string): boolean {
 
 const lineCount = (text: string | null): number => (text ?? '').split('\n').length;
 
-export function ShareTextSheet({ text, onClose, title }: ShareTextSheetProps) {
+export function ShareTextSheet({ text, onClose, title, copiedMessage }: ShareTextSheetProps) {
   const id = useId();
   const toast = useToast();
   const open = text !== null;
@@ -51,7 +56,7 @@ export function ShareTextSheet({ text, onClose, title }: ShareTextSheetProps) {
 
   const retry = async () => {
     if (text !== null && ((await copyText(text)) || copySelection(id))) {
-      toast.show('Расчёт скопирован — вставь его в чат', { tone: 'positive' });
+      toast.show(copiedMessage, { tone: 'positive' });
       onClose();
     } else {
       selectAll(id);

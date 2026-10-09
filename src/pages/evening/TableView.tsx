@@ -3,14 +3,21 @@
 // уровень» (±1 мин, уровень вручную). Под ней — места за столом сеткой ячеек в порядке посадки:
 // живой — тап = вылет, вылетевший остаётся на своём месте приглушённым (сетка не прыгает), «+» —
 // посадить опоздавшего. Ряд вылетевших — тап = ребай, пока можно докупиться, иначе карточка
-// игрока. Ниже — олл-ин, «Записать вылет» после ривера, «Отменить последнее». Статы, расчёт и
-// лента — под этим, их видно прокруткой (LiveView).
-import type { PlayerState } from '@domain/types.ts';
+// игрока. Ниже — олл-ин, «Записать вылет» и «Вылет и ребай» после ривера (RiverActions),
+// «Отменить последнее». Статы, расчёт и лента — под этим, их видно прокруткой (LiveView).
+import type { PlayerId, PlayerState } from '@domain/types.ts';
 import { useNavigate } from 'react-router-dom';
 import { cn, formatBlinds, formatRub, formatTime, NBSP, paths } from '../../shared/lib';
 import { Button, Icon, IconButton } from '../../shared/ui';
-import { clockView, describeEvent, levelLabel, rebuyWindow, triggerProgress } from './lib';
-import { riverBustLabel } from './riverBusts';
+import {
+  clockView,
+  describeEvent,
+  levelLabel,
+  rebuyWindow,
+  triggerProgress,
+  undoActionText,
+} from './lib';
+import { RiverActions } from './RiverActions';
 import { bustedRow, rebuyShortText, seatTiles, stripStatus } from './table';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -28,6 +35,8 @@ export interface TableViewProps {
   onPlayer: (player: PlayerState) => void;
   onSeat: () => void;
   onShowdown: () => void;
+  /** Шторка олл-ина на раздаче после ривера: несколько вылетов или «Вылет и ребай». */
+  onRiverSheet: (rebuy: PlayerId[]) => void;
   onPause: () => void;
   onClock: () => void;
 }
@@ -41,6 +50,7 @@ export function TableView({
   onPlayer,
   onSeat,
   onShowdown,
+  onRiverSheet,
   onPause,
   onClock,
 }: TableViewProps) {
@@ -60,13 +70,6 @@ export function TableView({
     const p = state.players[playerId];
     if (p && rebuyable.has(playerId)) onPlayer(p);
     else navigate(paths.player(playerId));
-  };
-
-  const recordRiver = () => {
-    if (!suggestion) return;
-    // Один проигравший — вопрос прямо здесь; несколько — шторка олл-ина: отметки и порядок по фишкам.
-    if (suggestion.victims.length === 1) void river.record(suggestion.victims, true);
-    else onShowdown();
   };
 
   return (
@@ -159,17 +162,13 @@ export function TableView({
             Завершить вечер
           </Button>
         )}
-        {suggestion && (
-          <Button
-            variant={finishMain ? 'secondary' : 'primary'}
-            block
-            icon="user-x"
-            disabled={actions.busy}
-            onClick={recordRiver}
-          >
-            {riverBustLabel(suggestion.victims.map(nameOf))}
-          </Button>
-        )}
+        <RiverActions
+          model={model}
+          actions={actions}
+          river={river}
+          primary={!finishMain}
+          onSheet={onRiverSheet}
+        />
         {progress?.label === 'Раздач на уровне' && (
           <Button
             block
@@ -197,7 +196,7 @@ export function TableView({
             icon="rotate-ccw"
             label={
               pult.undoTarget
-                ? `Отменить последнюю запись: «${describeEvent(pult.undoTarget, nameOf, formatRub, format, model.feed).title}», ${formatTime(pult.undoTarget.at)}`
+                ? `${pult.undoExtra.length > 0 ? 'Отменить последнее действие' : 'Отменить последнюю запись'}: ${undoActionText(describeEvent(pult.undoTarget, nameOf, formatRub, format, model.feed).title, pult.undoExtra.length)}, ${formatTime(pult.undoTarget.at)}`
                 : 'Отменить последнюю запись'
             }
             disabled={!pult.undoTarget || actions.busy}

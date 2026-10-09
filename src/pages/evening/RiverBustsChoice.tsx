@@ -1,28 +1,38 @@
-// Выбор в шторке олл-ина после ривера: кто вылетел (по умолчанию — все проигравшие раздачу) и
-// порядок по фишкам перед раздачей — у кого больше, тому место выше. Состояние — useRiverChoice.
-import { FieldGroup, IconButton, PlayerPicker } from '../../shared/ui';
-import { riverKillersText, type RiverBustSuggestion } from './riverBusts';
+// Выбор в шторке олл-ина после ривера: кто вылетел (по умолчанию — все проигравшие раздачу), кто
+// кого выбил, порядок по фишкам перед раздачей (у кого больше — место выше) и ребай сразу.
+// Кто выбил — домен: обычно однозначно (строкой), а если сняли отметку с проигравшего («остался в
+// игре») и возможен побочный банк — выбор из тех, кто мог забрать последние фишки, по умолчанию
+// лучшая рука. Состояние — useRiverChoice.
+import type { PlayerId, TournamentFormat } from '@domain/types.ts';
+import { capitalize, joinNames } from '../../shared/lib';
+import { Checkbox, FieldGroup, IconButton, PlayerPicker, Segmented } from '../../shared/ui';
+import { haptic } from '../../shared/telegram';
+import { killerKey, killersInColumn, riverKillersText } from './riverBusts';
+import { PaidNowCheckbox } from './StacksPicker';
 import type { RiverChoice } from './useRiverBusts';
 import type { EveningModel } from './useEveningModel';
 
 export function RiverBustsChoice({
   model,
-  suggestion,
   choice,
+  canRebuy,
   disabled,
 }: {
   model: EveningModel;
-  suggestion: RiverBustSuggestion;
   choice: RiverChoice;
+  /** Может ли игрок докупиться сразу после этих вылетов. */
+  canRebuy: (id: PlayerId) => boolean;
   disabled: boolean;
 }) {
   const { nameOf, playersById } = model;
-  const killers = riverKillersText(suggestion.killers.map(nameOf));
+  const format: TournamentFormat = model.evening.format;
+  const many = choice.byChips.length > 1;
+  const rebuys = choice.rebuys.filter(canRebuy);
   return (
     <div className="ev-river">
       <FieldGroup
         label="Кто вылетел"
-        hint={`Проиграли раздачу — ${killers}. Фишек хватило и игрок остаётся за столом — сними отметку.`}
+        hint="Проиграли раздачу. Фишек хватило и игрок остаётся за столом — сними отметку."
       >
         <PlayerPicker
           players={choice.victims.map((id) => ({
@@ -36,29 +46,90 @@ export function RiverBustsChoice({
           showCount={false}
         />
       </FieldGroup>
-      {choice.byChips.length > 1 && (
+      {choice.byChips.length > 0 && (
         <FieldGroup
-          label="Места по фишкам"
-          hint="Выше — у кого фишек перед раздачей было больше: ему место выше."
+          label={many ? 'Места по фишкам' : 'Вылет'}
+          hint={
+            many ? 'Выше — у кого фишек перед раздачей было больше: ему место выше.' : undefined
+          }
         >
           <ol className="ev-river__order">
-            {choice.byChips.map((id, i) => (
-              <li key={id} className="ev-river__row">
-                <span className="m-mono ev-river__n">{i + 1}</span>
-                <span className="m-body ev-river__name">{nameOf(id)}</span>
-                {i > 0 && (
-                  <IconButton
-                    variant="ghost"
-                    icon="chevron-up"
-                    label={`Поднять выше: ${nameOf(id)}`}
-                    disabled={disabled}
-                    onClick={() => choice.raise(id)}
-                  />
-                )}
-              </li>
-            ))}
+            {choice.byChips.map((id, i) => {
+              const name = nameOf(id);
+              const variants = choice.options[id] ?? [[]];
+              const labels = variants.map((group) => joinNames(group.map(nameOf)));
+              const killers = choice.killers[id] ?? [];
+              return (
+                <li key={id} className={many ? 'ev-river__row ev-river__row--n' : 'ev-river__row'}>
+                  <div className="ev-river__head">
+                    {many && (
+                      <span className="m-mono ev-river__n">{String(i + 1).padStart(2, '0')}</span>
+                    )}
+                    <span className="ui-name ev-river__name">{name}</span>
+                    {i > 0 && (
+                      <IconButton
+                        variant="ghost"
+                        icon="chevron-up"
+                        label={`Поднять выше: ${name}`}
+                        disabled={disabled}
+                        onClick={() => choice.raise(id)}
+                      />
+                    )}
+                  </div>
+                  {variants.length > 1 ? (
+                    <div className="ev-river__ko">
+                      <p className="m-small ev-river__warn">
+                        Возможен побочный банк — проверь, кто выбил.
+                      </p>
+                      <Segmented
+                        className={
+                          killersInColumn(labels)
+                            ? 'ui-seg--buttons ev-river__killers ev-river__killers--stack'
+                            : 'ui-seg--buttons ev-river__killers'
+                        }
+                        block
+                        label={`Кто выбил: ${name}`}
+                        value={killerKey(killers)}
+                        options={variants.map((group, v) => ({
+                          value: killerKey(group),
+                          label: labels[v] ?? '',
+                        }))}
+                        onChange={(key) => choice.pickKiller(id, key)}
+                      />
+                    </div>
+                  ) : (
+                    <p className="m-small ev-river__by">
+                      {capitalize(riverKillersText(killers.map(nameOf)))}
+                    </p>
+                  )}
+                  {canRebuy(id) && (
+                    <Checkbox
+                      className="ev-river__rebuy"
+                      label="Сразу ребай"
+                      checked={choice.rebuys.includes(id)}
+                      disabled={disabled}
+                      onChange={(event) => {
+                        haptic.selection();
+                        choice.toggleRebuy(id, event.currentTarget.checked);
+                      }}
+                    />
+                  )}
+                </li>
+              );
+            })}
           </ol>
         </FieldGroup>
+      )}
+      {rebuys.length > 0 && (
+        <PaidNowCheckbox
+          format={format}
+          checked={choice.paid}
+          onChange={choice.setPaid}
+          kind="rebuy"
+          stacks={1}
+          many={rebuys.length > 1}
+          disabled={disabled}
+        />
       )}
     </div>
   );

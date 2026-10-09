@@ -1,237 +1,168 @@
-// Олл-ин после ривера: итог раздачи, предложение вылета и порядок мест для вылетов одной раздачи.
-// Места и деньги считает домен — здесь проверяется, что записи пульта дают те места, которые
-// банкир задал порядком по фишкам, а инвариант «призовые = взносы» и replay не страдают.
+// Пульт после ривера: записи действия «вылеты и ребаи одной раздачи», подписи, вопрос и тост.
+// Кто кого выбил и места считает домен (riverBusts.test.ts домена) — здесь проверяется, что действие
+// пульта даёт те места, нокауты и ребаи, которые задал банкир, а инвариант «призовые = взносы» и
+// replay не страдают.
 import { DEFAULT_FORMAT } from '@domain/format.ts';
-import { computeMoney } from '@domain/money.ts';
+import { computeMoney, paymentsFromEvents } from '@domain/money.ts';
 import { canApplySequence, replay, replayLog } from '@domain/replay.ts';
-import { journal, prng } from '@domain/test-utils.ts';
-import type { ShowdownHand } from '@domain/types.ts';
+import { journal, MIN, type Journal } from '@domain/test-utils.ts';
+import type { TournamentFormat } from '@domain/types.ts';
 import { describe, expect, it } from 'vitest';
+import { finishDueAfter } from './lib';
 import {
-  bustedInHand,
   keepChipOrder,
+  killerKey,
+  killersInColumn,
   moveUp,
-  riverBustDrafts,
+  pultRiverSuggestion,
+  readRiverDeclined,
+  RIVER_BUST_HOLD_MS,
   riverBustLabel,
   riverBustQuestion,
-  riverBustSuggestion,
+  riverDeclinedKey,
   riverKillersText,
-  riverOutcome,
+  riverPlanDrafts,
+  riverToast,
+  writeRiverDeclined,
+  type RiverPlan,
 } from './riverBusts';
 
 const F = DEFAULT_FORMAT;
-const hand = (playerId: string, a: string, b: string): ShowdownHand => ({
-  playerId,
-  cards: [a, b],
+const SD = '00000000-0000-4000-8000-0000000000aa';
+const plan = (p: Partial<RiverPlan> & Pick<RiverPlan, 'byChips' | 'killers'>): RiverPlan => ({
+  showdownId: SD,
+  rebuys: [],
+  paid: false,
+  ...p,
 });
+const names: Record<string, string> = { a: 'Женя', b: 'Саша', c: 'Дима', d: 'Лёша', e: 'Вова' };
+const nameOf = (id: string) => names[id] ?? id;
 
-describe('riverOutcome: кто выиграл раздачу на ривере', () => {
-  it('хедз-ап: пара тузов против короля-дамы', () => {
-    const out = riverOutcome({
-      hands: [hand('a', 'As', 'Ah'), hand('b', 'Kd', 'Qd')],
-      board: ['2c', '7h', '9s', 'Jc', '3d'],
-    });
-    expect(out).toEqual({ winners: ['a'], losers: ['b'] });
-  });
+/** Вечер пятерых, таймер идёт 10 минут: ребаи открыты. */
+function evening() {
+  const j = journal();
+  j.join('a', 'b', 'c', 'd', 'e');
+  j.start();
+  j.wait(10);
+  return j;
+}
 
-  it('делёж: одинаковая рука на столе — проигравших нет', () => {
-    const out = riverOutcome({
-      hands: [hand('a', '2c', '3d'), hand('b', '2h', '3s')],
-      board: ['Ah', 'Kh', 'Qh', 'Jh', 'Th'],
-    });
-    expect(out).toEqual({ winners: ['a', 'b'], losers: [] });
-  });
-
-  it('три руки: один победитель, двое проиграли — в порядке рук', () => {
-    const out = riverOutcome({
-      hands: [hand('a', 'Kc', 'Kd'), hand('b', 'Ac', 'Ad'), hand('c', 'Qs', 'Qh')],
-      board: ['2c', '7h', '9s', 'Jc', '3d'],
-    });
-    expect(out).toEqual({ winners: ['b'], losers: ['a', 'c'] });
-  });
-
-  it('до ривера и сломанные карты — null', () => {
-    const hands = [hand('a', 'As', 'Ah'), hand('b', 'Kd', 'Qd')];
-    expect(riverOutcome({ hands, board: [] })).toBeNull();
-    expect(riverOutcome({ hands, board: ['2c', '7h', '9s', 'Jc'] })).toBeNull();
-    expect(riverOutcome({ hands, board: ['2c', '7h', '9s', 'Jc', 'zz'] })).toBeNull();
+describe('riverPlanDrafts: вылеты в порядке мест, затем ребаи', () => {
+  it('без ребаев — только вылеты, от меньшего стека к большему', () => {
     expect(
-      riverOutcome({ hands: hands.slice(0, 1), board: ['2c', '7h', '9s', 'Jc', '3d'] }),
-    ).toBeNull();
-  });
-});
-
-describe('riverBustSuggestion', () => {
-  const showdown = {
-    hands: [hand('a', 'Kc', 'Kd'), hand('b', 'Ac', 'Ad'), hand('c', 'Qs', 'Qh')],
-    board: ['2c', '7h', '9s', 'Jc', '3d'],
-  };
-
-  it('проигравшие в игре — кандидаты, победитель — кто выбивает', () => {
-    expect(riverBustSuggestion(showdown, () => true)).toEqual({
-      victims: ['a', 'c'],
-      killers: ['b'],
-    });
+      riverPlanDrafts(F, plan({ byChips: ['c', 'd'], killers: { c: ['a'], d: ['b'] } })),
+    ).toEqual([
+      { type: 'bust', payload: { playerId: 'd', by: ['b'] } },
+      { type: 'bust', payload: { playerId: 'c', by: ['a'] } },
+    ]);
   });
 
-  it('уже вылетевшего (записали руками) не предлагает', () => {
-    expect(riverBustSuggestion(showdown, (id) => id !== 'a')).toEqual({
-      victims: ['c'],
-      killers: ['b'],
-    });
-    expect(riverBustSuggestion(showdown, (id) => id === 'b')).toBeNull();
-  });
-
-  it('до ривера — null', () => {
-    expect(riverBustSuggestion({ ...showdown, board: ['2c', '7h', '9s'] }, () => true)).toBeNull();
-  });
-
-  it('вылет записан, затем ребай: второй раз в той же раздаче не предлагаем', () => {
-    // Ривер висит ещё 2 минуты: «Записать вылет: b» → «Ребай» из тоста → b снова в игре.
-    const j = journal();
-    j.join('a', 'b', 'c');
-    j.start();
-    j.wait(5).showdown(
-      '00000000-0000-4000-8000-000000000001',
-      [
-        ['a', 'As', 'Ah'],
-        ['b', 'Kd', 'Qd'],
-      ],
-      ['2c', '7h', '9s', 'Jc', '3d'],
+  it('вылет и ребай одного: как «Вылет и ребай» на пульте — одна цепочка, игрок снова в игре', () => {
+    const drafts = riverPlanDrafts(
+      F,
+      plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'] }),
     );
-    const suggest = () => {
-      const { state, applied } = replayLog(F, j.events, j.now());
-      const sd = state.showdown;
-      if (!sd) throw new Error('раздача закрыта');
-      return riverBustSuggestion(sd, (id) => Boolean(state.players[id]?.alive), applied);
-    };
-    expect(suggest()).toEqual({ victims: ['b'], killers: ['a'] });
-    j.wait(0.3).bust('b', ['a']);
-    expect(suggest()).toBeNull();
-    j.wait(0.3).rebuy('b');
-    expect(replay(F, j.events, j.now()).players.b?.alive).toBe(true);
-    expect(suggest()).toBeNull();
-  });
-
-  it('вылет, записанный до ривера (после открытия раздачи), — тоже уже в этой раздаче', () => {
-    const j = journal();
-    j.join('a', 'b', 'c');
-    j.start();
-    const id = '00000000-0000-4000-8000-000000000002';
-    const hands: [string, string, string][] = [
-      ['a', 'As', 'Ah'],
-      ['b', 'Kd', 'Qd'],
-      ['c', 'Tc', 'Td'],
-    ];
-    j.wait(5).showdown(id, hands, ['2c', '7h', '9s']);
-    j.wait(0.2).bust('b', ['a']); // банкир записал вылет сразу, ещё до тёрна
-    j.wait(0.2).rebuy('b');
-    j.wait(0.2).showdown(id, hands, ['2c', '7h', '9s', 'Jc', '3d']);
-    const { state, applied } = replayLog(F, j.events, j.now());
-    const sd = state.showdown!;
-    expect(riverBustSuggestion(sd, (p) => Boolean(state.players[p]?.alive), applied)).toEqual({
-      victims: ['c'],
-      killers: ['a'],
-    });
-    // Без журнала — как раньше: только «в игре».
-    expect(riverBustSuggestion(sd, (p) => Boolean(state.players[p]?.alive))).toEqual({
-      victims: ['b', 'c'],
-      killers: ['a'],
-    });
-    // Вылет до открытия раздачи (другая раздача) не в счёт.
-    expect(bustedInHand(applied, sd.openedEventId)).toEqual(new Set(['b']));
-    expect(bustedInHand(applied, sd.eventId)).toEqual(new Set());
-  });
-});
-
-describe('вылеты одной раздачи: порядок мест по фишкам', () => {
-  /** Четверо: Лёша (d) вылетел раньше, затем олл-ин a, b, c: b выигрывает, a и c вылетают. */
-  function evening() {
-    const j = journal();
-    j.join('a', 'b', 'c', 'd');
-    j.start();
-    j.wait(10).bust('d', ['b']);
-    j.wait(5);
-    return j;
-  }
-
-  it('записи — от меньшего стека к большему: у кого больше фишек, тот выше', () => {
-    // У c фишек больше, чем у a: c — 2-е место, a — 3-е.
-    const drafts = riverBustDrafts(['c', 'a'], ['b']);
     expect(drafts).toEqual([
-      { type: 'bust', payload: { playerId: 'a', by: ['b'] } },
-      { type: 'bust', payload: { playerId: 'c', by: ['b'] } },
+      { type: 'bust', payload: { playerId: 'c', by: ['a'] } },
+      { type: 'rebuy', payload: { playerId: 'c' } },
     ]);
     const j = evening();
     expect(canApplySequence(F, j.events, drafts, j.now())).toBeNull();
     for (const d of drafts) j.add(d.type, d.payload);
+    const s = replay(F, j.events, j.now());
+    expect(s.errors).toEqual([]);
+    expect(s.players.c?.alive).toBe(true);
+    expect(s.players.c?.rebuys).toBe(1);
+    expect(s.players.a?.kos).toBe(1);
+  });
+
+  it('два вылета, один докупается с оплатой сразу: места, нокауты, платёж и деньги', () => {
+    const drafts = riverPlanDrafts(
+      F,
+      plan({ byChips: ['c', 'd'], killers: { c: ['a'], d: ['b'] }, rebuys: ['d'], paid: true }),
+    );
+    expect(drafts.map((d) => d.type)).toEqual(['bust', 'bust', 'rebuy', 'payment']);
+    const j = evening();
+    expect(canApplySequence(F, j.events, drafts, j.now())).toBeNull();
+    for (const d of drafts) j.add(d.type, d.payload);
+    const s = replay(F, j.events, j.now());
+    expect(s.errors).toEqual([]);
+    expect(s.players.c?.alive).toBe(false);
+    expect(s.players.d?.alive).toBe(true);
+    expect(s.players.a?.koVictims).toEqual(['c']);
+    expect(s.players.b?.koVictims).toEqual(['d']);
+    expect(paymentsFromEvents(j.events).map((p) => p.playerId)).toEqual(['d']);
+    // Доигрываем: призовые ровно равны взносам.
+    j.wait(1).bust('d', ['a']);
+    j.wait(1).bust('e', ['a']);
+    j.wait(1).bust('b', ['a']);
     j.finish();
-    const state = replay(F, j.events, j.now());
-    expect(state.errors).toEqual([]);
-    expect(state.places).toEqual(['b', 'c', 'a', 'd']);
-    expect(state.players.b?.kos).toBe(3);
-    // Деньги — домен: призовые ровно равны взносам.
-    const money = computeMoney(F, state);
-    const prizes = Object.values(money).reduce((s, m) => s + m.prizeRub, 0);
-    const owes = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
+    const done = replay(F, j.events, j.now());
+    expect(done.errors).toEqual([]);
+    expect(done.places[0]).toBe('a');
+    const money = computeMoney(F, done);
+    const prizes = Object.values(money).reduce((sum, m) => sum + m.prizeRub, 0);
+    const owes = Object.values(money).reduce((sum, m) => sum + m.owesRub, 0);
     expect(prizes).toBe(owes);
-    expect(money.c?.prizeRub).toBeGreaterThan(0);
   });
 
-  it('обратный порядок по фишкам меняет места местами', () => {
-    const j = evening();
-    for (const d of riverBustDrafts(['a', 'c'], ['b'])) j.add(d.type, d.payload);
-    j.finish();
-    expect(replay(F, j.events, j.now()).places).toEqual(['b', 'a', 'c', 'd']);
+  it('ребаи закрыты — цепочка с ребаем не проходит, без ребая — проходит', () => {
+    const closed: TournamentFormat = { ...F, rebuyUntilLevel: 0 };
+    const j = journal();
+    j.join('a', 'b', 'c');
+    j.start();
+    j.wait(1);
+    const withRebuy = riverPlanDrafts(
+      closed,
+      plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'] }),
+    );
+    expect(canApplySequence(closed, j.events, withRebuy, j.now())?.message).toBe('Ребаи закрыты');
+    const bustOnly = riverPlanDrafts(closed, plan({ byChips: ['c'], killers: { c: ['a'] } }));
+    expect(canApplySequence(closed, j.events, bustOnly, j.now())).toBeNull();
+  });
+});
+
+describe('finishDueAfter: «Завершить вечер» в тосте последнего вылета', () => {
+  it('остался один и ребаи закрыты — да; ребаи открыты или в игре двое — нет', () => {
+    const closed: TournamentFormat = { ...F, rebuyUntilLevel: 0 };
+    const j = journal();
+    j.join('a', 'b', 'c');
+    j.start();
+    j.wait(1).bust('c', ['a']);
+    const last = [{ type: 'bust' as const, payload: { playerId: 'b', by: ['a'] } }];
+    expect(finishDueAfter(closed, j.events, last, j.now())).toBe(true);
+    expect(finishDueAfter(F, j.events, last, j.now())).toBe(false);
+    expect(finishDueAfter(closed, j.events, [], j.now())).toBe(false);
+    // Вылет на троих: двое ещё в игре.
+    const k = journal();
+    k.join('a', 'b', 'c', 'd');
+    k.start();
+    k.wait(1);
+    expect(finishDueAfter(closed, k.events, last, k.now())).toBe(false);
   });
 
-  it('одно действие = те же записи по одной: replay совпадает (100 случайных раздач)', () => {
-    const rnd = prng(20261008);
-    const ids = ['a', 'b', 'c', 'd', 'e', 'f'];
-    for (let n = 0; n < 100; n += 1) {
-      const j = journal();
-      j.join(...ids);
-      j.start();
-      const minutes = 1 + Math.floor(rnd() * 30);
-      j.wait(minutes);
-      // Случайный олл-ин: победитель и 1–3 вылетевших в случайном порядке по фишкам.
-      const shuffled = [...ids].sort(() => rnd() - 0.5);
-      const winner = shuffled[0] as string;
-      const victims = shuffled.slice(1, 2 + Math.floor(rnd() * 3));
-      const drafts = riverBustDrafts(victims, [winner]);
-      expect(canApplySequence(F, j.events, drafts, j.now())).toBeNull();
-      const batch = journal();
-      batch.join(...ids);
-      batch.start();
-      batch.wait(minutes);
-      for (const d of drafts) j.add(d.type, d.payload);
-      for (const victim of [...victims].reverse()) batch.bust(victim, [winner]);
-      const a = replayLog(F, j.events, j.now());
-      const b = replayLog(F, batch.events, batch.now());
-      expect(a.state).toEqual(b.state);
-      // Вылетевшие — в обратном порядке по фишкам: последний записанный — у кого фишек больше.
-      const finals = victims.map((id) => a.state.players[id]?.finalBustEventId ?? 0);
-      expect([...finals].sort((x, y) => y - x)).toEqual(finals);
-      // Доигрываем до победителя: инвариант денег — у завершённого вечера.
-      for (const id of ids) if (a.state.players[id]?.alive && id !== winner) j.bust(id, [winner]);
-      j.finish();
-      const done = replay(F, j.events, j.now());
-      expect(done.errors).toEqual([]);
-      expect(done.places[0]).toBe(winner);
-      const money = computeMoney(F, done);
-      const prizes = Object.values(money).reduce((s, m) => s + m.prizeRub, 0);
-      const owes = Object.values(money).reduce((s, m) => s + m.owesRub, 0);
-      expect(prizes).toBe(owes);
-    }
+  it('несколько вылетов одной раздачи разом — последний стоящий', () => {
+    const closed: TournamentFormat = { ...F, rebuyUntilLevel: 0 };
+    const j = journal();
+    j.join('a', 'b', 'c');
+    j.start();
+    j.wait(1);
+    const drafts = riverPlanDrafts(
+      closed,
+      plan({ byChips: ['b', 'c'], killers: { b: ['a'], c: ['a'] } }),
+    );
+    expect(finishDueAfter(closed, j.events, drafts, j.now())).toBe(true);
   });
 
-  it('делёж банка: нокаут каждому победителю', () => {
-    const j = evening();
-    for (const d of riverBustDrafts(['a'], ['b', 'c'])) j.add(d.type, d.payload);
-    const state = replay(F, j.events, j.now());
-    expect(state.players.b?.kos).toBe(2);
-    expect(state.players.c?.kos).toBe(1);
-    expect(state.errors).toEqual([]);
+  it('запись, которую журнал не примет, — нет', () => {
+    const closed: TournamentFormat = { ...F, rebuyUntilLevel: 0 };
+    const j = journal();
+    j.join('a', 'b', 'c');
+    j.start();
+    j.wait(1).bust('c', ['a']);
+    // Выбивший уже вне игры — журнал вылет не примет.
+    const wrong = [{ type: 'bust' as const, payload: { playerId: 'b', by: ['c'] } }];
+    expect(finishDueAfter(closed, j.events, wrong, j.now())).toBe(false);
   });
 });
 
@@ -247,29 +178,209 @@ describe('порядок по фишкам в шторке', () => {
     expect(moveUp(['a', 'b', 'c'], 'a')).toEqual(['a', 'b', 'c']);
     expect(moveUp(['a', 'b'], 'x')).toEqual(['a', 'b']);
   });
+
+  it('killersInColumn: длинные имена и больше двух вариантов — столбиком', () => {
+    expect(killersInColumn(['Женя', 'Саша'])).toBe(false);
+    expect(killersInColumn(['Женя и Саша', 'Дима'])).toBe(false);
+    expect(killersInColumn(['Женя', 'Саша', 'Дима'])).toBe(true);
+    expect(killersInColumn(['Женя', 'Александр Константинопольский'])).toBe(true);
+  });
+
+  it('killerKey: вариант «кто выбил» — значение переключателя', () => {
+    expect(killerKey(['a'])).toBe('a');
+    expect(killerKey(['a', 'b'])).toBe('a,b');
+    expect(killerKey([])).toBe('');
+  });
 });
 
-describe('тексты предложения', () => {
+describe('тексты', () => {
   it('кнопка и кто выбивает', () => {
     expect(riverBustLabel([])).toBe('Отметь, кто вылетел');
     expect(riverBustLabel(['Дима'])).toBe('Записать вылет: Дима');
+    expect(riverBustLabel(['Дима'], 1)).toBe('Вылет и ребай: Дима');
     expect(riverBustLabel(['Дима', 'Лёша'])).toBe('Записать вылеты: 2');
+    expect(riverBustLabel(['Дима', 'Лёша'], 1)).toBe('Записать вылеты: 2 и ребай');
+    expect(riverBustLabel(['Дима', 'Лёша', 'Вова'], 2)).toBe('Записать вылеты: 3 и 2 ребая');
     expect(riverKillersText(['Женя'])).toBe('выбивает Женя');
     expect(riverKillersText(['Женя', 'Саша'])).toBe('выбивают Женя и Саша — нокаут каждому');
     expect(riverKillersText([])).toBe('кто выбил — не указано');
   });
 
-  it('вопрос: один вылет и вылеты с порядком мест', () => {
-    expect(riverBustQuestion(['Дима'], ['Женя'])).toEqual({
+  it('вопрос перед вылетом с пульта: раздача закроется', () => {
+    expect(riverBustQuestion('Дима', ['Женя'])).toEqual({
       title: 'Записать вылет: Дима?',
       message:
-        'Дима — вылет, выбивает Женя. Фишек хватило и игрок остаётся за столом — нажми «Не записывать».',
+        'Дима — вылет, выбивает Женя. Раздача закроется. Фишек хватило и игрок остаётся за столом — нажми «Не записывать».',
       confirmText: 'Записать вылет',
     });
-    const many = riverBustQuestion(['Лёша', 'Дима'], ['Женя']);
-    expect(many.title).toBe('Записать вылеты: 2?');
-    expect(many.message).toBe(
-      'Вылет — Лёша и Дима, выбивает Женя. Места по фишкам перед раздачей, выше — у кого больше: 1. Лёша, 2. Дима.',
+  });
+
+  it('тост: один вылет, вылет и ребай, побочный банк — у каждого свой выбивший', () => {
+    expect(riverToast(plan({ byChips: ['c'], killers: { c: ['a'] } }), nameOf)).toEqual({
+      success: 'Вылет записан: Дима',
+      detail: 'Выбивает Женя.',
+    });
+    expect(
+      riverToast(
+        plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'], paid: true }),
+        nameOf,
+      ),
+    ).toEqual({ success: 'Вылет и ребай: Дима', detail: 'Выбивает Женя. Ребай оплачен сразу.' });
+    expect(
+      riverToast(plan({ byChips: ['c', 'd'], killers: { c: ['a'], d: ['a'] } }), nameOf),
+    ).toEqual({ success: 'Вылеты записаны: Дима и Лёша', detail: 'Выбивает Женя.' });
+    expect(
+      riverToast(
+        plan({ byChips: ['c', 'd'], killers: { c: ['a'], d: ['b'] }, rebuys: ['d'] }),
+        nameOf,
+      ),
+    ).toEqual({
+      success: 'Вылеты записаны: Дима и Лёша',
+      detail: 'Дима: выбивает Женя; Лёша: выбивает Саша. Ребай: Лёша.',
+    });
+    expect(riverToast(plan({ byChips: ['c'], killers: { c: ['a', 'b'] } }), nameOf).detail).toBe(
+      'Выбивают Женя и Саша — нокаут каждому.',
     );
+  });
+});
+
+describe('pultRiverSuggestion: сколько предложение держится на пульте', () => {
+  // Стол без стрита и флеша: у a тузы, у b короли, у c дамы.
+  const BOARD = ['2c', '7h', '9s', 'Jc', '3d'];
+  const AA: [string, string, string] = ['a', 'As', 'Ah'];
+  const KK: [string, string, string] = ['b', 'Kd', 'Ks'];
+  const QQ: [string, string, string] = ['c', 'Qs', 'Qh'];
+  /** Что видит пульт по журналу на этот момент: предложение (кто проиграл) или null. */
+  const pult = (j: Journal, declined: number | null = null) => {
+    const { state, applied } = replayLog(F, j.events, j.now());
+    const isAlive = (id: string) => Boolean(state.players[id]?.alive);
+    return (
+      pultRiverSuggestion(state.showdown, isAlive, applied, j.now(), declined)?.victims ?? null
+    );
+  };
+  /** Олл-ин a против b до ривера: b проиграл, но фишек у него больше — он остался в игре. */
+  function riverAvsB() {
+    const j = evening();
+    j.wait(1).showdown(SD, [AA, KK], BOARD);
+    return j;
+  }
+
+  it('держится дольше табло (2 минуты), но не дольше срока', () => {
+    const j = riverAvsB();
+    expect(pult(j)).toEqual(['b']);
+    j.wait(3);
+    expect(pult(j)).toEqual(['b']);
+    j.wait(RIVER_BUST_HOLD_MS / MIN - 3 - 0.01);
+    expect(pult(j)).toEqual(['b']);
+    j.wait(0.01);
+    expect(pult(j)).toBeNull();
+  });
+
+  it('ревьюер: b остался в игре, через полчаса вылетает в другой раздаче — старой кнопки уже нет', () => {
+    const j = riverAvsB();
+    j.wait(30);
+    expect(pult(j)).toBeNull();
+  });
+
+  it('игра ушла дальше: вылет любого игрока, сыгранная раздача, смена уровня вручную', () => {
+    const steps: [string, (j: Journal) => void][] = [
+      ['вылет другого игрока', (j) => j.bust('d', ['e'])],
+      ['раздача сыграна', (j) => j.hand()],
+      ['уровень вперёд', (j) => j.next()],
+      ['уровень назад', (j) => j.prev()],
+    ];
+    for (const [what, step] of steps) {
+      const j = evening();
+      // Уровень назад — со второго уровня.
+      if (what === 'уровень назад') j.next();
+      j.wait(1).showdown(SD, [AA, KK], BOARD);
+      expect(pult(j)).toEqual(['b']);
+      step(j.wait(0.5));
+      expect(pult(j), what).toBeNull();
+    }
+  });
+
+  it('ребай, вход, платёж, пауза и вылет до ривера игру дальше не двигают', () => {
+    const j = evening();
+    j.wait(1).showdown(SD, [AA, KK]);
+    // Вылет, записанный до ривера, — не после него: раздачу он позади не оставляет.
+    j.wait(0.2).bust('e', ['d']);
+    j.wait(0.2).showdown(SD, [AA, KK], BOARD);
+    j.wait(0.2).rebuy('e');
+    j.payment('e', 1000);
+    j.join('f');
+    j.pause();
+    expect(pult(j)).toEqual(['b']);
+  });
+
+  it('правка карты после ривера — новая версия, срок с начала', () => {
+    const j = riverAvsB();
+    j.wait(4);
+    j.showdown(SD, [AA, ['b', 'Kd', 'Kh']], BOARD);
+    j.wait(4);
+    expect(pult(j)).toEqual(['b']);
+  });
+
+  it('«Не записывать» — по этой версии раздачи; правка карты — снова предложение', () => {
+    const j = riverAvsB();
+    const { state } = replayLog(F, j.events, j.now());
+    const version = state.showdown?.eventId ?? null;
+    expect(pult(j, version)).toBeNull();
+    j.wait(0.5).showdown(SD, [AA, ['b', 'Kd', 'Kh']], BOARD);
+    expect(pult(j, version)).toEqual(['b']);
+  });
+
+  it('олл-ин на троих: записали вылет c, b остался, закрыть раздачу не вышло — b не предлагается', () => {
+    const j = evening();
+    j.wait(1).showdown(SD, [AA, KK, QQ], BOARD);
+    expect(pult(j)).toEqual(['b', 'c']);
+    // Действие из шторки: c вылетел, с b отметку сняли; «Закрыть раздачу» следом не прошло.
+    const bust = j.wait(0.3).bust('c', ['a']);
+    expect(pult(j)).toBeNull();
+    // «Отменить» вылет — раздача снова ждёт ответа.
+    j.voidEvent(bust);
+    expect(pult(j)).toEqual(['b', 'c']);
+  });
+
+  it('раздачу закрыли или начали новую — предложения нет', () => {
+    const j = riverAvsB();
+    j.closeShowdown(SD);
+    expect(pult(j)).toBeNull();
+  });
+});
+
+describe('«Не записывать» в sessionStorage', () => {
+  const memory = () => {
+    const map = new Map<string, string>();
+    return {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => void map.set(k, v),
+    };
+  };
+
+  it('пишется и читается по вечеру', () => {
+    const s = memory();
+    expect(readRiverDeclined(s, 'ev1')).toBeNull();
+    writeRiverDeclined(s, 'ev1', 42);
+    expect(readRiverDeclined(s, 'ev1')).toBe(42);
+    expect(readRiverDeclined(s, 'ev2')).toBeNull();
+    expect(riverDeclinedKey('ev1')).toBe('poker-club:river-declined:ev1');
+  });
+
+  it('мусор, пустое хранилище и исключения — null, запись не бросает', () => {
+    const s = memory();
+    s.setItem(riverDeclinedKey('ev1'), 'abc');
+    expect(readRiverDeclined(s, 'ev1')).toBeNull();
+    expect(readRiverDeclined(null, 'ev1')).toBeNull();
+    const broken = {
+      getItem: () => {
+        throw new Error('denied');
+      },
+      setItem: () => {
+        throw new Error('denied');
+      },
+    };
+    expect(readRiverDeclined(broken, 'ev1')).toBeNull();
+    expect(() => writeRiverDeclined(broken, 'ev1', 1)).not.toThrow();
   });
 });

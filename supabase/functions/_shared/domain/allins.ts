@@ -77,11 +77,14 @@ export interface AllInSwing {
   favoritePct: number;
 }
 
-/** Лучшая рука на полном столе (5 карт): игроки с лучшим счётом; иначе или при сломанных картах — null. */
-export function riverWinners(
+/**
+ * Руки на полном столе (5 карт) от лучшей к худшей: группы равных рук (делёж), внутри — в порядке
+ * рук раздачи. До ривера, меньше двух рук или при сломанных картах — null.
+ */
+export function riverRanking(
   hands: readonly ShowdownHand[],
   board: readonly CardCode[],
-): PlayerId[] | null {
+): PlayerId[][] | null {
   if (board.length !== 5 || hands.length < 2) return null;
   let scores: number[];
   try {
@@ -90,8 +93,17 @@ export function riverWinners(
   } catch {
     return null;
   }
-  const best = Math.max(...scores);
-  return hands.filter((_, i) => scores[i] === best).map((h) => h.playerId);
+  return [...new Set(scores)]
+    .sort((a, b) => b - a)
+    .map((score) => hands.filter((_, i) => scores[i] === score).map((h) => h.playerId));
+}
+
+/** Лучшая рука на полном столе (5 карт): игроки с лучшим счётом; иначе или при сломанных картах — null. */
+export function riverWinners(
+  hands: readonly ShowdownHand[],
+  board: readonly CardCode[],
+): PlayerId[] | null {
+  return riverRanking(hands, board)?.[0] ?? null;
 }
 
 /**

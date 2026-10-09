@@ -1,7 +1,10 @@
 // Действия пульта, общие для обоих видов («Стол» и «Подробно»): завершить вечер, уровень вперёд с
-// переспросами, отменить последнее. Перенесены из LiveView без изменения поведения.
+// переспросами, отменить последнее. Перенесены из LiveView без изменения поведения. «Отменить
+// последнее» после «Записать вылет» по раздаче отменяет вылет вместе с закрытием раздачи.
 // Тренировка (миграция 023): после финиша итог в группу не уходит и голосования нет — вопрос об этом
 // говорит прямо, notify не вызывается.
+// «Завершить вечер» зовут и из тоста последнего вылета — тост живёт дольше рендера, поэтому вопрос
+// строится по свежему журналу (actions.freshState), а не по замыканию.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,7 +15,7 @@ import {
 import { joinNames, paths } from '../../shared/lib';
 import { useToast } from '../../shared/ui';
 import {
-  lastUndoable,
+  lastUndoAction,
   levelEdgeLeftMs,
   levelMovedText,
   levelNextClosesRebuys,
@@ -34,8 +37,13 @@ export interface Pult {
   finishing: boolean;
   finish: () => Promise<void>;
   levelNext: () => Promise<void>;
-  /** Последняя неотменённая игровая запись (платежи — в расчёте). */
+  /**
+   * Что отменит «Отменить последнее»: последняя неотменённая игровая запись (платежи — в расчёте),
+   * а после «Записать вылет» по раздаче — главная запись действия (вылет).
+   */
   undoTarget: EveningEventRecord | null;
+  /** Остальные записи того же действия: ребаи и «Раздача закрыта», ушедшая следом за вылетом. */
+  undoExtra: EveningEventRecord[];
   undoLast: () => void;
 }
 
@@ -52,14 +60,21 @@ export function usePult(model: EveningModel, actions: EveningActions): Pult {
   // Один живой при открытых ребаях — обычно ненадолго: вылетевшие сейчас докупятся. Финиш тогда
   // не главное действие, а подтверждение прямо говорит, что ребаи закроются.
   const rebuysStillOpen = win.kind !== 'closed';
-  const bustedNames = state.joinOrder.filter((id) => !state.players[id]?.alive).map(nameOf);
-  const undoTarget = lastUndoable(events);
+  // Вылет после ривера и закрытие раздачи следом — одно действие: отменяются вместе (lastUndoAction).
+  const undoAction = lastUndoAction(events);
+  const undoTarget = undoAction?.main ?? null;
+  const undoExtra = undoAction?.extra ?? [];
 
   const finish = async () => {
-    const winner = lastAlive ? nameOf(lastAlive) : 'последний игрок';
-    const rebuyWarning = rebuysStillOpen
-      ? ` ${rebuyText(win)}: после завершения ${bustedNames.length > 0 ? `${joinNames(bustedNames)} не ${bustedNames.length > 1 ? 'смогут' : 'сможет'} докупиться` : 'докупиться будет нельзя'}.`
-      : '';
+    const fresh = actions.freshState();
+    const freshWin = rebuyWindow(format, fresh);
+    const alive = fresh.joinOrder.filter((id) => fresh.players[id]?.alive);
+    const bustedNames = fresh.joinOrder.filter((id) => !fresh.players[id]?.alive).map(nameOf);
+    const winner = alive.length === 1 && alive[0] ? nameOf(alive[0]) : 'последний игрок';
+    const rebuyWarning =
+      freshWin.kind !== 'closed'
+        ? ` ${rebuyText(freshWin)}: после завершения ${bustedNames.length > 0 ? `${joinNames(bustedNames)} не ${bustedNames.length > 1 ? 'смогут' : 'сможет'} докупиться` : 'докупиться будет нельзя'}.`
+        : '';
     const training = isTrainingEvening(evening);
     const after = training
       ? 'Места и деньги зафиксируются. Это тренировка: голосования и поста в группе не будет.'
@@ -141,7 +156,9 @@ export function usePult(model: EveningModel, actions: EveningActions): Pult {
   };
 
   const undoLast = () => {
-    if (undoTarget) void actions.voidWithConfirm(undoTarget);
+    if (!undoTarget) return;
+    if (undoExtra.length > 0) void actions.voidGroupWithConfirm(undoTarget, undoExtra);
+    else void actions.voidWithConfirm(undoTarget);
   };
 
   return {
@@ -151,6 +168,7 @@ export function usePult(model: EveningModel, actions: EveningActions): Pult {
     finish,
     levelNext,
     undoTarget,
+    undoExtra,
     undoLast,
   };
 }

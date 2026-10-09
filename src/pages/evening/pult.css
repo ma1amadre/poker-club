@@ -348,33 +348,86 @@
   border-bottom: 1px solid var(--line);
 }
 
+/*
+ * Вылетевшие строками списка, как в «Терминале»: без панелей и зазоров, черта сверху списка и под
+ * каждой строкой. В строке — имя (и номер по фишкам, «поднять выше»), кто выбил строкой или выбор
+ * при побочном банке, «Сразу ребай».
+ */
 .ev-river__order {
   display: grid;
-  gap: var(--space-1);
   margin: 0;
   padding: 0;
   list-style: none;
+  border-top: 1px solid var(--line);
 }
 
 .ev-river__row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.ev-river__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-2);
-  min-height: 48px;
-  padding: 0 var(--space-1) 0 var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--m-r-control);
-  background: var(--surface);
+}
+
+.ev-river__row--n .ev-river__head {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  /* Строка без «поднять выше» (первая) — той же высоты, что строки с кнопкой. */
+  min-height: var(--m-control-h);
+}
+
+/* Под номером — пусто: строки «кто выбил» и «ребай» встают под имя. */
+.ev-river__row--n > :not(.ev-river__head) {
+  margin-left: calc(24px + var(--space-2));
 }
 
 .ev-river__n {
   color: var(--ink-muted);
-  text-align: center;
 }
 
 .ev-river__name {
   overflow-wrap: anywhere;
+}
+
+.ev-river__ko {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ev-river__by,
+.ev-river__warn {
+  margin: 0;
+}
+
+.ev-river__warn {
+  color: var(--caution);
+}
+
+/*
+ * «Кто выбил» — ряд кнопок (ui-seg--buttons), но подписи здесь — имена: до 40 знаков из Telegram,
+ * при дележе «Женя и Саша». У ответа на анонс подписи не переносятся (terminal.css) — здесь они
+ * переносятся и не раздвигают шторку (DESIGN.md: высота — не меньше контрола). Больше двух
+ * вариантов или длинная подпись — столбиком во всю ширину (killersInColumn): в ряд на 320 px слово
+ * рвалось бы посреди.
+ */
+[data-theme='terminal'] .ev-river__killers.ui-seg--buttons .m-seg-item {
+  min-width: 0;
+  height: auto;
+  min-height: var(--m-control-h);
+  padding-block: var(--space-2);
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.ev-river__killers--stack.ui-seg--block {
+  flex-direction: column;
+}
+.ev-river__killers--stack.ui-seg--block .m-seg-item {
+  flex: 0 0 auto;
 }
 
 @media (prefers-reduced-motion: reduce) {
