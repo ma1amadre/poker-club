@@ -106,6 +106,7 @@ export function AppRoutes() {
         <Route path="evening/:id/settle" element={<SettlePage />} />
         <Route path="evening/:id/vote" element={<VotePage />} />
         <Route path="rating" element={<RatingPage />} />
+        <Route path="season/:key" element={<SeasonPage />} />
         <Route path="player/:id" element={<PlayerPage />} />
         <Route path="history" element={<HistoryPage />} />
         <Route
@@ -120,7 +121,6 @@ export function AppRoutes() {
           path="admin/evening/new"
           element={
             <AdminOnly>
-        <Route path="season/:key" element={<SeasonPage />} />
               <EveningEditPage />
             </AdminOnly>
           }
