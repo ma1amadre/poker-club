@@ -17,15 +17,26 @@ export interface BlindLevel {
 
 export interface TournamentFormat {
   name: string;
-  buyInRub: number; // 500 — цена входа и ребая (стандартного; вход ×k стоит buyInRub·k), весь взнос — в фонд
-  startingChips: number; // 500 — фишек за вход и за ребай (×k — startingChips·k)
+  // 500 — стандартный вход и ребай. С миграции 027 вход и ребай бывают любой суммой (rub в записи);
+  // buyInRub — сумма по умолчанию, у записей без rub (все до 027) — цена: k·buyInRub. Весь взнос — в фонд.
+  buyInRub: number;
+  // 500 — фишек за стандартный вход. Курс фишек: за сумму rub — rub·startingChips/buyInRub (chipsForRub).
+  startingChips: number;
   // Баунти «за голову» убрано 07.10.2026: в старых форматах (jsonb) поле bountyRub бывает — его
   // никто не читает, миграция 018 его вычищает.
   rebuyUntilLevel: number; // 5 — вход/ребай разрешён, пока номер текущего уровня (с 1) <= этого
   rebuyLimit: number | null; // null = без лимита (решение клуба)
   payoutPct: number[]; // [70, 30]
+  /**
+   * Шаг призовых, ₽ (миграция 027): каждое место — вниз до шага, остаток — 1-му месту. Нет поля — до
+   * рубля, как считались все вечера до 027 (снимки формата вечеров миграция не трогает).
+   */
+  payoutStepRub?: number;
   levels: BlindLevel[]; // после последнего уровня блайнды остаются последними
 }
+
+/** Наибольший шаг призовых (payoutStepRub), ₽. */
+export const MAX_PAYOUT_STEP_RUB = 10_000;
 
 export type EventType =
   | 'join'
@@ -92,23 +103,32 @@ export type ShowdownState = ShowdownPayload & {
   updatedAt: string; // `at` последней правки: от него табло считает, когда спрятать раздачу
 };
 
-/** Наибольшая кратность входа или ребая (stacks в payload join/rebuy). */
+/** Наибольшая кратность входа или ребая (stacks в payload join/rebuy, записи до миграции 027). */
 export const MAX_ENTRY_STACKS = 10;
 
 /**
+ * Наибольшая сумма одного входа или ребая (rub в payload join/rebuy, миграция 027), ₽. Защита от
+ * опечатки «лишний ноль», а не правило клуба: вход и ребай — любой суммой от 1 ₽.
+ */
+export const MAX_ENTRY_RUB = 100_000;
+
+/**
  * Правка записи на месте (миграция 022): какие записи можно исправить поправкой 'amend'. Вход и
- * ребай — кратность (stacks), вылет — выбивших (by). Поправка встаёт на место исходной записи.
+ * ребай — сумму (rub, 027; у правок до 027 — кратность stacks), вылет — выбивших (by). Поправка
+ * встаёт на место исходной записи.
  */
 export const AMENDABLE_EVENT_TYPES: readonly EventType[] = ['join', 'rebuy', 'bust'];
 
 /**
  * payload 'amend': ссылка на исправляемую запись этого вечера (id меньше id поправки) и ровно одно
- * новое значение: stacks — у входа и ребая (целое 1..MAX_ENTRY_STACKS, хранится и 1), by — у вылета
- * (кто выбил, 0..n). replay применяет поправку в позиции исходной записи; последняя принятая
- * поправка записи — в силе, отмена поправки возвращает предыдущую (или исходную запись).
+ * новое значение: rub — сумма входа или ребая (целое 1..MAX_ENTRY_RUB, миграция 027), stacks — то
+ * же кратностью (правки 022–026: целое 1..MAX_ENTRY_STACKS), by — у вылета (кто выбил, 0..n).
+ * replay применяет поправку в позиции исходной записи; последняя принятая поправка записи — в силе,
+ * отмена поправки возвращает предыдущую (или исходную запись).
  */
 export type AmendPayload =
-  | { eventId: number; stacks: number } // join, rebuy
+  | { eventId: number; rub: number } // join, rebuy (027)
+  | { eventId: number; stacks: number } // join, rebuy (022–026)
   | { eventId: number; by: PlayerId[] }; // bust
 
 /** Наибольшая длительность паузы с отсчётом (payload timer_pause.minutes), минут. */
@@ -138,9 +158,10 @@ export const MAX_TIME_ADJUST_SECONDS = 3600;
 export type TimeAdjustPayload = { seconds: number };
 
 export type EventPayload =
-  // join, rebuy; stacks — кратность входа: целое 1..MAX_ENTRY_STACKS, нет поля = 1 (старые события).
-  // Вход ×k: взнос buyInRub·k (весь — в призовой фонд), фишки startingChips·k.
-  | { playerId: PlayerId; stacks?: number }
+  // join, rebuy. rub (027) — сумма: целое 1..MAX_ENTRY_RUB, весь взнос — в фонд, фишки — по курсу
+  // формата (chipsForRub). stacks (015) — кратность: целое 1..MAX_ENTRY_STACKS, взнос buyInRub·k,
+  // фишки startingChips·k. Ни того ни другого — стандартный вход (×1, buyInRub). Оба сразу — ошибка.
+  | { playerId: PlayerId; stacks?: number; rub?: number }
   | { playerId: PlayerId; by: PlayerId[] } // bust; by = кто выбил (0..n)
   | { playerId: PlayerId; amountRub: number; note?: string } // payment: + игрок→банкир, − банкир→игрок
   | ShowdownPayload // showdown
@@ -161,9 +182,10 @@ export interface EveningEvent {
 export interface PlayerState {
   playerId: PlayerId;
   joinedAt: string;
-  entries: number; // вход + ребаи (штук, без учёта кратности)
+  entries: number; // вход + ребаи (штук, без учёта сумм)
   rebuys: number;
-  stacks: number; // сумма кратностей входа и ребаев: взнос = stacks × buyInRub
+  feeRub: number; // взнос: сумма входа и ребаев, ₽ (readEntry каждой записи) — весь в фонд
+  chips: number; // фишки за вход и ребаи
   alive: boolean;
   busts: number; // все вылеты, включая те, после которых был ребай
   finalBustEventId: number | null; // последний bust, если после него не было ребая
@@ -201,9 +223,8 @@ export interface EveningState {
   rebuysOpen: boolean;
   aliveCount: number;
   totalEntries: number; // входы и ребаи штук
-  totalStacks: number; // сумма кратностей всех входов и ребаев
-  totalChips: number; // totalStacks × startingChips
-  prizePoolRub: number; // totalStacks × buyInRub — все взносы вечера
+  totalChips: number; // Σ chips — все фишки в игре
+  prizePoolRub: number; // Σ feeRub — все взносы вечера
   finished: boolean;
   places: PlayerId[]; // index 0 = 1-е место; заполняется только при finished (до этого — [])
   firstBustPlayerId: PlayerId | null; // для прогноза «кто вылетит первым» = первый bust вечера

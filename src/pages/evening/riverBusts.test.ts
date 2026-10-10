@@ -31,7 +31,7 @@ const SD = '00000000-0000-4000-8000-0000000000aa';
 const plan = (p: Partial<RiverPlan> & Pick<RiverPlan, 'byChips' | 'killers'>): RiverPlan => ({
   showdownId: SD,
   rebuys: [],
-  rebuyStacks: 1,
+  rebuyRub: 500,
   paid: false,
   ...p,
 });
@@ -106,14 +106,14 @@ describe('riverPlanDrafts: вылеты в порядке мест, затем �
     expect(prizes).toBe(owes);
   });
 
-  it('«Вылет и ребай» ×2 после ривера: кратность ребая и сумма платежа — как в шторке игрока', () => {
+  it('«Вылет и ребай» на 1 000 ₽ после ривера: сумма ребая и платежа — как в шторке игрока', () => {
     const drafts = riverPlanDrafts(
       F,
-      plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'], rebuyStacks: 2, paid: true }),
+      plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'], rebuyRub: 1000, paid: true }),
     );
     expect(drafts).toEqual([
       { type: 'bust', payload: { playerId: 'c', by: ['a'] } },
-      { type: 'rebuy', payload: { playerId: 'c', stacks: 2 } },
+      { type: 'rebuy', payload: { playerId: 'c', rub: 1000 } },
       { type: 'payment', payload: { playerId: 'c', amountRub: 2 * F.buyInRub } },
     ]);
     const j = evening();
@@ -122,7 +122,7 @@ describe('riverPlanDrafts: вылеты в порядке мест, затем �
     const s = replay(F, j.events, j.now());
     expect(s.errors).toEqual([]);
     expect(s.players.c?.alive).toBe(true);
-    // Фонд: 5 входов ×1 и ребай ×2.
+    // Фонд: 5 входов по 500 и ребай на 1 000.
     expect(s.prizePoolRub).toBe(7 * F.buyInRub);
   });
 
@@ -226,11 +226,13 @@ describe('тексты', () => {
     expect(riverKillersText([])).toBe('кто выбил — не указано');
   });
 
-  it('кратность ребая на кнопке шторки', () => {
-    expect(riverBustLabel(['Дима'], 1, 2)).toBe('Вылет и ребай ×2: Дима');
-    expect(riverBustLabel(['Дима'], 0, 2)).toBe('Записать вылет: Дима');
-    expect(riverBustLabel(['Дима', 'Лёша'], 2, 3).replace(/ /g, ' ')).toBe(
-      'Записать вылеты: 2 и 2 ребая ×3',
+  it('сумма ребая на кнопке шторки (если не вход формата)', () => {
+    expect(riverBustLabel(['Дима'], 1, 700).replace(/\u00a0/g, ' ')).toBe(
+      'Вылет и ребай · 700 ₽: Дима',
+    );
+    expect(riverBustLabel(['Дима'], 0, 700)).toBe('Записать вылет: Дима');
+    expect(riverBustLabel(['Дима', 'Лёша'], 2, 1500).replace(/\u00a0/g, ' ')).toBe(
+      'Записать вылеты: 2 и 2 ребая · 1 500 ₽',
     );
   });
 
@@ -258,7 +260,7 @@ describe('тексты', () => {
   });
 
   it('тост: один вылет, вылет и ребай, побочный банк — у каждого свой выбивший', () => {
-    expect(riverToast(plan({ byChips: ['c'], killers: { c: ['a'] } }), nameOf)).toEqual({
+    expect(riverToast(plan({ byChips: ['c'], killers: { c: ['a'] } }), nameOf, F)).toEqual({
       success: 'Вылет записан: Дима',
       detail: 'Выбивает Женя.',
     });
@@ -266,27 +268,30 @@ describe('тексты', () => {
       riverToast(
         plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'], paid: true }),
         nameOf,
+        F,
       ),
     ).toEqual({ success: 'Вылет и ребай: Дима', detail: 'Выбивает Женя. Ребай оплачен сразу.' });
     expect(
       riverToast(
-        plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'], rebuyStacks: 3 }),
+        plan({ byChips: ['c'], killers: { c: ['a'] }, rebuys: ['c'], rebuyRub: 300 }),
         nameOf,
-      ).success,
-    ).toBe('Вылет и ребай ×3: Дима');
+        F,
+      ).success.replace(/\u00a0/g, ' '),
+    ).toBe('Вылет и ребай · 300 ₽: Дима');
     expect(
-      riverToast(plan({ byChips: ['c', 'd'], killers: { c: ['a'], d: ['a'] } }), nameOf),
+      riverToast(plan({ byChips: ['c', 'd'], killers: { c: ['a'], d: ['a'] } }), nameOf, F),
     ).toEqual({ success: 'Вылеты записаны: Дима и Лёша', detail: 'Выбивает Женя.' });
     expect(
       riverToast(
         plan({ byChips: ['c', 'd'], killers: { c: ['a'], d: ['b'] }, rebuys: ['d'] }),
         nameOf,
+        F,
       ),
     ).toEqual({
       success: 'Вылеты записаны: Дима и Лёша',
       detail: 'Дима: выбивает Женя; Лёша: выбивает Саша. Ребай: Лёша.',
     });
-    expect(riverToast(plan({ byChips: ['c'], killers: { c: ['a', 'b'] } }), nameOf).detail).toBe(
+    expect(riverToast(plan({ byChips: ['c'], killers: { c: ['a', 'b'] } }), nameOf, F).detail).toBe(
       'Выбивают Женя и Саша — нокаут каждому.',
     );
   });

@@ -103,6 +103,7 @@ const FIELD_KEYS: Record<TopField, keyof FormatDraft> = {
   chips: 'chips',
   rebuyUntil: 'rebuyUntil',
   rebuyLimit: 'rebuyLimit',
+  payoutStep: 'payoutStep',
 };
 
 function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: boolean }) {
@@ -257,7 +258,10 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
           {...bind('name')}
         />
 
-        <Section title="Взнос и фишки" footer="Весь взнос идёт в призовой фонд.">
+        <Section
+          title="Взнос и фишки"
+          footer="Весь взнос идёт в призовой фонд. Вход и ребай на пульте — любой суммой; здесь — сумма по умолчанию, фишки за другую сумму — по тому же курсу."
+        >
           <div className="adm-grid-2">
             <Field
               label="Вход и ребай"
@@ -336,6 +340,14 @@ function FormatForm({ row, isDefault }: { row: FormatRow | null; isDefault: bool
               Добавить призовое место
             </Button>
           </div>
+          <Field
+            label="Шаг призовых"
+            suffix="₽"
+            inputMode="numeric"
+            autoComplete="off"
+            hint="Призовые — вниз до шага, остаток — 1-му месту. 1 — до рубля."
+            {...bind('payoutStep')}
+          />
         </Section>
 
         <Section

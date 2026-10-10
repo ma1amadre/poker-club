@@ -1,11 +1,11 @@
 // Шторка «Изменить запись» (правка на месте, миграция 022): кого предложить выбившим, тексты тоста.
 // Правило правки и проверку считает домен (amend.ts: canAmend, currentAmendValue) — здесь только
 // раскладка для экрана. Чистый модуль, тесты — amendView.test.ts.
-import { entryAmounts } from '@domain/money.ts';
 import { readAmend, replay } from '@domain/replay.ts';
 import type { AmendImpact, AmendValue } from '@domain/amend.ts';
 import type { EveningEvent, PlayerId, TournamentFormat } from '@domain/types.ts';
 import { joinNames } from '../../shared/lib/text';
+import { entryAmountText } from './lib';
 
 function victimOf(ev: EveningEvent | undefined): PlayerId | null {
   const p = ev?.payload as { playerId?: unknown } | undefined;
@@ -47,10 +47,10 @@ export function amendKillerCandidates(
   return { ids: [...alive, ...out], out };
 }
 
-/** Новое значение отличается от записи: кратность другая, выбившие — другой набор. */
+/** Новое значение отличается от записи: сумма другая, выбившие — другой набор. */
 export function amendChanged(now: AmendValue | null, next: AmendValue): boolean {
   if (!now) return false;
-  if ('stacks' in next) return !('stacks' in now) || now.stacks !== next.stacks;
+  if ('rub' in next) return !('rub' in now) || now.rub !== next.rub;
   if (!('by' in now)) return true;
   const a = [...new Set(now.by)].sort();
   const b = [...new Set(next.by)].sort();
@@ -65,7 +65,7 @@ const AMEND_NOUN: Partial<Record<EveningEvent['type'], string>> = {
 
 /**
  * Тост после правки: «Вылет исправлен: Лёша» и «Выбивают Саша и Миша — нокаут каждому.», «Вход
- * исправлен: Вова» и «×3 — 1 500 ₽.». Вход, ребай и вылет — мужского рода, поэтому «исправлен»
+ * исправлен: Вова» и «700 ₽ · 700 фишек.». Вход, ребай и вылет — мужского рода, поэтому «исправлен»
  * согласуется с записью, а не с игроком; глаголы про выбивших — без рода.
  */
 export function amendToast(
@@ -73,7 +73,6 @@ export function amendToast(
   value: AmendValue,
   nameOf: (id: PlayerId) => string,
   format: TournamentFormat,
-  formatRub: (n: number) => string,
 ): { title: string; detail: string } {
   const who = victimOf(event);
   const title = `${AMEND_NOUN[event.type] ?? 'Запись'} исправлен${AMEND_NOUN[event.type] ? '' : 'а'}${who ? `: ${nameOf(who)}` : ''}`;
@@ -87,10 +86,7 @@ export function amendToast(
           : `Выбивают ${joinNames(names)} — нокаут каждому.`;
     return { title, detail };
   }
-  return {
-    title,
-    detail: `×${value.stacks} — ${formatRub(entryAmounts(format, value.stacks).rub)}.`,
-  };
+  return { title, detail: `${entryAmountText(format, value.rub)}.` };
 }
 
 /** Первая буква строчная: причина из домена встаёт внутрь фразы. */

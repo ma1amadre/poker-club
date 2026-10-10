@@ -1,5 +1,5 @@
 // «Изменить запись» из ленты (правка на месте, миграция 022): у вылета — кто выбил, у входа и ребая
-// — кратность. Правка встаёт на место исходной записи (домен, amend.ts): места, ребаи и уровни после
+// — сумма (миграция 027: любая сумма; быстрые кнопки и «Другая сумма…», как на пульте). Правка встаёт на место исходной записи (домен, amend.ts): места, ребаи и уровни после
 // неё не сдвигаются — в отличие от «отменить и записать заново». Проверка — canAmend домена по
 // журналу (actions.check/send для 'amend'). Здесь же — «Отменить запись» (подтверждение с
 // последствиями, как раньше по нажатию на строку).
@@ -15,10 +15,16 @@ import type { EveningEventRecord } from '../../shared/api';
 import { formatRub, formatTime } from '../../shared/lib';
 import { Button, FieldGroup, Notice, PlayerPicker, Sheet } from '../../shared/ui';
 import { amendChanged, amendImpactText, amendKillerCandidates, amendToast } from './amendView';
+import { AmountPicker } from './AmountPicker';
 import { describeEvent, killersHint, linkedPayment } from './lib';
-import { StacksPicker } from './StacksPicker';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
+
+/** Сумма платежа «Оплачено сразу», записанного вместе со входом. */
+function paidAmount(payment: EveningEventRecord): number {
+  const amount = (payment.payload as { amountRub?: unknown }).amountRub;
+  return typeof amount === 'number' ? amount : 0;
+}
 
 export interface AmendSheetProps {
   event: EveningEventRecord | null;
@@ -41,14 +47,17 @@ function AmendSheetInner({
   const { evening, events, nameOf, playersById, nowMs, errorsById } = model;
   const format = evening.format;
   const field = amendField(event);
-  // Значение записи сейчас — с правкой в силе. Кратность и выбившие от времени не зависят, поэтому
+  // Значение записи сейчас — с правкой в силе. Сумма и выбившие от времени не зависят, поэтому
   // время — на момент открытия шторки: пересчёт только при смене журнала, не каждую секунду.
   const [openedAt] = useState(nowMs);
   const current = useMemo(
     () => currentAmendValue(format, events, event.id, openedAt),
     [format, events, event.id, openedAt],
   );
-  const [stacks, setStacks] = useState(current && 'stacks' in current ? current.stacks : 1);
+  // Сумма в правке; null — в поле «Другая сумма» неверное значение.
+  const [rub, setRub] = useState<number | null>(
+    current && 'rub' in current ? current.rub : format.buyInRub,
+  );
   const [killers, setKillers] = useState<string[]>(current && 'by' in current ? current.by : []);
   const [nobody, setNobody] = useState(
     current !== null && 'by' in current && current.by.length === 0,
@@ -70,9 +79,10 @@ function AmendSheetInner({
     [field, format, events, event.id, current, openedAt],
   );
 
-  const value: AmendValue = field === 'stacks' ? { stacks } : { by: nobody ? [] : killers };
-  const changed = amendChanged(current, value);
-  const payload = { eventId: event.id, ...value };
+  const value: AmendValue | null =
+    field === 'rub' ? (rub === null ? null : { rub }) : { by: nobody ? [] : killers };
+  const changed = value !== null && amendChanged(current, value);
+  const payload = { eventId: event.id, ...(value ?? { rub: format.buyInRub }) };
   const problem = changed ? actions.check('amend', payload) : null;
   // Правка задела бы другие записи (починка непринятой): какие и почему — как при отмене записи.
   const impactText =
@@ -84,11 +94,12 @@ function AmendSheetInner({
       : '';
   const line = describeEvent(event, nameOf, formatRub, format, model.feed);
   const error = errorsById.get(event.id);
-  const paid = field === 'stacks' ? linkedPayment(events, event, format) : null;
+  const paid = field === 'rub' ? linkedPayment(events, event, format) : null;
 
   const save = async () => {
+    if (value === null) return;
     setSending(true);
-    const toast = amendToast(event, value, nameOf, format, formatRub);
+    const toast = amendToast(event, value, nameOf, format);
     const record = await actions.send('amend', payload, {
       success: toast.title,
       detail: toast.detail,
@@ -187,27 +198,29 @@ function AmendSheetInner({
             </p>
           </>
         )}
-        {field === 'stacks' && (
+        {field === 'rub' && (
           <>
-            <StacksPicker
+            <AmountPicker
               format={format}
-              value={stacks}
-              onChange={setStacks}
+              value={rub}
+              onChange={setRub}
               label={event.type === 'rebuy' ? 'Ребай' : 'Вход'}
               note={
-                current && 'stacks' in current ? `В записи сейчас ×${current.stacks}.` : undefined
+                current && 'rub' in current
+                  ? `В записи сейчас ${formatRub(current.rub)}.`
+                  : undefined
               }
               disabled={sending}
             />
             {paid && changed && (
               <p className="m-small">
-                Оплата, записанная вместе с этой записью, не меняется — расчёт сам покажет, кто кому
-                должен.
+                Оплата, записанная вместе с этой записью ({formatRub(paidAmount(paid))}), не
+                меняется — расчёт сам покажет, кто кому должен.
               </p>
             )}
             <p className="m-small">
-              Запись останется на своём месте в журнале — пересчитаются фонд, призовые и взнос
-              игрока.
+              Запись останется на своём месте в журнале — пересчитаются фонд, фишки, призовые и
+              взнос игрока.
             </p>
           </>
         )}

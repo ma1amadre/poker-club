@@ -9,9 +9,9 @@ import {
   type Achievement,
   type AchievementCode,
 } from '@domain/achievements.ts';
-import { payouts } from '@domain/money.ts';
+import { payoutsFor } from '@domain/money.ts';
 import type { EveningSummary } from '@domain/summary.ts';
-import type { PlayerId } from '@domain/types.ts';
+import type { PlayerId, TournamentFormat } from '@domain/types.ts';
 
 export interface PlayerEvening {
   eveningId: string;
@@ -288,15 +288,16 @@ export interface PlayerNumbers {
 }
 
 /**
- * Сколько мест вечера получило приз: доли формата на первые min(участники, доли) мест —
- * та же раскладка, что у выплат домена (payouts); нулевая доля приза не даёт.
+ * Сколько мест вечера получило приз: доли формата на первые min(участники, доли) мест с шагом
+ * округления формата — та же раскладка, что у выплат домена (payoutsFor); нулевая доля приза не
+ * даёт, как и доля меньше шага (фонд меньше шага целиком у 1-го места).
  */
 export function paidPlaces(
-  payoutPct: readonly number[],
+  format: Pick<TournamentFormat, 'payoutPct' | 'payoutStepRub'>,
   entrants: number,
   prizePoolRub: number,
 ): number {
-  return payouts(prizePoolRub, payoutPct, entrants).filter((rub) => rub > 0).length;
+  return payoutsFor(format, prizePoolRub, entrants).filter((rub) => rub > 0).length;
 }
 
 /**

@@ -351,12 +351,12 @@ describe('цифры игрока', () => {
 
 describe('призовые места вечера', () => {
   it('доли формата на первые min(участники, доли) мест', () => {
-    expect(paidPlaces([70, 30], 5, 2000)).toBe(2);
-    expect(paidPlaces([50, 30, 20], 2, 1000)).toBe(2);
-    expect(paidPlaces([100], 6, 3000)).toBe(1);
+    expect(paidPlaces({ payoutPct: [70, 30] }, 5, 2000)).toBe(2);
+    expect(paidPlaces({ payoutPct: [50, 30, 20] }, 2, 1000)).toBe(2);
+    expect(paidPlaces({ payoutPct: [100] }, 6, 3000)).toBe(1);
   });
 
   it('нулевая доля приза не даёт', () => {
-    expect(paidPlaces([100, 0], 4, 2000)).toBe(1);
+    expect(paidPlaces({ payoutPct: [100, 0] }, 4, 2000)).toBe(1);
   });
 });

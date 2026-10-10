@@ -264,9 +264,12 @@ export function announcePost(input: AnnouncePostInput): Post {
   const lines = [`♠️ <b>Покер ${formatWhen(input.scheduledAt)}</b>`];
   if (input.finaleSeasonKey) lines.push(finaleLine(input.finaleSeasonKey));
   if (input.location) lines.push(`📍 ${escapeHtml(input.location)}`);
+  // Вход и ребай — любой суммой от 1 ₽ (миграция 027): в анонсе — сумма по умолчанию и курс фишек.
+  // Не «от 500 ₽»: «от» читается как нижняя граница, а меньше суммы формата — тоже можно.
   lines.push(
-    `Вход и ребай по ${formatRub(f.buyInRub)} (${formatInt(f.startingChips)} ` +
-      `${plural(f.startingChips, ['фишка', 'фишки', 'фишек'])}).`,
+    `${f.rebuyLimit === 0 ? 'Вход' : 'Вход и ребай'}${NBSP}— ${formatRub(f.buyInRub)}, можно другой ` +
+      `суммой (${formatInt(f.startingChips)} ${plural(f.startingChips, ['фишка', 'фишки', 'фишек'])} ` +
+      `за ${formatRub(f.buyInRub)}).`,
   );
   if (input.note) lines.push(`📝 ${escapeHtml(input.note)}`);
   lines.push('', 'Отметьтесь, идёте ли, и сделайте прогноз на победителя 🔮');
@@ -523,7 +526,7 @@ export function stakeText(item: StakeItem, name: (id: PlayerId) => string): stri
       return `${name(item.playerId)} — в одной звезде от ачивки «${achievementTitle('star', item.level)}»`;
     case 'pool_record':
       return (
-        `идут ${item.going} — фонд ещё до ребаев ` +
+        `идут ${item.going} — со входами по ${formatRub(item.entryRub)} фонд ещё до ребаев ` +
         `${item.status === 'new' ? 'побьёт' : 'повторит'} рекорд клуба (${formatRub(item.recordRub)})`
       );
     case 'oracle_step':

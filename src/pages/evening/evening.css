@@ -264,24 +264,68 @@
   align-content: center;
 }
 
-/* Кратность входа и ребая (StacksPicker): «−», значение с суммой, «+» в строку. */
-.ev-stacks {
+/*
+ * Сумма входа и ребая (AmountPicker, миграция 027): быстрые суммы — по три в ряд («500 / 1 000 /
+ * 1 500»), «Другая сумма…» — во всю ширину под ними, поле суммы — следом; ниже — сумма и фишки.
+ */
+.ev-amount {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
   gap: var(--space-3);
 }
 
-.ev-stacks__value {
+.ev-amount__quick.ui-seg--block {
   display: grid;
-  justify-items: center;
-  gap: var(--space-1);
-  margin: 0;
-  text-align: center;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.ev-stacks__value .m-small {
+.ev-amount__quick .m-seg-item:last-child {
+  grid-column: 1 / -1;
+}
+
+.ev-amount__value {
+  margin: 0;
   color: var(--ink-muted);
+}
+
+/*
+ * Посадка (SeatSheet): у каждого, кого сажают, своя строка — имя, сумма кнопкой (открывает выбор суммы
+ * под строкой) и «Оплачено сразу». Строки на фоне, черта сверху списка и под каждой (как списки).
+ */
+.ev-seatrows {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.ev-seatrow {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.ev-seatrow__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.ev-seatrow__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ev-seatrow__sum {
+  flex: none;
+}
+
+/* Гость — одна строка под полем имени, на всю ширину формы. */
+.ev-seatrows--guest {
+  width: 100%;
 }
 
 .ev-guest {

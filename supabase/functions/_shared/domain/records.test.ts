@@ -168,7 +168,8 @@ describe('рекорды: какой вечер что установил', () =
     expect(Object.keys(b).sort()).toEqual(['e1', 'e2']);
     expect(b['e1']).toEqual([]);
     expect(b['e2']).toEqual([
-      { kind: 'biggest_win', value: 900, previous: 550, status: 'new', playerIds: ['B'] },
+      // previous — выигрыш вечера e1 с шагом призовых клубного формата 100 ₽ (027).
+      { kind: 'biggest_win', value: 900, previous: 600, status: 'new', playerIds: ['B'] },
       { kind: 'most_kos', value: 3, previous: 2, status: 'new', playerIds: ['B'] },
       { kind: 'biggest_pool', value: 2000, previous: 1500, status: 'new', playerIds: [] },
       { kind: 'longest_game', value: 3 * MIN, previous: 2 * MIN, status: 'new', playerIds: [] },

@@ -9,12 +9,15 @@
 // - Таймер считается из времени событий (`at`, серверное время), переход time-уровней не
 //   хранится отдельным событием — его вычисляет replay, поэтому все экраны синхронны.
 // - Правка записи на месте (миграция 022): поправка 'amend' ссылается на более раннюю запись
-//   (вход, ребай — кратность; вылет — выбившие) и применяется В ПОЗИЦИИ исходной записи, а не в
+//   (вход, ребай — сумма; вылет — выбившие) и применяется В ПОЗИЦИИ исходной записи, а не в
 //   своей: порядок мест, ребаи и уровни после неё не сдвигаются. Поправку принимает та же проверка,
 //   что и исходную запись (validate в позиции исходной); в силе последняя принятая поправка записи,
 //   отмена поправки возвращает предыдущую или исходное значение.
+// - Деньги и фишки — по записям (миграция 027): у каждого входа и ребая своя сумма (readEntry), фонд —
+//   сумма взносов. Записи без суммы (все до 027) читаются как раньше: кратность × вход формата.
 import {
   AMENDABLE_EVENT_TYPES,
+  MAX_ENTRY_RUB,
   MAX_ENTRY_STACKS,
   MAX_PAUSE_MINUTES,
   MAX_TIME_ADJUST_SECONDS,
@@ -84,6 +87,68 @@ export function readStacks(payload: unknown): number | null {
 
 const STACKS_ERROR = `Кратность входа — целое число от 1 до ${MAX_ENTRY_STACKS}`;
 
+/** Сумма входа или ребая годится: целое число рублей 1..MAX_ENTRY_RUB. */
+export function isEntryRub(value: unknown): value is number {
+  return (
+    typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_ENTRY_RUB
+  );
+}
+
+/** «100 000» с неразрывным пробелом — верхняя граница суммы в тексте отказа (без Intl в домене). */
+function groupDigits(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+/** Отказ суммы входа или ребая (тот же текст — у RPC, миграция 027). */
+export const ENTRY_RUB_ERROR = `Сумма входа или ребая — целое число рублей от 1 до ${groupDigits(MAX_ENTRY_RUB)}`;
+
+const ENTRY_BOTH_ERROR = 'Вход: нужна сумма или кратность — что-то одно';
+
+/** Во что обходится вход или ребай: взнос (весь — в фонд) и фишки. */
+export interface EntryValue {
+  rub: number;
+  chips: number;
+}
+
+/**
+ * Фишки за сумму входа по курсу формата: startingChips фишек за buyInRub, до целого (половина —
+ * вверх). Вход 700 ₽ при 500 ₽ = 500 фишек — 700 фишек. Формат без курса (вход 0) — 0 фишек: экран
+ * невалидного формата не должен падать.
+ */
+export function chipsForRub(
+  format: Pick<TournamentFormat, 'buyInRub' | 'startingChips'>,
+  rub: number,
+): number {
+  if (!(format.buyInRub > 0) || !Number.isFinite(format.startingChips)) return 0;
+  return Math.round((rub * format.startingChips) / format.buyInRub);
+}
+
+/** Причина, по которой payload входа или ребая несёт неверную сумму; null — сумма годна. */
+function entryError(payload: unknown): string | null {
+  const record = asRecord(payload);
+  const hasRub = 'rub' in record && record.rub !== undefined;
+  const hasStacks = 'stacks' in record && record.stacks !== undefined;
+  if (hasRub && hasStacks) return ENTRY_BOTH_ERROR;
+  if (hasRub) return isEntryRub(record.rub) ? null : ENTRY_RUB_ERROR;
+  return readStacks(record) === null ? STACKS_ERROR : null;
+}
+
+/**
+ * Взнос и фишки входа или ребая из payload. rub (027) — сумма записи, фишки по курсу формата;
+ * stacks (015) — кратность: buyInRub·k и startingChips·k; ни того ни другого — стандартный вход.
+ * null — сумма или кратность некорректны либо указаны обе (replay отбросит запись с ошибкой).
+ */
+export function readEntry(format: TournamentFormat, payload: unknown): EntryValue | null {
+  if (entryError(payload) !== null) return null;
+  const record = asRecord(payload);
+  if ('rub' in record && record.rub !== undefined) {
+    const rub = record.rub as number;
+    return { rub, chips: chipsForRub(format, rub) };
+  }
+  const k = readStacks(record) as number;
+  return { rub: format.buyInRub * k, chips: format.startingChips * k };
+}
+
 /**
  * Пауза из payload timer_pause: minutes — длительность перерыва, null — без срока (нет поля, как у
  * всех пауз до миграции 022); null вместо объекта — значение некорректно.
@@ -113,18 +178,19 @@ export function readTimeAdjust(payload: unknown): number | null {
 const TIME_ADJUST_ERROR = `Поправка времени — целое число секунд, не ноль и не больше ${MAX_TIME_ADJUST_SECONDS} по модулю`;
 
 /**
- * Поправка из payload amend: id исправляемой записи и ровно одно новое значение — stacks (вход,
- * ребай) или by (вылет). null — форма неверна. Есть ли такая запись и подходит ли значение к ней,
- * решает replay по журналу.
+ * Поправка из payload amend: id исправляемой записи и ровно одно новое значение — rub (сумма входа
+ * или ребая, 027), stacks (кратность, правки 022–026) или by (вылет). null — форма неверна. Есть ли
+ * такая запись и подходит ли значение к ней, решает replay по журналу.
  */
 export function readAmend(payload: unknown): AmendPayload | null {
   const record = asRecord(payload);
   const id = record.eventId;
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) return null;
-  const hasStacks = 'stacks' in record && record.stacks !== undefined;
-  const hasBy = 'by' in record && record.by !== undefined;
-  if (hasStacks === hasBy) return null;
-  if (hasStacks) {
+  const has = (key: string): boolean => key in record && record[key] !== undefined;
+  const fields = ['rub', 'stacks', 'by'].filter(has);
+  if (fields.length !== 1) return null;
+  if (has('rub')) return isEntryRub(record.rub) ? { eventId: id, rub: record.rub } : null;
+  if (has('stacks')) {
     const k = readStacks(record);
     return k === null ? null : { eventId: id, stacks: k };
   }
@@ -133,7 +199,7 @@ export function readAmend(payload: unknown): AmendPayload | null {
 }
 
 const AMEND_SHAPE_ERROR =
-  'Правка: нужна исправляемая запись и одно новое значение — кратность или выбившие';
+  'Правка: нужна исправляемая запись и одно новое значение — сумма или выбившие';
 
 /** Платёж из payload или null, если payload некорректен. Используется и в money.ts. */
 export function readPayment(payload: unknown): { playerId: PlayerId; amountRub: number } | null {
@@ -165,7 +231,6 @@ function initialState(format: TournamentFormat): EveningState {
     rebuysOpen: true,
     aliveCount: 0,
     totalEntries: 0,
-    totalStacks: 0,
     totalChips: 0,
     prizePoolRub: 0,
     finished: false,
@@ -211,10 +276,9 @@ function refresh(format: TournamentFormat, s: EveningState): void {
   const list = s.joinOrder.map((id) => s.players[id]).filter((p): p is PlayerState => !!p);
   s.aliveCount = list.filter((p) => p.alive).length;
   s.totalEntries = list.reduce((sum, p) => sum + p.entries, 0);
-  // Деньги и фишки — по кратностям: вход ×2 — это два стандартных входа. Весь взнос — в фонд.
-  s.totalStacks = list.reduce((sum, p) => sum + p.stacks, 0);
-  s.totalChips = s.totalStacks * format.startingChips;
-  s.prizePoolRub = s.totalStacks * format.buyInRub;
+  // Деньги и фишки — по записям (у каждого входа и ребая своя сумма). Весь взнос — в фонд.
+  s.totalChips = list.reduce((sum, p) => sum + p.chips, 0);
+  s.prizePoolRub = list.reduce((sum, p) => sum + p.feeRub, 0);
 
   for (const p of list) p.place = null;
   s.places = [];
@@ -259,7 +323,8 @@ function validate(
     case 'join': {
       const id = readPlayerId(payload);
       if (id === null) return 'Не указан игрок';
-      if (readStacks(payload) === null) return STACKS_ERROR;
+      const entryErr = entryError(payload);
+      if (entryErr !== null) return entryErr;
       if (s.players[id]) return 'Игрок уже в турнире';
       if (!s.rebuysOpen) return 'Регистрация закрыта';
       return null;
@@ -267,7 +332,8 @@ function validate(
     case 'rebuy': {
       const id = readPlayerId(payload);
       if (id === null) return 'Не указан игрок';
-      if (readStacks(payload) === null) return STACKS_ERROR;
+      const entryErr = entryError(payload);
+      if (entryErr !== null) return entryErr;
       const p = s.players[id];
       if (!p) return 'Игрок не входил в турнир';
       if (p.alive) return 'Игрок ещё в игре — ребай только после вылета';
@@ -357,13 +423,14 @@ function apply(
   switch (ev.type) {
     case 'join': {
       const id = readPlayerId(payload) as PlayerId;
-      const k = readStacks(payload) as number;
+      const entry = readEntry(format, payload) as EntryValue;
       s.players[id] = {
         playerId: id,
         joinedAt: ev.at,
         entries: 1,
         rebuys: 0,
-        stacks: k,
+        feeRub: entry.rub,
+        chips: entry.chips,
         alive: true,
         busts: 0,
         finalBustEventId: null,
@@ -377,10 +444,11 @@ function apply(
     }
     case 'rebuy': {
       const p = s.players[readPlayerId(payload) as PlayerId] as PlayerState;
-      const k = readStacks(payload) as number;
+      const entry = readEntry(format, payload) as EntryValue;
       p.entries += 1;
       p.rebuys += 1;
-      p.stacks += k;
+      p.feeRub += entry.rub;
+      p.chips += entry.chips;
       p.alive = true;
       p.finalBustEventId = null;
       p.bustLevel = null;
@@ -505,11 +573,23 @@ function lowerFirst(text: string): string {
   return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
-/** payload исходной записи с новым значением поправки. */
-function amendedPayload(target: EveningEvent, patch: AmendPayload): EventPayload {
+/**
+ * payload исходной записи с новым значением поправки. Сумма и кратность взаимно исключают друг друга:
+ * правка суммы убирает из записи кратность, правка кратности (022–026) — сумму. Лента пульта берёт
+ * ту же функцию для подписи «было».
+ */
+export function amendedPayload(
+  target: Pick<EveningEvent, 'payload'>,
+  patch: AmendPayload,
+): EventPayload {
   const base = asRecord(target.payload);
+  const { rub: _rub, stacks: _stacks, ...rest } = base;
   const next =
-    'stacks' in patch ? { ...base, stacks: patch.stacks } : { ...base, by: [...patch.by] };
+    'by' in patch
+      ? { ...base, by: [...patch.by] }
+      : 'rub' in patch
+        ? { ...rest, rub: patch.rub }
+        : { ...rest, stacks: patch.stacks };
   return next as unknown as EventPayload;
 }
 
@@ -540,10 +620,10 @@ function collectAmends(sorted: readonly EveningEvent[]): {
     else if (target.voided) error = 'Правка: исправляемая запись отменена';
     else if (!AMEND_TARGET_TYPES.has(target.type))
       error = 'Правка: исправить можно только вход, ребай или вылет';
-    else if (target.type === 'bust' && 'stacks' in patch)
-      error = 'Правка: у вылета исправляются выбившие, а не кратность';
+    else if (target.type === 'bust' && !('by' in patch))
+      error = 'Правка: у вылета исправляются выбившие, а не сумма';
     else if (target.type !== 'bust' && 'by' in patch)
-      error = 'Правка: у входа и ребая исправляется кратность, а не выбившие';
+      error = 'Правка: у входа и ребая исправляется сумма, а не выбившие';
     if (error !== null || patch === null || !target) {
       errors.set(ev.id, error ?? AMEND_SHAPE_ERROR);
       continue;

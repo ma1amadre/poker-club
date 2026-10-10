@@ -148,10 +148,10 @@ select pg_temp.check(
 -- ===========================================================================
 -- С миграции 019 у add_guest ещё и ключ повтора, с 020 — оплата: сигнатура (uuid, text, integer, uuid, integer).
 select pg_temp.check(
-  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
-  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
-  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute'),
-  'add_guest(uuid, text, integer, uuid, integer): authenticated и service_role, не anon');
+  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute')
+  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute')
+  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute'),
+  'add_guest(uuid, text, integer, uuid, integer, integer) (027): authenticated и service_role, не anon');
 select pg_temp.check(
   to_regprocedure('public.add_guest(uuid, text)') is null,
   'старой сигнатуры add_guest(uuid, text) нет — вызов с двумя аргументами не двусмыслен');

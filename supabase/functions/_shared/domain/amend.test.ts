@@ -61,7 +61,7 @@ describe('правка вылета на месте: ребай после не�
     const { state: s, applied, amended } = replayLog(F, j.events, j.now());
     expect(errorsOf(s)).toEqual([]);
     expect(amended.get(bustB)).toBe(amendId);
-    expect(s.players.B).toMatchObject({ alive: true, rebuys: 1, stacks: 2, busts: 1 });
+    expect(s.players.B).toMatchObject({ alive: true, rebuys: 1, feeRub: 1000, busts: 1 });
     expect(kosOf(s)).toEqual({ A: 1, B: 0, C: 0, D: 1 });
     expect(s.players.D?.koVictims).toEqual(['B']);
     expect(s.prizePoolRub).toBe(before.prizePoolRub);
@@ -81,7 +81,7 @@ describe('правка вылета на месте: ребай после не�
   });
 });
 
-describe('правка кратности входа и ребая', () => {
+describe('правка кратности входа и ребая (правки 022–026)', () => {
   it('вход ×1 → ×2: взнос, фонд и фишки — как будто вход сразу был ×2', () => {
     const j = journal();
     const joinA = j.add('join', { playerId: 'A' });
@@ -91,9 +91,7 @@ describe('правка кратности входа и ребая', () => {
     j.amend(joinA, { stacks: 2 });
     const s = replay(F, j.events, j.now());
     expect(errorsOf(s)).toEqual([]);
-    expect(s.players.A?.stacks).toBe(2);
-    expect(s.players.A?.entries).toBe(1);
-    expect(s.totalStacks).toBe(4);
+    expect(s.players.A).toMatchObject({ entries: 1, feeRub: 1000, chips: 1000 });
     expect(s.prizePoolRub).toBe(2000);
     expect(s.totalChips).toBe(2000);
     expect(computeMoney(F, s).A?.owesRub).toBe(1000);
@@ -110,15 +108,76 @@ describe('правка кратности входа и ребая', () => {
     const first = j.wait(1).amend(rebuy, { stacks: 1 });
     const second = j.wait(1).amend(rebuy, { stacks: 2 });
     let log = replayLog(F, j.events, j.now());
-    expect(log.state.players.A?.stacks).toBe(3);
+    expect(log.state.players.A?.feeRub).toBe(1500);
     expect(log.amended.get(rebuy)).toBe(second);
     expect(log.state.errors).toEqual([]);
     j.voidEvent(second);
     log = replayLog(F, j.events, j.now());
-    expect(log.state.players.A?.stacks).toBe(2);
+    expect(log.state.players.A?.feeRub).toBe(1000);
     expect(log.amended.get(rebuy)).toBe(first);
     j.voidEvent(first);
-    expect(replay(F, j.events, j.now()).players.A?.stacks).toBe(4);
+    expect(replay(F, j.events, j.now()).players.A?.feeRub).toBe(2000);
+  });
+});
+
+describe('правка суммы входа и ребая (миграция 027)', () => {
+  it('вход 500 → 700: взнос, фонд и фишки по записи; запись на месте', () => {
+    const j = journal();
+    const joinA = j.add('join', { playerId: 'A' });
+    j.join('B', 'C');
+    j.start();
+    j.wait(5).bust('C', ['A']);
+    const fix = j.amend(joinA, { rub: 700 });
+    const log = replayLog(F, j.events, j.now());
+    expect(errorsOf(log.state)).toEqual([]);
+    expect(log.amended.get(joinA)).toBe(fix);
+    expect(log.state.players.A).toMatchObject({ entries: 1, feeRub: 700, chips: 700 });
+    expect(log.state.prizePoolRub).toBe(1700);
+    expect(log.state.totalChips).toBe(1700);
+    expect(computeMoney(F, log.state).A?.owesRub).toBe(700);
+    // Применённая запись — с суммой в payload.
+    expect(log.applied.find((e) => e.id === joinA)?.payload).toEqual({ playerId: 'A', rub: 700 });
+  });
+
+  it('сумма заменяет кратность и наоборот: в силе последняя правка', () => {
+    const j = journal().join('A', 'B');
+    j.start();
+    j.wait(5).bust('A', ['B']);
+    const rebuy = j.rebuy('A', 3); // 1 500
+    const toRub = j.wait(1).amend(rebuy, { rub: 300 });
+    let log = replayLog(F, j.events, j.now());
+    expect(log.state.players.A?.feeRub).toBe(800);
+    expect(log.applied.find((e) => e.id === rebuy)?.payload).toEqual({ playerId: 'A', rub: 300 });
+    const toStacks = j.wait(1).amend(rebuy, { stacks: 2 });
+    log = replayLog(F, j.events, j.now());
+    expect(log.state.players.A?.feeRub).toBe(1500);
+    expect(log.applied.find((e) => e.id === rebuy)?.payload).toEqual({
+      playerId: 'A',
+      stacks: 2,
+    });
+    j.voidEvent(toStacks);
+    expect(replay(F, j.events, j.now()).players.A?.feeRub).toBe(800);
+    j.voidEvent(toRub);
+    expect(replay(F, j.events, j.now()).players.A?.feeRub).toBe(2000);
+  });
+
+  it('правка суммы входа со «свободной» суммой: 700 → 300, фишки по курсу формата', () => {
+    const fmt = { ...F, startingChips: 1000 };
+    const j = journal();
+    const joinA = j.add('join', { playerId: 'A', rub: 700 });
+    j.join('B');
+    expect(replay(fmt, j.events, j.now()).players.A).toMatchObject({ feeRub: 700, chips: 1400 });
+    j.amend(joinA, { rub: 300 });
+    expect(replay(fmt, j.events, j.now()).players.A).toMatchObject({ feeRub: 300, chips: 600 });
+    expect(currentAmendValue(fmt, j.events, joinA, j.now())).toEqual({ rub: 300 });
+    expect(canAmend(fmt, j.events, { eventId: joinA, rub: 300 }, j.now())).toBe(
+      'Правка ничего не меняет',
+    );
+    expect(canAmend(fmt, j.events, { eventId: joinA, rub: 500 }, j.now())).toBeNull();
+    expect(amendDraft(joinA, { rub: 500 })).toEqual({
+      type: 'amend',
+      payload: { eventId: joinA, rub: 500 },
+    });
   });
 });
 
@@ -170,18 +229,20 @@ describe('поправка проверяется в позиции исходн
         j.add('amend', { eventId: startId, by: [] }),
         'Правка: исправить можно только вход, ребай или вылет',
       ],
-      [j.amend(bustB, { stacks: 2 }), 'Правка: у вылета исправляются выбившие, а не кратность'],
-      [
-        j.amend(joinA, { by: ['B'] }),
-        'Правка: у входа и ребая исправляется кратность, а не выбившие',
-      ],
+      [j.amend(bustB, { stacks: 2 }), 'Правка: у вылета исправляются выбившие, а не сумма'],
+      [j.amend(bustB, { rub: 700 }), 'Правка: у вылета исправляются выбившие, а не сумма'],
+      [j.amend(joinA, { by: ['B'] }), 'Правка: у входа и ребая исправляется сумма, а не выбившие'],
     ];
-    const shape =
-      'Правка: нужна исправляемая запись и одно новое значение — кратность или выбившие';
+    const shape = 'Правка: нужна исправляемая запись и одно новое значение — сумма или выбившие';
     cases.push([j.amend(joinA, { stacks: 0 }), shape]);
     cases.push([j.amend(joinA, { stacks: 11 }), shape]);
+    cases.push([j.amend(joinA, { rub: 0 }), shape]);
+    cases.push([j.amend(joinA, { rub: 100_001 }), shape]);
+    cases.push([j.amend(joinA, { rub: 700.5 }), shape]);
     cases.push([j.add('amend', { eventId: joinA } as never), shape]);
     cases.push([j.add('amend', { eventId: joinA, stacks: 2, by: [] } as never), shape]);
+    cases.push([j.add('amend', { eventId: joinA, stacks: 2, rub: 700 } as never), shape]);
+    cases.push([j.add('amend', { eventId: joinA, rub: '700' } as never), shape]);
     cases.push([j.add('amend', { eventId: '1', stacks: 2 } as never), shape]);
     // Ссылка на себя или вперёд: исправить можно только более раннюю запись.
     const nextId = j.events.length + 2;
@@ -229,7 +290,7 @@ describe('поправка проверяется в позиции исходн
     expect(s.finished).toBe(true);
     expect(s.places).toEqual(before.places);
     expect(kosOf(s)).toEqual({ A: 1, B: 0, C: 0 });
-    // Кратность после финала меняет деньги: призовые — по новому фонду, инвариант держится.
+    // Сумма после финала меняет деньги: призовые — по новому фонду, инвариант держится.
     const joinC = j.events.find(
       (e) => e.type === 'join' && (e.payload as { playerId: string }).playerId === 'C',
     )!.id;
@@ -289,12 +350,12 @@ describe('canAmend и помощники пульта', () => {
   const now = () => j.now();
 
   it('что исправляется у записи', () => {
-    expect(amendField({ type: 'join' })).toBe('stacks');
-    expect(amendField({ type: 'rebuy' })).toBe('stacks');
+    expect(amendField({ type: 'join' })).toBe('rub');
+    expect(amendField({ type: 'rebuy' })).toBe('rub');
     expect(amendField({ type: 'bust' })).toBe('by');
     expect(amendField({ type: 'payment' })).toBe(null);
     expect(currentAmendValue(F, j.events, bustC, now())).toEqual({ by: ['A'] });
-    expect(currentAmendValue(F, j.events, joinA, now())).toEqual({ stacks: 1 });
+    expect(currentAmendValue(F, j.events, joinA, now())).toEqual({ rub: 500 });
     expect(amendDraft(bustC, { by: ['B'] })).toEqual({
       type: 'amend',
       payload: { eventId: bustC, by: ['B'] },
@@ -308,8 +369,12 @@ describe('canAmend и помощники пульта', () => {
     expect(canAmend(F, j.events, { eventId: joinA, stacks: 1 }, now())).toBe(
       'Правка ничего не меняет',
     );
+    expect(canAmend(F, j.events, { eventId: joinA, rub: 500 }, now())).toBe(
+      'Правка ничего не меняет',
+    );
     expect(canAmend(F, j.events, { eventId: bustC, by: ['B'] }, now())).toBe(null);
     expect(canAmend(F, j.events, { eventId: joinA, stacks: 2 }, now())).toBe(null);
+    expect(canAmend(F, j.events, { eventId: joinA, rub: 700 }, now())).toBe(null);
   });
 
   it('отказ — тот же текст, что даст replay', () => {
@@ -352,12 +417,14 @@ interface Generated {
   voidedAmends: number;
   bustAmends: number;
   stackAmends: number;
+  rubAmends: number;
 }
 
 /**
- * Вечер на 2–6 игроков с кратными входами, ребаями и сплитами; по ходу игры (и после финала)
- * банкир правит прошлые записи: кратность входа/ребая, выбивших вылета — иногда неверно (выбивший,
- * которого тогда не было в игре), иногда отменяет свою правку.
+ * Вечер на 2–6 игроков с кратными входами и входами свободной суммой (027), ребаями и сплитами; по
+ * ходу игры (и после финала) банкир правит прошлые записи: сумму или кратность входа/ребая,
+ * выбивших вылета — иногда неверно (выбивший, которого тогда не было в игре), иногда отменяет свою
+ * правку. Шаг призовых формата — разный (нет поля, 1, 50, 100, 1 000 ₽).
  */
 function generate(seed: number): Generated {
   const r = prng(seed);
@@ -366,6 +433,7 @@ function generate(seed: number): Generated {
     ...F,
     buyInRub: pick([500, 333, 101, 1000]),
     payoutPct: pick([[70, 30], [100], [50, 30, 20], [33.3, 33.3, 33.4]]),
+    payoutStepRub: pick([undefined, 1, 50, 100, 1000]),
     rebuyLimit: r() < 0.2 ? 1 : null,
     levels: F.levels.map((l) => ({
       ...l,
@@ -375,9 +443,21 @@ function generate(seed: number): Generated {
   const n = 2 + Math.floor(r() * 5);
   const ids = Array.from({ length: n }, (_, i) => `p${i}`);
   const j = journal();
-  const out = { amends: 0, rejectedAmends: 0, voidedAmends: 0, bustAmends: 0, stackAmends: 0 };
+  const out = {
+    amends: 0,
+    rejectedAmends: 0,
+    voidedAmends: 0,
+    bustAmends: 0,
+    stackAmends: 0,
+    rubAmends: 0,
+  };
   const stacks = () => (r() < 0.6 ? 1 : pick([2, 3, 10]));
-  for (const id of ids) j.joinStacks(id, stacks());
+  const freeRub = () => pick([300, 700, 750, 1000, 1, 2500, 333, 100_000]);
+  // Вход и ребай: то кратностью (записи до 027), то свободной суммой (027).
+  const enter = (id: PlayerId) =>
+    r() < 0.5 ? j.joinStacks(id, stacks()) : j.joinRub(id, freeRub());
+  const rebuy = (id: PlayerId) => (r() < 0.5 ? j.rebuy(id, stacks()) : j.rebuyRub(id, freeRub()));
+  for (const id of ids) enter(id);
   j.start();
 
   const tryAmend = () => {
@@ -401,9 +481,12 @@ function generate(seed: number): Generated {
       j.amend(t.id, { by });
       out.bustAmends += 1;
       if (wrong) out.rejectedAmends += 1;
-    } else {
+    } else if (r() < 0.5) {
       j.amend(t.id, { stacks: stacks() });
       out.stackAmends += 1;
+    } else {
+      j.amend(t.id, { rub: freeRub() });
+      out.rubAmends += 1;
     }
     out.amends += 1;
     if (r() < 0.15) {
@@ -427,7 +510,7 @@ function generate(seed: number): Generated {
           (fmt.rebuyLimit === null || (s.players[id]?.rebuys ?? 0) < fmt.rebuyLimit),
       );
       if (s.rebuysOpen && canRebuy.length > 0 && r() < 0.5) {
-        j.rebuy(pick(canRebuy), stacks());
+        rebuy(pick(canRebuy));
         continue;
       }
       j.finish();
@@ -439,7 +522,7 @@ function generate(seed: number): Generated {
     j.bust(victim, by);
     const p = s.players[victim];
     if (s.rebuysOpen && r() < 0.4 && (fmt.rebuyLimit === null || (p?.rebuys ?? 0) < fmt.rebuyLimit))
-      j.rebuy(victim, stacks());
+      rebuy(victim);
   }
   // Правки после финала (админ правит закрытый вечер).
   for (let i = 0; i < 2; i++) if (r() < 0.4) tryAmend();
@@ -448,7 +531,7 @@ function generate(seed: number): Generated {
 
 describe('сгенерированные вечера с правками на месте', () => {
   it('2000 вечеров: replay ≡ журнал «как будто так и записали», инвариант денег, отмена правок', () => {
-    const cov = { amends: 0, rejected: 0, voided: 0, bust: 0, stacks: 0, finished: 0 };
+    const cov = { amends: 0, rejected: 0, voided: 0, bust: 0, stacks: 0, rub: 0, finished: 0 };
     for (let seed = 1; seed <= 2000; seed++) {
       const g = generate(seed);
       const { fmt, events, nowMs } = g;
@@ -457,6 +540,7 @@ describe('сгенерированные вечера с правками на �
       cov.voided += g.voidedAmends;
       cov.bust += g.bustAmends;
       cov.stacks += g.stackAmends;
+      cov.rub += g.rubAmends;
       const label = `seed ${seed}`;
 
       const log = replayLog(fmt, events, nowMs);
@@ -515,16 +599,25 @@ describe('сгенерированные вечера с правками на �
         cov.finished += 1;
         const money = computeMoney(fmt, s);
         const owes = sum(Object.values(money).map((x) => x.owesRub));
+        // Независимо от replay: сумма записи (027) или кратность × вход формата.
         const expectedOwes = sum(
           flat
             .filter((e) => !e.voided && (e.type === 'join' || e.type === 'rebuy'))
-            .map((e) => fmt.buyInRub * ((e.payload as { stacks?: number }).stacks ?? 1)),
+            .map((e) => {
+              const p = e.payload as { stacks?: number; rub?: number };
+              return p.rub ?? fmt.buyInRub * (p.stacks ?? 1);
+            }),
         );
         expect(owes, label).toBe(expectedOwes);
         expect(s.prizePoolRub, label).toBe(owes);
         expect(sum(Object.values(money).map((x) => x.prizeRub)), label).toBe(owes);
         expect(sum(Object.values(money).map((x) => x.netRub)), label).toBe(0);
-        const byPlace = payouts(s.prizePoolRub, fmt.payoutPct, s.joinOrder.length);
+        const byPlace = payouts(
+          s.prizePoolRub,
+          fmt.payoutPct,
+          s.joinOrder.length,
+          fmt.payoutStepRub ?? 1,
+        );
         s.places.forEach((id, i) => expect(money[id]?.prizeRub, label).toBe(byPlace[i] ?? 0));
         const due = settlement(money, []);
         const pays = s.joinOrder.map((id) => ({ playerId: id, amountRub: due[id]?.dueRub ?? 0 }));
@@ -538,7 +631,8 @@ describe('сгенерированные вечера с правками на �
     }
     expect(cov.amends).toBeGreaterThan(2000);
     expect(cov.bust).toBeGreaterThan(500);
-    expect(cov.stacks).toBeGreaterThan(500);
+    expect(cov.stacks).toBeGreaterThan(250);
+    expect(cov.rub).toBeGreaterThan(250);
     expect(cov.rejected).toBeGreaterThan(50);
     expect(cov.voided).toBeGreaterThan(100);
     expect(cov.finished).toBeGreaterThan(1500);
@@ -700,7 +794,10 @@ function generateStale(seed: number) {
   const n = 3 + Math.floor(r() * 4);
   const ids = Array.from({ length: n }, (_, i) => `p${i}`);
   const j = journal();
-  for (const id of ids) j.joinStacks(id, r() < 0.7 ? 1 : 2);
+  for (const id of ids) {
+    if (r() < 0.3) j.joinRub(id, pick([300, 700]));
+    else j.joinStacks(id, r() < 0.7 ? 1 : 2);
+  }
   j.start();
   // Часть вечеров ещё идёт: починка непринятой записи возможна только там.
   const live = r() < 0.4;
@@ -767,7 +864,9 @@ describe('сгенерированные вечера с непринятыми 
         const payload =
           t.type === 'bust'
             ? { eventId: t.id, by: pool.filter((id) => id !== victim && r() < 0.35).slice(0, 2) }
-            : { eventId: t.id, stacks: pick([1, 2, 3]) };
+            : r() < 0.5
+              ? { eventId: t.id, stacks: pick([1, 2, 3]) }
+              : { eventId: t.id, rub: pick([300, 500, 700, 1000]) };
         cov.tried += 1;
         const problem = canAmend(fmt, events, payload, nowMs);
         const impact = amendImpact(fmt, events, payload, nowMs);

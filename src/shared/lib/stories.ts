@@ -141,7 +141,8 @@ export function stakeLine(item: StakeItem, nameOf: NameOf, meId?: string | null)
       );
     case 'pool_record':
       return (
-        `Идут ${item.going} — фонд ещё до ребаев ${item.status === 'new' ? 'побьёт' : 'повторит'} ` +
+        `Идут ${item.going} — со входами по ${formatRub(item.entryRub)} фонд ещё до ребаев ` +
+        `${item.status === 'new' ? 'побьёт' : 'повторит'} ` +
         `рекорд клуба (${formatRub(item.recordRub)}).`
       );
     case 'oracle_step':

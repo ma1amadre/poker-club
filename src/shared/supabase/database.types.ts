@@ -628,6 +628,7 @@ export type Database = {
           p_evening: string;
           p_name: string;
           p_paid_rub?: number;
+          p_rub?: number;
           p_stacks?: number;
         };
         Returns: string;

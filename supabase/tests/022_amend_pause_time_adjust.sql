@@ -161,7 +161,7 @@ select pg_temp.rejects(pg_temp.ev(:e6, 'amend', jsonb_build_object('eventId', :r
 select pg_temp.rejects(pg_temp.ev(:e6, 'amend', jsonb_build_object('eventId', :bust_l, 'stacks', 2)),
   '22023', 'у вылета исправляются выбившие', 'кратность у вылета');
 select pg_temp.rejects(pg_temp.ev(:e6, 'amend', jsonb_build_object('eventId', :join_l, 'by', '[]'::jsonb)),
-  '22023', 'у входа и ребая исправляется кратность', 'выбившие у входа');
+  '22023', 'у входа и ребая исправляется сумма', 'выбившие у входа');
 select pg_temp.rejects(pg_temp.ev(:e6, 'amend', jsonb_build_object('eventId', :join_l, 'stacks', 11)),
   '22023', 'Кратность входа — целое число от 1 до 10', 'кратность 11');
 select pg_temp.rejects(pg_temp.ev(:e6, 'amend', jsonb_build_object('eventId', :bust_l, 'by', jsonb_build_array(:pL))),

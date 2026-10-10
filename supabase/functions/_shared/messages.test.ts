@@ -153,9 +153,24 @@ describe('без баунти «за голову» (убрано 07.10.2026)', 
           botUsername: null,
         }).text,
       );
-      expect(text).toContain('Вход и ребай по 500 ₽ (500 фишек).');
+      // Сумма формата — по умолчанию, а не нижняя граница: «от 500 ₽» обещало бы, что меньше нельзя,
+      // а журнал принимает вход и ребай любой суммой от 1 ₽ (027).
+      expect(text).toContain('Вход и ребай — 500 ₽, можно другой суммой (500 фишек за 500 ₽).');
+      expect(text).not.toMatch(/(^|\s)от \d/);
       expect(text).not.toMatch(/голов|баунти/i);
     }
+    // Без ребаев (лимит 0) — только вход; курс фишек — из формата (027: вход любой суммой).
+    const noRebuy = plain(
+      announcePost({
+        eveningId: 'e1',
+        scheduledAt: '2026-10-08T16:00:00.000Z',
+        location: null,
+        note: null,
+        format: { ...DEFAULT_FORMAT, rebuyLimit: 0, buyInRub: 1000, startingChips: 2000 },
+        botUsername: null,
+      }).text,
+    );
+    expect(noRebuy).toContain('Вход — 1 000 ₽, можно другой суммой (2 000 фишек за 1 000 ₽).');
   });
 
   it('итог: у мест только призовые, лучший охотник — по числу нокаутов, без денег', () => {

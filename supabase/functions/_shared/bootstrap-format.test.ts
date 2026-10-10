@@ -1,7 +1,8 @@
 // Клубный формат, который миграция 011 заводит в облаке (там seed.sql не выполняется), должен
 // совпадать с DEFAULT_FORMAT домена: иначе cron-tick и форма вечера в облаке взяли бы другой формат,
 // чем тот, что проверяют тесты домена. Баунти «за голову» убрано 07.10.2026: литерал 011 ещё несёт
-// bountyRub (применённую миграцию не правим), миграция 018 этот ключ вычищает — сверяем итог обеих.
+// bountyRub (применённую миграцию не правим), миграция 018 этот ключ вычищает, 027 добавляет шаг
+// призовых 100 ₽ — сверяем итог всех трёх.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +13,7 @@ const readMigration = (name: string): string =>
 
 const migration = readMigration('011_cloud_bootstrap.sql');
 const dropBounty = readMigration('018_drop_bounty.sql');
+const payoutStep = readMigration('027_free_buyin_payout_step.sql');
 
 /** jsonb-литерал конфига: первая строка в одинарных кавычках, за которой идёт ::jsonb. */
 function formatLiteral(sql: string): Record<string, unknown> {
@@ -26,9 +28,22 @@ function withoutBounty(config: Record<string, unknown>): Record<string, unknown>
   return rest;
 }
 
-describe('миграция 011 + 018: клубный формат', () => {
-  it('после 018 совпадает с DEFAULT_FORMAT', () => {
-    expect(withoutBounty(formatLiteral(migration))).toEqual(DEFAULT_FORMAT);
+describe('миграция 011 + 018 + 027: клубный формат', () => {
+  it('после 018 и 027 совпадает с DEFAULT_FORMAT', () => {
+    expect({ ...withoutBounty(formatLiteral(migration)), payoutStepRub: 100 }).toEqual(
+      DEFAULT_FORMAT,
+    );
+  });
+
+  it('027 ставит шаг призовых 100 ₽ только справочнику форматов, снимки вечеров не трогает', () => {
+    const sql = payoutStep.replace(/--[^\n]*/g, '').replace(/\s+/g, ' ');
+    expect(sql).toContain(
+      `update public.formats set config = config || '{"payoutStepRub": 100}'::jsonb where not (config ? 'payoutStepRub');`,
+    );
+    // Снимок формата вечера (evenings.format) 027 не правит — прошлые итоги остаются до рубля.
+    expect(sql).not.toMatch(/update public\.evenings set format/);
+    expect(sql).not.toMatch(/evenings\.format|format = /);
+    expect(DEFAULT_FORMAT.payoutStepRub).toBe(100);
   });
 
   it('проходит validateFormat и до 018: bountyRub молча игнорируется', () => {

@@ -3,16 +3,19 @@
 import {
   computeMoney,
   entryAmounts,
+  entryPayload,
   prepaidPayment,
   settlement,
   type Payment,
   type SettlementRow,
 } from '@domain/money.ts';
 import {
+  amendedPayload,
+  isEntryRub,
   pauseLeftMs,
   readAmend,
+  readEntry,
   readPause,
-  readStacks,
   readTimeAdjust,
   replayLog,
   type EventDraft,
@@ -20,14 +23,15 @@ import {
 } from '@domain/replay.ts';
 import { readShowdown, readShowdownId, streetOf } from '@domain/showdown.ts';
 import { spectatesEvening } from '@domain/spectators.ts';
-import type {
-  BlindLevel,
-  EveningEvent,
-  EveningState,
-  EventType,
-  PlayerId,
-  PlayerState,
-  TournamentFormat,
+import {
+  MAX_ENTRY_RUB,
+  type BlindLevel,
+  type EveningEvent,
+  type EveningState,
+  type EventType,
+  type PlayerId,
+  type PlayerState,
+  type TournamentFormat,
 } from '@domain/types.ts';
 // Только чистое форматирование (Intl), без React: модуль тестируется в node.
 import {
@@ -106,10 +110,7 @@ export function feedContext(
     if (!patch || !target) continue;
     previous.set(ev.id, inForce.get(target.id) ?? target);
     if (accepted.has(ev.id)) {
-      const base = target.payload as Record<string, unknown>;
-      const payload =
-        'by' in patch ? { ...base, by: [...patch.by] } : { ...base, stacks: patch.stacks };
-      inForce.set(target.id, { ...target, payload: payload as EveningEvent['payload'] });
+      inForce.set(target.id, { ...target, payload: amendedPayload(target, patch) });
     }
   }
   return { effective, byId, previous };
@@ -132,9 +133,9 @@ function shiftText(seconds: number): string {
 
 /**
  * Подпись события для ленты. Глаголы в настоящем времени («выбивает») — у них нет рода,
- * а имена игроков бывают и мужские, и женские. Вход и ребай кратно стандартному — с суммой
- * («вход на 1 000 ₽»); стандартный — без подробностей, как раньше. С контекстом ленты (`ctx`)
- * исправленная запись показана с поправкой в силе и пометкой «исправлено».
+ * а имена игроков бывают и мужские, и женские. Вход и ребай — с суммой записи (миграция 027:
+ * сумма у каждой своя): «Вход: Саша · 700 ₽». С контекстом ленты (`ctx`) исправленная запись
+ * показана с поправкой в силе и пометкой «исправлено».
  */
 export function describeEvent(
   ev: EveningEvent,
@@ -151,18 +152,16 @@ export function describeEvent(
     const id = playerOf(ev);
     return id ? nameOf(id) : 'игрок';
   };
-  const entrySum = (word: string): string | null => {
-    const k = readStacks(shown.payload);
-    // Исправленный стандартный вход — тоже с суммой: видно, на что его поправили.
-    return k !== null && (k > 1 || amended)
-      ? `${word} на ${formatRub(entryAmounts(format, k).rub)}`
-      : null;
+  /** « · 700 ₽» — сумма записи (с поправкой в силе); неверная сумма — без неё. */
+  const entrySum = (): string => {
+    const entry = readEntry(format, shown.payload);
+    return entry ? ` · ${formatRub(entry.rub)}` : '';
   };
   switch (ev.type) {
     case 'join':
-      return { kind: 'entry', title: `Вход: ${who()}`, detail: withMark(entrySum('вход')) };
+      return { kind: 'entry', title: `Вход: ${who()}${entrySum()}`, detail: withMark(null) };
     case 'rebuy':
-      return { kind: 'entry', title: `Ребай: ${who()}`, detail: withMark(entrySum('ребай')) };
+      return { kind: 'entry', title: `Ребай: ${who()}${entrySum()}`, detail: withMark(null) };
     case 'bust':
       return {
         kind: 'bust',
@@ -189,15 +188,14 @@ export function describeEvent(
             .join(' · '),
         };
       }
-      if (patch && 'stacks' in patch) {
-        const was = before ? readStacks(before.payload) : null;
+      if (patch && !('by' in patch)) {
+        // Новая сумма — как её читает replay (правка кратности 022–026 — k × вход формата).
+        const now = readEntry(format, amendedPayload(target ?? { payload: {} }, patch));
+        const was = before ? readEntry(format, before.payload) : null;
         return {
           kind: 'entry',
           title: `Правка ${target?.type === 'rebuy' ? 'ребая' : 'входа'}${name}`,
-          detail: [
-            `×${patch.stacks} — ${formatRub(entryAmounts(format, patch.stacks).rub)}`,
-            was !== null ? `было: ×${was}` : null,
-          ]
+          detail: [now ? formatRub(now.rub) : null, was ? `было: ${formatRub(was.rub)}` : null]
             .filter(Boolean)
             .join(' · '),
         };
@@ -853,14 +851,14 @@ export function clockView(state: EveningState): ClockView {
  * Вторая строка игрока в списке: «5-е место · вылет на 4-м уровне · 2 входа · 1 нокаут».
  * Статус «в игре / вне игры» — в бейдже рядом. Без глаголов прошедшего времени: у них есть род,
  * а имена бывают и мужские, и женские. Пустая строка — сказать нечего. Если хоть один вход или
- * ребай был кратным, видно, сколько всего внесено: «2 входа · взнос 1 500 ₽».
+ * ребай был не на сумму входа формата, видно, сколько всего внесено: «2 входа · взнос 1 200 ₽».
  */
 export function playerLine(p: PlayerState, format: TournamentFormat): string {
   const parts: string[] = [];
   if (!p.alive && p.place !== null) parts.push(`${ordinalPlace(p.place)} место`);
   if (!p.alive && p.bustLevel !== null) parts.push(`вылет на${NBSP}${p.bustLevel}-м уровне`);
   if (p.entries > 1) parts.push(pluralWithNumber(p.entries, ['вход', 'входа', 'входов']));
-  if (p.stacks > p.entries) parts.push(`взнос ${rubText(entryAmounts(format, p.stacks).rub)}`);
+  if (p.feeRub !== p.entries * format.buyInRub) parts.push(`взнос ${rubText(p.feeRub)}`);
   if (p.kos > 0) parts.push(pluralWithNumber(p.kos, ['нокаут', 'нокаута', 'нокаутов']));
   return parts.join(' · ');
 }
@@ -899,32 +897,99 @@ export function bustButtonLabel(killers: number, nobody: boolean): string {
   return killers === 0 && !nobody ? 'Выбери, кто выбил' : 'Отметить вылет';
 }
 
-// --- Кратность входа и ребая -----------------------------------------------------------------
+// --- Сумма входа и ребая (миграция 027: любая сумма в записи) --------------------------------
 
-/** «1 000 ₽ · 1 000 фишек» — во что обходится вход или ребай кратности k. */
-export function stacksAmountText(format: TournamentFormat, k: number): string {
-  const a = entryAmounts(format, k);
+/**
+ * Строка «Взнос» в формате вечера: «500 ₽, можно другой суммой · 500 фишек за 500 ₽». Сумма формата
+ * — по умолчанию, не нижняя граница (не «от 500 ₽»): журнал принимает любую от 1 ₽.
+ */
+export function feeFactText(format: Pick<TournamentFormat, 'buyInRub' | 'startingChips'>): string {
+  const chips = `${formatNumber(format.startingChips)}${NBSP}${plural(format.startingChips, ['фишка', 'фишки', 'фишек'])}`;
+  return `${rubText(format.buyInRub)}, можно другой суммой · ${chips} за${NBSP}${rubText(format.buyInRub)}`;
+}
+
+/** «700 ₽ · 700 фишек» — во что обходится вход или ребай на сумму rub. */
+export function entryAmountText(format: TournamentFormat, rub: number): string {
+  const a = entryAmounts(format, rub);
   return `${rubText(a.rub)} · ${formatNumber(a.chips)}${NBSP}${plural(a.chips, ['фишка', 'фишки', 'фишек'])}`;
 }
 
 /**
- * Главная кнопка шторки посадки. Кратность одна на всех отмеченных, поэтому при входе крупнее
- * стандартного сумма видна прямо на кнопке — до записи, а не только в тосте после неё.
+ * Сумма из поля «Другая сумма»: «700», «1 500», «700 ₽» → целые рубли 1..MAX_ENTRY_RUB (как примет
+ * журнал, isEntryRub домена); пусто, мусор, дробь, ноль или больше предела — null.
  */
-export function seatButtonLabel(count: number, format: TournamentFormat, k: number): string {
-  if (count === 0) return 'Выбери, кого посадить';
-  if (k <= 1) return `Посадить за стол: ${count}`;
-  // С суммой — без «за стол»: кнопка не переносит строку и на 320 px иначе не влезает.
-  const sum = rubText(entryAmounts(format, k).rub);
-  return `Посадить: ${count} · ${count > 1 ? `по${NBSP}` : ''}${sum}`;
+export function parseEntryRub(text: string): number | null {
+  const n = parseRub(text);
+  return n !== null && isEntryRub(n) ? n : null;
 }
 
-/** Payload входа или ребая: кратность пишется, только если она больше 1 (стандартный — как раньше). */
-export function entryPayload(
-  playerId: PlayerId,
-  k: number,
-): { playerId: PlayerId; stacks?: number } {
-  return k > 1 ? { playerId, stacks: k } : { playerId };
+/** Что не так с полем «Другая сумма». */
+export const ENTRY_RUB_HINT = `Нужна сумма в целых рублях — от 1 до ${formatNumber(MAX_ENTRY_RUB)}${NBSP}₽, например 700.`;
+
+/** Нажатие клавиши в поле — то, что нужно hideKeyboardOnEnter от KeyboardEvent React. */
+export interface FieldKeyEvent {
+  key: string;
+  nativeEvent: { isComposing: boolean };
+  preventDefault: () => void;
+  currentTarget: { blur: () => void };
+}
+
+/**
+ * Enter в поле «Другая сумма» («Готово» на клавиатуре телефона, enterKeyHint="done") только
+ * прячет клавиатуру. Поле суммы гостя стоит в форме «Добавить гостя», и Enter по правилам HTML
+ * отправил бы её: гость сел бы раньше, чем банкир отметит «Оплачено сразу» под полем. Enter во
+ * время набора через IME (isComposing) не трогаем — им подтверждают набор.
+ */
+export function hideKeyboardOnEnter(event: FieldKeyEvent): void {
+  if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+  event.preventDefault();
+  event.currentTarget.blur();
+}
+
+/** Строка посадки: кто садится, на какую сумму (null — в поле «Другая сумма» ошибка), оплачено ли. */
+export interface SeatRow {
+  playerId: PlayerId;
+  rub: number | null;
+  paid: boolean;
+}
+
+/**
+ * Главная кнопка шторки посадки. Сумма и оплата у каждой строки свои и видны в строке, поэтому на
+ * кнопке — только сколько садится; строка с неверной суммой — что сделать.
+ */
+export function seatButtonLabel(rows: readonly Pick<SeatRow, 'rub'>[]): string {
+  if (rows.length === 0) return 'Выбери, кого посадить';
+  if (rows.some((r) => r.rub === null)) return 'Проверь сумму входа';
+  return `Посадить за стол: ${rows.length}`;
+}
+
+/**
+ * Подробность тоста посадки: суммы не по входу формата и оплата — «Вход: Саша — 700 ₽. Оплачено
+ * сразу у всех.» Один игрок — «Вход — 700 ₽. Оплачено сразу.» Сказать нечего — undefined.
+ */
+export function seatDetail(
+  format: TournamentFormat,
+  rows: readonly SeatRow[],
+  nameOf: NameOf,
+): string | undefined {
+  const odd = rows.filter((r) => r.rub !== null && r.rub !== format.buyInRub);
+  const paid = rows.filter((r) => r.paid);
+  const one = rows.length === 1;
+  const sums =
+    odd.length === 0
+      ? null
+      : one
+        ? `Вход — ${rubText(odd[0]?.rub ?? 0)}.`
+        : `Вход: ${odd.map((r) => `${nameOf(r.playerId)} — ${rubText(r.rub ?? 0)}`).join(', ')}.`;
+  const pay =
+    paid.length === 0
+      ? null
+      : one
+        ? 'Оплачено сразу.'
+        : paid.length === rows.length
+          ? 'Оплачено сразу у всех.'
+          : `Оплачено сразу: ${joinNames(paid.map((r) => nameOf(r.playerId)))}.`;
+  return [sums, pay].filter(Boolean).join(' ') || undefined;
 }
 
 // --- Одно действие — несколько записей: вылет и ребай, вход с оплатой -------------------------
@@ -935,44 +1000,44 @@ function paymentDraft(payment: Payment): EventDraft {
 }
 
 /**
- * Записи посадки одним нажатием: вход каждого (кратность одна на всех) и, если «Оплачено сразу»,
- * следом его платёж на сумму взноса (сумма — доменная prepaidPayment).
+ * Записи посадки одним нажатием: вход каждого на его сумму (payload — доменный entryPayload) и,
+ * если у него «Оплачено сразу», следом его платёж на эту сумму (доменная prepaidPayment). Строки с
+ * неверной суммой (rub = null) не пишутся — кнопка посадки для них недоступна.
  */
-export function seatDrafts(
-  format: TournamentFormat,
-  playerIds: readonly PlayerId[],
-  k: number,
-  paid: boolean,
-): EventDraft[] {
-  return playerIds.flatMap((id) => [
-    { type: 'join' as const, payload: entryPayload(id, k) },
-    ...(paid ? [paymentDraft(prepaidPayment(format, id, k))] : []),
-  ]);
+export function seatDrafts(format: TournamentFormat, rows: readonly SeatRow[]): EventDraft[] {
+  return rows.flatMap((r) =>
+    r.rub === null
+      ? []
+      : [
+          { type: 'join' as const, payload: entryPayload(format, r.playerId, r.rub) },
+          ...(r.paid ? [paymentDraft(prepaidPayment(r.playerId, r.rub))] : []),
+        ],
+  );
 }
 
-/** Ребай и, если «Оплачено сразу», платёж на его сумму. */
+/** Ребай на сумму rub и, если «Оплачено сразу», платёж на неё. */
 export function rebuyDrafts(
   format: TournamentFormat,
   playerId: PlayerId,
-  k: number,
+  rub: number,
   paid: boolean,
 ): EventDraft[] {
   return [
-    { type: 'rebuy', payload: entryPayload(playerId, k) },
-    ...(paid ? [paymentDraft(prepaidPayment(format, playerId, k))] : []),
+    { type: 'rebuy', payload: entryPayload(format, playerId, rub) },
+    ...(paid ? [paymentDraft(prepaidPayment(playerId, rub))] : []),
   ];
 }
 
-/** «Вылет и ребай ×k»: вылет, сразу ребай того же игрока и, если «Оплачено сразу», платёж. */
+/** «Вылет и ребай»: вылет, сразу ребай того же игрока на сумму rub и, если «Оплачено сразу», платёж. */
 export function bustRebuyDrafts(
   format: TournamentFormat,
   bust: { playerId: PlayerId; by: PlayerId[] },
-  k: number,
+  rub: number,
   paid: boolean,
 ): EventDraft[] {
   return [
     { type: 'bust', payload: { playerId: bust.playerId, by: bust.by } },
-    ...rebuyDrafts(format, bust.playerId, k, paid),
+    ...rebuyDrafts(format, bust.playerId, rub, paid),
   ];
 }
 
@@ -1006,23 +1071,25 @@ export function finishDueAfter(
   return !state.finished && state.aliveCount === 1 && !state.rebuysOpen;
 }
 
-/** Вторая кнопка шторки вылета: кратность — на кнопке, если ребай крупнее стандартного. */
-export function bustRebuyLabel(k: number): string {
-  return k > 1 ? `Вылет и ребай ×${k}` : 'Вылет и ребай';
+/**
+ * Вторая кнопка шторки вылета: сумма — на кнопке, если ребай не на вход формата (null — сумма в
+ * поле неверна, кнопка всё равно недоступна).
+ */
+export function bustRebuyLabel(format: TournamentFormat, rub: number | null): string {
+  return rub !== null && rub !== format.buyInRub
+    ? `Вылет и ребай · ${rubText(rub)}`
+    : 'Вылет и ребай';
 }
 
 /**
- * Подсказка под «Оплачено сразу»: что запишется вместе с входом или ребаем. many — посадка
- * нескольких: сумма у каждого своя запись.
+ * Подсказка под «Оплачено сразу»: что запишется вместе с входом или ребаем. many — ребаи нескольких
+ * (после ривера): у каждого своя запись. rub = null — сумма в поле неверна, сумму не называем.
  */
-export function prepaidHint(
-  format: TournamentFormat,
-  kind: 'entry' | 'rebuy',
-  k: number,
-  many = false,
-): string {
-  const sum = rubText(entryAmounts(format, k).rub);
+export function prepaidHint(kind: 'entry' | 'rebuy', rub: number | null, many = false): string {
   const what = kind === 'entry' ? 'со входом' : 'с ребаем';
+  if (rub === null)
+    return `Вместе ${what} запишется платёж банкиру на сумму ${kind === 'entry' ? 'входа' : 'ребая'}. В расчёте это обычный платёж.`;
+  const sum = rubText(rub);
   return many
     ? `Вместе ${what} каждого запишется его платёж банкиру — по${NBSP}${sum}. В расчёте это обычный платёж.`
     : `Вместе ${what} запишется платёж банкиру — ${sum}. В расчёте это обычный платёж.`;
@@ -1030,9 +1097,10 @@ export function prepaidHint(
 
 /**
  * Платёж, записанный тем же действием, что вход или ребай («Оплачено сразу»): платёж того же
- * игрока на сумму этого взноса, с тем же временем (одна транзакция add_events или add_guest —
- * одно серверное время) и тем же автором, позже по журналу. null — оплаты при входе не было.
- * Отмена входа отменяет и её: деньги за вход, которого нет, банкир возвращает.
+ * игрока на сумму именно этой записи (её исходный payload: оплату пишут вместе со входом, до
+ * правок), с тем же временем (одна транзакция add_events или add_guest — одно серверное время) и
+ * тем же автором, позже по журналу. null — оплаты при входе не было. Отмена входа отменяет и её:
+ * деньги за вход, которого нет, банкир возвращает.
  */
 export function linkedPayment<T extends EveningEvent & { createdBy?: string | null }>(
   events: readonly T[],
@@ -1041,9 +1109,9 @@ export function linkedPayment<T extends EveningEvent & { createdBy?: string | nu
 ): T | null {
   if (entry.type !== 'join' && entry.type !== 'rebuy') return null;
   const id = playerOf(entry);
-  const k = readStacks(entry.payload);
-  if (!id || k === null) return null;
-  const amount = entryAmounts(format, k).rub;
+  const value = readEntry(format, entry.payload);
+  if (!id || value === null) return null;
+  const amount = value.rub;
   return (
     events.find(
       (e) =>
@@ -1203,7 +1271,7 @@ export interface MySeat {
   place: string | null;
   /** Вылетевшему, пока можно докупиться: «Можно докупиться — ещё 25 мин»; иначе null. */
   rebuyNote: string | null;
-  /** «2 входа: ×2, ×1 · взнос 1 500 ₽». */
+  /** «2 входа: 500 ₽, 700 ₽ · взнос 1 200 ₽» (суммы — если хоть одна не по входу формата). */
   entries: string;
   /** «2 нокаута» / «Нокаутов пока нет». */
   kos: string;
@@ -1240,11 +1308,13 @@ export function mySeat(
     else if (win.kind === 'whole_game') rebuyNote = 'Можно докупиться до конца игры';
   }
 
-  const ks = applied
+  const sums = applied
     .filter((e) => (e.type === 'join' || e.type === 'rebuy') && playerOf(e) === playerId)
-    .map((e) => readStacks(e.payload) ?? 1);
-  const count = pluralWithNumber(ks.length, ['вход', 'входа', 'входов']);
-  const multiples = ks.some((k) => k > 1) ? `: ${ks.map((k) => `×${k}`).join(', ')}` : '';
+    .map((e) => readEntry(format, e.payload)?.rub ?? format.buyInRub);
+  const count = pluralWithNumber(sums.length, ['вход', 'входа', 'входов']);
+  const multiples = sums.some((rub) => rub !== format.buyInRub)
+    ? `: ${sums.map(rubText).join(', ')}`
+    : '';
   const money = computeMoney(format, state);
   const owes = money[playerId]?.owesRub ?? 0;
   const row = settlement(money, payments)[playerId];

@@ -2,8 +2,8 @@
 // раздачи». Кто проиграл и кто кого выбил (с побочными банками) решает домен — riverBusts.ts домена;
 // здесь только раскладка (тесты — riverBusts.test.ts). Места считает домен: вылеты одной раздачи
 // пишутся одним действием (add_events) от меньшего стека к большему — позже записанный вылет даёт
-// место выше; ребаи — после всех вылетов (каждый — как «Вылет и ребай» на пульте), кратность одна
-// на всех, кто сразу докупается (как в шторке игрока).
+// место выше; ребаи — после всех вылетов (каждый — как «Вылет и ребай» на пульте), сумма одна
+// на всех, кто сразу докупается (миграция 027: любая сумма, по умолчанию — вход формата).
 // Стеков приложение не знает, поэтому после ривера пульт не подталкивает к вылету (решение клуба
 // 10.10.2026): нейтральный вопрос «X проигрывает раздачу. Фишек хватило?» и две равные кнопки —
 // «Вылет» и «Остаётся за столом» (закрывает раздачу, табло её убирает). Проигравших несколько —
@@ -22,7 +22,7 @@ import type {
   ShowdownState,
   TournamentFormat,
 } from '@domain/types.ts';
-import { pluralWithNumber } from '../../shared/lib/format';
+import { formatRub, pluralWithNumber } from '../../shared/lib/format';
 import { capitalize, joinNames } from '../../shared/lib/text';
 import { rebuyDrafts } from './lib';
 
@@ -82,8 +82,8 @@ export interface RiverPlan {
   killers: Record<PlayerId, PlayerId[]>;
   /** Кто из вылетевших сразу докупается. */
   rebuys: PlayerId[];
-  /** Кратность ребая (×1…×10) — одна на всех, кто сразу докупается, как в шторке игрока. */
-  rebuyStacks: number;
+  /** Сумма ребая — одна на всех, кто сразу докупается (по умолчанию — вход формата). */
+  rebuyRub: number;
   /** «Оплачено сразу» у этих ребаев. */
   paid: boolean;
 }
@@ -94,7 +94,7 @@ export function riverPlanDrafts(format: TournamentFormat, plan: RiverPlan): Even
     ...riverBustDrafts(plan.byChips, plan.killers),
     ...plan.byChips
       .filter((id) => plan.rebuys.includes(id))
-      .flatMap((id) => rebuyDrafts(format, id, plan.rebuyStacks, plan.paid)),
+      .flatMap((id) => rebuyDrafts(format, id, plan.rebuyRub, plan.paid)),
   ];
 }
 
@@ -140,23 +140,27 @@ export function riverKillersText(killerNames: readonly string[]): string {
   return `выбивают ${joinNames(killerNames)} — нокаут каждому`;
 }
 
-/** « ×2» после «ребай», если кратность больше стандартной. */
-const stacksMark = (k: number): string => (k > 1 ? ` ×${k}` : '');
+/** « · 700 ₽» после «ребай», если сумма не вход формата (null — вход формата или сумма не задана). */
+const sumMark = (rub: number | null): string => (rub !== null ? ` · ${formatRub(rub)}` : '');
 
 /**
- * Главная кнопка шторки: «Записать вылет: Дима», «Вылет и ребай: Дима» («Вылет и ребай ×2: Дима»),
- * «Записать вылеты: 2», «Записать вылеты: 2 и ребай» / «…: 3 и 2 ребая ×2»; никого не отметили — что
- * сделать.
+ * Главная кнопка шторки: «Записать вылет: Дима», «Вылет и ребай: Дима» («Вылет и ребай · 700 ₽:
+ * Дима»), «Записать вылеты: 2», «Записать вылеты: 2 и ребай» / «…: 3 и 2 ребая · 700 ₽»; никого не
+ * отметили — что сделать. rub — сумма ребая, если она не вход формата.
  */
-export function riverBustLabel(victimNames: readonly string[], rebuys = 0, k = 1): string {
+export function riverBustLabel(
+  victimNames: readonly string[],
+  rebuys = 0,
+  rub: number | null = null,
+): string {
   if (victimNames.length === 0) return 'Отметь, кто вылетел';
   if (victimNames.length === 1)
     return rebuys > 0
-      ? `Вылет и ребай${stacksMark(k)}: ${victimNames[0]}`
+      ? `Вылет и ребай${sumMark(rub)}: ${victimNames[0]}`
       : `Записать вылет: ${victimNames[0]}`;
   const base = `Записать вылеты: ${victimNames.length}`;
   if (rebuys === 0) return base;
-  return `${base} и ${rebuys === 1 ? 'ребай' : pluralWithNumber(rebuys, ['ребай', 'ребая', 'ребаев'])}${stacksMark(k)}`;
+  return `${base} и ${rebuys === 1 ? 'ребай' : pluralWithNumber(rebuys, ['ребай', 'ребая', 'ребаев'])}${sumMark(rub)}`;
 }
 
 /** Ответы на вопрос после ривера: две равные кнопки пульта и «закрыть без вылета» в шторке. */
@@ -211,16 +215,19 @@ export function riverStayToast(victimNames: readonly string[]): {
  */
 export function riverToast(
   plan: Pick<RiverPlan, 'byChips' | 'killers' | 'rebuys' | 'paid'> &
-    Partial<Pick<RiverPlan, 'rebuyStacks'>>,
+    Partial<Pick<RiverPlan, 'rebuyRub'>>,
   nameOf: (id: PlayerId) => string,
+  format: Pick<TournamentFormat, 'buyInRub'>,
 ): { success: string; detail: string } {
   const names = plan.byChips.map(nameOf);
   const rebuys = plan.byChips.filter((id) => plan.rebuys.includes(id));
   const single = names.length === 1;
-  const k = plan.rebuyStacks ?? 1;
+  // Сумма — в подписи, только если ребай не на вход формата.
+  const rub =
+    plan.rebuyRub !== undefined && plan.rebuyRub !== format.buyInRub ? plan.rebuyRub : null;
   const success = single
     ? rebuys.length > 0
-      ? `Вылет и ребай${stacksMark(k)}: ${names[0]}`
+      ? `Вылет и ребай${sumMark(rub)}: ${names[0]}`
       : `Вылет записан: ${names[0]}`
     : `Вылеты записаны: ${joinNames(names)}`;
   const killerKeys = new Set(plan.byChips.map((id) => killerKey(plan.killers[id] ?? [])));
@@ -235,6 +242,6 @@ export function riverToast(
         ? plan.paid
           ? 'Ребай оплачен сразу.'
           : null
-        : `Ребай${stacksMark(k)}: ${joinNames(rebuys.map(nameOf))}${plan.paid ? ', оплачено сразу' : ''}.`;
+        : `Ребай${sumMark(rub)}: ${joinNames(rebuys.map(nameOf))}${plan.paid ? ', оплачено сразу' : ''}.`;
   return { success, detail: [ko, rebuyText].filter(Boolean).join(' ') };
 }

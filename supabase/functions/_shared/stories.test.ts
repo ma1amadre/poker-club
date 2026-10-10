@@ -218,13 +218,20 @@ describe('«На кону» в посте дня игры', () => {
       lines({
         items: [
           { kind: 'win_step', playerId: 'a', hatTrick: false, streak: 4, record: 'equal' },
-          { kind: 'pool_record', going: 6, poolRub: 3000, recordRub: 2500, status: 'new' },
+          {
+            kind: 'pool_record',
+            going: 6,
+            entryRub: 500,
+            poolRub: 3000,
+            recordRub: 2500,
+            status: 'new',
+          },
         ],
         season: null,
       }),
     ).toEqual([
       'На кону: Женя — в одной победе от повтора рекорда клуба (4 победы подряд); ' +
-        'идут 6 — фонд ещё до ребаев побьёт рекорд клуба (2 500 ₽).',
+        'идут 6 — со входами по 500 ₽ фонд ещё до ребаев побьёт рекорд клуба (2 500 ₽).',
     ]);
     expect(
       lines({

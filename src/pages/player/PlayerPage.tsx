@@ -200,7 +200,7 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
       const format = formats.get(eveningId);
       const summary = history.summaryById.get(eveningId);
       if (!format || !summary) return undefined;
-      return paidPlaces(format.payoutPct, summary.entrants.length, summary.prizePoolRub ?? 0);
+      return paidPlaces(format, summary.entrants.length, summary.prizePoolRub ?? 0);
     });
   }, [evenings, history.evenings, history.summaryById]);
   const clubRecords = useMemo(() => {

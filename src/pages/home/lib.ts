@@ -8,8 +8,19 @@ import { spectatesEvening } from '@domain/spectators.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import type { EveningEvent, PlayerId, TournamentFormat } from '@domain/types.ts';
 import { gameNoOf, type EveningStatus, type Player, type Rsvp } from '../../shared/api/types';
+import { formatRub, NBSP } from '../../shared/lib/format';
 
 // --- Ближайший вечер -------------------------------------------------------------------------
+
+/**
+ * Взнос в анонсе на главной: «Вход и ребай — 500 ₽, можно другой суммой» (без ребаев — «Вход — …»).
+ * Вход и ребай — любой суммой (миграция 027), в формате — сумма по умолчанию. Не «от 500 ₽»: «от»
+ * читается как нижняя граница, а меньше суммы формата — тоже можно.
+ */
+export function entryFeeText(format: Pick<TournamentFormat, 'buyInRub' | 'rebuyLimit'>): string {
+  const what = format.rebuyLimit === 0 ? 'Вход' : 'Вход и ребай';
+  return `${what}${NBSP}— ${formatRub(format.buyInRub)}, можно другой суммой`;
+}
 
 export interface UpcomingLike {
   status: EveningStatus;

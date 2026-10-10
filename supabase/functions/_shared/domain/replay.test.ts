@@ -579,7 +579,7 @@ describe('кратность входа и ребая (stacks)', () => {
       { eventId: badRebuy2, message: msg },
     ]);
     expect(s.joinOrder).toEqual(['A', 'B']);
-    expect(s.players.B).toMatchObject({ alive: false, entries: 1, stacks: 1 });
+    expect(s.players.B).toMatchObject({ alive: false, entries: 1, feeRub: 500 });
     expect(canApply(F, s, 'join', { playerId: 'C', stacks: 0 }, j.now())).toBe(msg);
     expect(canApply(F, s, 'join', { playerId: 'C', stacks: 10 }, j.now())).toBeNull();
     expect(canApply(F, s, 'rebuy', { playerId: 'B', stacks: 11 }, j.now())).toBe(msg);
@@ -598,11 +598,10 @@ describe('кратность входа и ребая (stacks)', () => {
     j.rebuy('B', 2);
     const s = replay(F, j.events, j.now());
     expect(s.totalEntries).toBe(3);
-    expect(s.totalStacks).toBe(6);
     expect(s.totalChips).toBe(3000);
     expect(s.prizePoolRub).toBe(3000);
-    expect(s.players.B).toMatchObject({ entries: 2, rebuys: 1, stacks: 3 });
-    expect(s.players.A).toMatchObject({ stacks: 3, kos: 1 });
+    expect(s.players.B).toMatchObject({ entries: 2, rebuys: 1, feeRub: 1500, chips: 1500 });
+    expect(s.players.A).toMatchObject({ feeRub: 1500, kos: 1 });
     // Денег за нокаут нет — в состоянии игрока их и не бывает.
     expect(Object.keys(s.players.A ?? {}).some((k) => /bounty/i.test(k))).toBe(false);
   });
@@ -615,7 +614,7 @@ describe('кратность входа и ребая (stacks)', () => {
     j.rebuy('C');
     j.bust('C', ['B']);
     const s = replay(F, j.events, j.now());
-    expect(s.players.C).toMatchObject({ stacks: 2, entries: 2 });
+    expect(s.players.C).toMatchObject({ feeRub: 1000, entries: 2 });
     expect(s.prizePoolRub).toBe(2000);
     expect(s.players.B?.kos).toBe(1);
   });
@@ -644,7 +643,7 @@ describe('canApplySequence: несколько записей одним дей�
     j.rebuy('C', 2);
     const s = replay(F, j.events, j.now());
     expect(s.errors).toEqual([]);
-    expect(s.players.C).toMatchObject({ alive: true, stacks: 3, rebuys: 1 });
+    expect(s.players.C).toMatchObject({ alive: true, feeRub: 1500, rebuys: 1 });
     expect(s.players.A?.kos).toBe(1);
   });
 

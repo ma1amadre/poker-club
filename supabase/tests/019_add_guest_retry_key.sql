@@ -139,17 +139,17 @@ reset role;
 -- 5. Права и сигнатура (с миграции 020 — ещё и p_paid_rub: (uuid, text, integer, uuid, integer))
 -- ===========================================================================
 select pg_temp.check(
-  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
-  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
-  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute'),
-  'add_guest(uuid, text, integer, uuid, integer): authenticated и service_role, не anon');
+  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute')
+  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute')
+  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute'),
+  'add_guest(uuid, text, integer, uuid, integer, integer) (027): authenticated и service_role, не anon');
 select pg_temp.check(
   to_regprocedure('public.add_guest(uuid, text, integer)') is null
   and to_regprocedure('public.add_guest(uuid, text)') is null,
   'старых сигнатур add_guest нет — вызовы с двумя и тремя аргументами не двусмысленны');
 select pg_temp.check(
-  not has_function_privilege('authenticated', 'private.guest_by_client_id(uuid, uuid, uuid, text, integer)', 'execute')
-  and not has_function_privilege('anon', 'private.guest_by_client_id(uuid, uuid, uuid, text, integer)', 'execute'),
+  not has_function_privilege('authenticated', 'private.guest_by_client_id(uuid, uuid, uuid, text, integer, integer)', 'execute')
+  and not has_function_privilege('anon', 'private.guest_by_client_id(uuid, uuid, uuid, text, integer, integer)', 'execute'),
   'private.guest_by_client_id снаружи не вызвать');
 
 rollback;

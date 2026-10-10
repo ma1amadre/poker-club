@@ -1,6 +1,6 @@
 // Выбор в шторке олл-ина после ривера: кто вылетел (отметок заранее нет — банкир отмечает, кому не
 // хватило фишек), кто кого выбил, порядок по фишкам перед раздачей (у кого больше — место выше) и
-// ребай сразу — с кратностью, как в шторке игрока (одна на всех, кто докупается), и «Оплачено сразу».
+// ребай сразу — с суммой, как в шторке игрока (одна на всех, кто докупается), и «Оплачено сразу».
 // Кто выбил — домен: обычно однозначно (строкой), а если кто-то из проигравших остался в игре и
 // возможен побочный банк — выбор из тех, кто мог забрать последние фишки, по умолчанию лучшая рука.
 // Состояние — useRiverChoice.
@@ -9,7 +9,7 @@ import { capitalize, joinNames } from '../../shared/lib';
 import { Checkbox, FieldGroup, IconButton, PlayerPicker, Segmented } from '../../shared/ui';
 import { haptic } from '../../shared/telegram';
 import { killerKey, killersInColumn, riverKillersText } from './riverBusts';
-import { PaidNowCheckbox, StacksPicker } from './StacksPicker';
+import { AmountPicker, PaidNowCheckbox } from './AmountPicker';
 import type { RiverChoice } from './useRiverBusts';
 import type { EveningModel } from './useEveningModel';
 
@@ -123,24 +123,23 @@ export function RiverBustsChoice({
       )}
       {rebuys.length > 0 && (
         <>
-          <StacksPicker
+          <AmountPicker
             format={format}
-            value={choice.rebuyStacks}
-            onChange={choice.setRebuyStacks}
+            value={choice.rebuyRub}
+            onChange={choice.setRebuyRub}
             label="Ребай"
             note={
               rebuys.length > 1
-                ? 'Кратность одна на всех, кто сразу докупается. Другая сумма — ребай отдельно, в шторке игрока.'
+                ? 'Сумма одна на всех, кто сразу докупается. Разные суммы — ребаи отдельно, в шторке игрока.'
                 : undefined
             }
             disabled={disabled}
           />
           <PaidNowCheckbox
-            format={format}
             checked={choice.paid}
             onChange={choice.setPaid}
             kind="rebuy"
-            stacks={choice.rebuyStacks}
+            rub={choice.rebuyRub}
             many={rebuys.length > 1}
             disabled={disabled}
           />

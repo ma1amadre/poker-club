@@ -9,7 +9,7 @@
 // На ТВ (от 1024 px в горизонтали) — своя шкала шрифтов от размера экрана (board.css, --bd-px):
 // всё, что читают с дивана, крупно; что не влезло — уменьшает useFitToScreen (--bd-fit).
 import { eveningAllIns } from '@domain/allins.ts';
-import { computeMoney, payouts } from '@domain/money.ts';
+import { computeMoney, payoutsFor } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
 import { DEFAULT_SCORING } from '@domain/scoring.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
@@ -334,7 +334,7 @@ function LiveBoard({
         ? `вылетов на уровне: ${timer.bustsInLevel} из ${trig.count}`
         : null;
   // Выплаты по местам — доменная раскладка фонда (та же, что попадёт в итог).
-  const prizes = payouts(state.prizePoolRub, format.payoutPct, state.joinOrder.length);
+  const prizes = payoutsFor(format, state.prizePoolRub, state.joinOrder.length);
   const ko = lastKnockout(applied, nameOf);
   const rebuy = rebuyLine(format, state);
   const alive = orderedPlayers(state).filter((p) => p.alive);

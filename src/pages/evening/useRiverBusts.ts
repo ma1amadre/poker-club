@@ -4,7 +4,7 @@
 // «X проигрывает раздачу. Фишек хватило?» и две равные кнопки: «Вылет» (одно нажатие, кто выбил — по
 // картам) и «Остаётся за столом» (закрывает раздачу, табло её убирает). Проигравших несколько —
 // «Отметить вылет» (шторка олл-ина, отметок заранее нет: банкир отмечает, кому не хватило фишек) и
-// «Все остаются за столом». «Вылет и ребай» — шторка с отмеченным «Сразу ребай» и выбором кратности.
+// «Все остаются за столом». «Вылет и ребай» — шторка с отмеченным «Сразу ребай» и выбором суммы.
 // Запись — одним действием (add_events) в правильном порядке мест, следом — «Закрыть раздачу»
 // отдельным запросом (SendOptions.then).
 // Вопрос на пульте держится дольше табло (оно прячет раздачу через 2 минуты после ривера), но не
@@ -44,11 +44,7 @@ export interface RiverBusts {
    */
   defaultPlan: RiverPlan | null;
   /** Докупится ли игрок сразу после вылетов плана: ребаи открыты, лимит не кончился. */
-  canRebuyAfter: (
-    plan: Pick<RiverPlan, 'byChips' | 'killers'>,
-    playerId: PlayerId,
-    k?: number,
-  ) => boolean;
+  canRebuyAfter: (plan: Pick<RiverPlan, 'byChips' | 'killers'>, playerId: PlayerId) => boolean;
   /** Записать вылеты (и ребаи) и закрыть раздачу. true — записано. */
   record: (plan: RiverPlan) => Promise<boolean>;
   /**
@@ -90,16 +86,20 @@ export function useRiverBusts(
             ),
           ),
           rebuys: [],
-          rebuyStacks: 1,
+          rebuyRub: format.buyInRub,
           paid: false,
         }
       : null;
 
-  const canRebuyAfter = (plan: Pick<RiverPlan, 'byChips' | 'killers'>, playerId: PlayerId, k = 1) =>
+  // Сумма ребая в правилах приёма не участвует — проверяем на входе формата.
+  const canRebuyAfter = (plan: Pick<RiverPlan, 'byChips' | 'killers'>, playerId: PlayerId) =>
     canApplySequence(
       format,
       events,
-      [...riverBustDrafts(plan.byChips, plan.killers), ...rebuyDrafts(format, playerId, k, false)],
+      [
+        ...riverBustDrafts(plan.byChips, plan.killers),
+        ...rebuyDrafts(format, playerId, format.buyInRub, false),
+      ],
       nowMs,
     ) === null;
 
@@ -107,7 +107,7 @@ export function useRiverBusts(
     const [only] = plan.byChips;
     if (!only) return false;
     const drafts = riverPlanDrafts(format, plan);
-    const { success, detail } = riverToast(plan, nameOf);
+    const { success, detail } = riverToast(plan, nameOf, format);
     // У тоста одна кнопка (одним глаголом): один вылет без ребая — «Ребай», пока можно докупиться;
     // остался один при закрытых ребаях — «Завершить» (вопрос «Завершить вечер?» — прежний); иначе —
     // «Отменить».
@@ -160,20 +160,22 @@ export function useRiverBusts(
  * Выбор в шторке олл-ина после ривера: кто вылетел (отметок заранее нет — банкир отмечает, кому не
  * хватило фишек; initialRebuys — «Вылет и ребай» с пульта: этот игрок уже отмечен и докупается), кто
  * кого выбил (варианты — домен; неотмеченные «остались в игре» и открывают побочный банк), порядок
- * по фишкам, ребаи сразу — кратность одна на всех, кто докупается, — и «Оплачено сразу» для них.
+ * по фишкам, ребаи сразу — сумма одна на всех, кто докупается (по умолчанию — вход формата, null —
+ * в поле «Другая сумма» ошибка), — и «Оплачено сразу» для них.
  */
 export function useRiverChoice(
   showdown: RiverHand | null,
   suggestion: RiverBustSuggestion | null,
   isAlive: (id: PlayerId) => boolean,
   initialRebuys: readonly PlayerId[] = [],
+  buyInRub = 0,
 ) {
   const [picked, setPicked] = useState<PlayerId[]>(() => [...initialRebuys]);
   const [order, setOrder] = useState<PlayerId[]>([]);
   // Выбор «кто выбил» по вылетевшему — ключ варианта; пропал из вариантов — снова по умолчанию.
   const [killerPick, setKillerPick] = useState<Record<PlayerId, string>>({});
   const [rebuyPick, setRebuyPick] = useState<PlayerId[]>(() => [...initialRebuys]);
-  const [rebuyStacks, setRebuyStacks] = useState(1);
+  const [rebuyRub, setRebuyRub] = useState<number | null>(buyInRub);
   const [paid, setPaid] = useState(false);
   const victims = suggestion?.victims ?? [];
   const chosen = picked.filter((id) => victims.includes(id));
@@ -192,7 +194,7 @@ export function useRiverChoice(
     options,
     killers,
     rebuys: byChips.filter((id) => rebuyPick.includes(id)),
-    rebuyStacks,
+    rebuyRub,
     paid,
     pick: (ids: PlayerId[]) => setPicked(ids),
     raise: (id: PlayerId) => setOrder(moveUp(byChips, id)),
@@ -200,7 +202,7 @@ export function useRiverChoice(
       setKillerPick((prev) => ({ ...prev, [victim]: key })),
     toggleRebuy: (id: PlayerId, on: boolean) =>
       setRebuyPick((prev) => [...prev.filter((x) => x !== id), ...(on ? [id] : [])]),
-    setRebuyStacks,
+    setRebuyRub,
     setPaid,
   };
 }

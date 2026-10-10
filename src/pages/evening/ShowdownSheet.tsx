@@ -6,7 +6,7 @@
 // После ривера (useRiverBusts.ts) — кто проиграл раздачу, без отметок заранее (решение клуба
 // 10.10.2026: стек проигравшего может быть больше олл-ина соперника): банкир отмечает, кому не
 // хватило фишек; кто выбил — по картам (при побочном банке — выбор), несколько вылетевших — с порядком
-// по фишкам, «Сразу ребай» с кратностью — тем же действием. Запись закрывает раздачу; хватило всем —
+// по фишкам, «Сразу ребай» на выбранную сумму — тем же действием. Запись закрывает раздачу; хватило всем —
 // «Все остаются за столом» (раздача закрывается без вылетов). Открыта с пульта по «Отметить вылет»
 // или «Вылет и ребай» (river) — на раздаче после ривера, даже если табло её уже спрятало.
 // В игре ровно двое (хедз-ап вечера) — новый олл-ин начинается с обоими отмеченными.
@@ -79,6 +79,7 @@ function ShowdownSheetInner({
   rebuyFor,
 }: ShowdownSheetProps) {
   const { state, nameOf, playersById, nowMs, applied } = model;
+  const format = model.evening.format;
   const isAlive = (id: PlayerId) => Boolean(state.players[id]?.alive);
   const visible = visibleShowdown(state.showdown, nowMs);
   // С чего начать: раздача на табло; с пульта ради вылета после ривера — она же, даже спрятанная
@@ -120,10 +121,8 @@ function ShowdownSheetInner({
   // «Не записывать» на пульте: шторка открыта нарочно).
   const suggestion =
     riverDone && published ? riverBustSuggestion(published, isAlive, applied) : null;
-  const choice = useRiverChoice(published, suggestion, isAlive, rebuyFor);
-  const rebuyable = new Set(
-    choice.byChips.filter((id) => river.canRebuyAfter(choice, id, choice.rebuyStacks)),
-  );
+  const choice = useRiverChoice(published, suggestion, isAlive, rebuyFor, format.buyInRub);
+  const rebuyable = new Set(choice.byChips.filter((id) => river.canRebuyAfter(choice, id)));
   const rebuys = choice.rebuys.filter((id) => rebuyable.has(id));
 
   // Кого можно отметить: кто в игре, и те, кто уже в раздаче на табло или в черновике
@@ -181,7 +180,7 @@ function ShowdownSheetInner({
       byChips: choice.byChips,
       killers: choice.killers,
       rebuys,
-      rebuyStacks: choice.rebuyStacks,
+      rebuyRub: choice.rebuyRub ?? format.buyInRub,
       paid: choice.paid,
     });
     setSending(false);
@@ -258,10 +257,18 @@ function ShowdownSheetInner({
                 block
                 icon={rebuys.length > 0 ? 'refresh-cw' : 'user-x'}
                 loading={sending}
-                disabled={footerBusy || choice.byChips.length === 0}
+                disabled={
+                  footerBusy ||
+                  choice.byChips.length === 0 ||
+                  (rebuys.length > 0 && choice.rebuyRub === null)
+                }
                 onClick={() => void recordBusts()}
               >
-                {riverBustLabel(choice.byChips.map(nameOf), rebuys.length, choice.rebuyStacks)}
+                {riverBustLabel(
+                  choice.byChips.map(nameOf),
+                  rebuys.length,
+                  choice.rebuyRub !== format.buyInRub ? choice.rebuyRub : null,
+                )}
               </Button>
               <Button block icon="check" disabled={footerBusy} onClick={() => void stayAll()}>
                 {suggestion.victims.length === 1 ? RIVER_ANSWER.stay : RIVER_ANSWER.stayAll}

@@ -64,10 +64,15 @@ export type StakeItem =
   | { kind: 'revenge_step'; playerId: PlayerId; nemesisId: PlayerId }
   /** Ещё одна звезда даст «Звезду вечера» уровня level (II или III). */
   | { kind: 'star_step'; playerId: PlayerId; stars: number; target: number; level: number }
-  /** «Иду» уже дают фонд не меньше рекорда клуба. */
+  /**
+   * «Иду» со стандартными входами уже дают фонд не меньше рекорда клуба. Оценка: вход бывает любой
+   * суммой (027), поэтому фонд считается по входу формата — entryRub с каждого «иду».
+   */
   | {
       kind: 'pool_record';
       going: number;
+      /** Вход формата, по которому посчитан фонд (going · entryRub). */
+      entryRub: number;
       poolRub: number;
       recordRub: number;
       status: 'new' | 'equal';
@@ -122,7 +127,7 @@ export interface StakesOptions {
   /** Дата вечера (scheduled_at): по ней — сезон. */
   eveningDate: string;
   players: readonly StakesPlayer[];
-  /** Взнос вечера (format.buyInRub) — для рекорда фонда. */
+  /** Вход формата вечера (format.buyInRub) — оценка фонда для рекорда: по входу с каждого «иду». */
   buyInRub: number;
 }
 
@@ -289,6 +294,7 @@ export function eveningStakes(input: StakesInput, opts: StakesOptions): EveningS
     items.push({
       kind: 'pool_record',
       going,
+      entryRub: opts.buyInRub,
       poolRub,
       recordRub: poolRecord,
       status: poolRub > poolRecord ? 'new' : 'equal',

@@ -425,17 +425,17 @@ export async function mergeGuests(guestId: string, targetId: string): Promise<Me
 }
 
 /**
- * Создать гостя и сразу посадить его за стол (join) — миграция 006; `stacks` — кратность входа
- * (миграция 015, 1..10). Права как у add_event для join: банкир вечера или админ. Возвращает id
- * нового игрока. Стандартный вход уходит без p_stacks — как до 015. `clientId` — ключ повтора
- * (миграция 019): повтор после потерянного ответа вернёт уже посаженного гостя, второго не будет.
- * `paidRub` — «Оплачено сразу» (миграция 020): платёж гостя на эту сумму тем же вызовом; сумму
- * считает домен (prepaidPayment).
+ * Создать гостя и сразу посадить его за стол (join) — миграция 006; `rub` — сумма входа (миграция
+ * 027: вход любой суммой, 1..100 000), undefined — стандартный вход (вход формата: join без суммы,
+ * как до 027 — p_rub не уходит). Права как у add_event для join: банкир вечера или админ. Возвращает
+ * id нового игрока. `clientId` — ключ повтора (миграция 019): повтор после потерянного ответа вернёт
+ * уже посаженного гостя, второго не будет. `paidRub` — «Оплачено сразу» (миграция 020): платёж гостя
+ * на эту сумму тем же вызовом (сумма входа).
  */
 export async function addGuest(
   eveningId: string,
   name: string,
-  stacks = 1,
+  rub?: number,
   clientId?: string,
   paidRub?: number,
 ): Promise<string> {
@@ -444,7 +444,7 @@ export async function addGuest(
       .rpc('add_guest', {
         p_evening: eveningId,
         p_name: name,
-        ...(stacks > 1 ? { p_stacks: stacks } : {}),
+        ...(rub !== undefined ? { p_rub: rub } : {}),
         ...(clientId ? { p_client_id: clientId } : {}),
         ...(paidRub !== undefined ? { p_paid_rub: paidRub } : {}),
       })
@@ -612,22 +612,20 @@ export function useVoidEvent(eveningId: string) {
 }
 
 /**
- * Намерение «этот гость с этой кратностью» (и, если «Оплачено сразу», с этой оплатой) — ключ
- * повтора add_guest (регистр имени не важен). Без оплаты строка та же, что до миграции 020.
+ * Намерение «этот гость на эту сумму» (и, если «Оплачено сразу», с этой оплатой) — ключ повтора
+ * add_guest (регистр имени не важен). rub undefined — стандартный вход (вход формата, миграция 027).
  */
 export function guestRetryIntent(
   eveningId: string,
   name: string,
-  stacks = 1,
+  rub?: number,
   paidRub?: number,
 ): string {
-  return retryIntent(
-    eveningId,
-    'guest',
-    paidRub === undefined
-      ? { name: name.toLowerCase(), stacks }
-      : { name: name.toLowerCase(), stacks, paidRub },
-  );
+  return retryIntent(eveningId, 'guest', {
+    name: name.toLowerCase(),
+    ...(rub !== undefined ? { rub } : {}),
+    ...(paidRub !== undefined ? { paidRub } : {}),
+  });
 }
 
 export function useAddGuest(eveningId: string) {
@@ -639,19 +637,20 @@ export function useAddGuest(eveningId: string) {
     invalidateEvening(queryClient, eveningId);
   };
   return useMutation({
-    // Ключ повтора — по намерению «имя + кратность»: тот же гость, нажатый ещё раз после ошибки или
+    // Ключ повтора — по намерению «имя + сумма»: тот же гость, нажатый ещё раз после ошибки или
     // тайм-аута, уходит с прежним ключом, и сервер вернёт уже посаженного (миграция 019).
     mutationFn: async ({
       name,
-      stacks = 1,
+      rub,
       paidRub,
     }: {
       name: string;
-      stacks?: number;
+      /** Сумма входа (миграция 027); undefined — стандартный вход (вход формата). */
+      rub?: number;
       /** «Оплачено сразу»: платёж гостя на эту сумму тем же вызовом (миграция 020). */
       paidRub?: number;
     }) => {
-      const intent = guestRetryIntent(eveningId, name, stacks, paidRub);
+      const intent = guestRetryIntent(eveningId, name, rub, paidRub);
       // Гость с этим ключом уже в журнале на экране — новый гость с тем же именем, а не повтор
       // (дошедшую без ответа попытку SeatSheet до этого показывает и переспрашивает).
       const journal = queryClient.getQueryData<EveningEventRecord[]>(
@@ -661,7 +660,7 @@ export function useAddGuest(eveningId: string) {
         Boolean(journal?.some((e) => e.clientId === key)),
       );
       try {
-        const id = await addGuest(eveningId, name, stacks, clientId, paidRub);
+        const id = await addGuest(eveningId, name, rub, clientId, paidRub);
         retryKeys.succeeded(intent);
         return id;
       } catch (error) {

@@ -179,6 +179,7 @@ describe('«Первая кровь», рекорд фонда, «Оракул»
     expect(eveningStakes(input(s), opts(yes(4))).items).toContainEqual({
       kind: 'pool_record',
       going: 4,
+      entryRub: 500,
       poolRub: 2000,
       recordRub: 1500,
       status: 'new',

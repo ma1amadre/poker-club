@@ -11,7 +11,6 @@ import { amendChanged, amendImpactText, amendKillerCandidates, amendToast } from
 const F = DEFAULT_FORMAT;
 const names: Record<string, string> = { a: 'Женя', b: 'Саша', c: 'Дима', d: 'Лёша' };
 const nameOf = (id: string) => names[id] ?? '?';
-const rub = (n: number) => `${n} ₽`;
 
 describe('amendKillerCandidates', () => {
   it('в игре перед вылетом, без жертвы; кто вылетел раньше — не предлагается', () => {
@@ -130,9 +129,10 @@ describe('amendImpactText: почему правка задела бы друг�
 });
 
 describe('amendChanged', () => {
-  it('кратность и набор выбивших (порядок не важен)', () => {
-    expect(amendChanged({ stacks: 1 }, { stacks: 1 })).toBe(false);
-    expect(amendChanged({ stacks: 1 }, { stacks: 2 })).toBe(true);
+  it('сумма и набор выбивших (порядок не важен)', () => {
+    expect(amendChanged({ rub: 500 }, { rub: 500 })).toBe(false);
+    expect(amendChanged({ rub: 500 }, { rub: 700 })).toBe(true);
+    expect(amendChanged({ by: [] }, { rub: 700 })).toBe(true);
     expect(amendChanged({ by: ['a', 'b'] }, { by: ['b', 'a'] })).toBe(false);
     expect(amendChanged({ by: ['a'] }, { by: [] })).toBe(true);
     expect(amendChanged(null, { by: [] })).toBe(false);
@@ -142,11 +142,19 @@ describe('amendChanged', () => {
     const j = journal();
     const join = j.add('join', { playerId: 'a' });
     j.join('b');
-    j.amend(join, { stacks: 3 });
+    j.amend(join, { rub: 700 });
     const now = currentAmendValue(F, j.events, join, j.now());
-    expect(now).toEqual({ stacks: 3 });
-    expect(amendChanged(now, { stacks: 3 })).toBe(false);
-    expect(amendChanged(now, { stacks: 1 })).toBe(true);
+    expect(now).toEqual({ rub: 700 });
+    expect(amendChanged(now, { rub: 700 })).toBe(false);
+    expect(amendChanged(now, { rub: 500 })).toBe(true);
+  });
+
+  it('правка кратности (до 027) читается суммой: ×3 — 1 500 ₽', () => {
+    const j = journal();
+    const join = j.add('join', { playerId: 'a' });
+    j.join('b');
+    j.amend(join, { stacks: 3 });
+    expect(currentAmendValue(F, j.events, join, j.now())).toEqual({ rub: 1500 });
   });
 });
 
@@ -160,24 +168,22 @@ describe('amendToast: тост после правки', () => {
   });
 
   it('вылет: кто выбил', () => {
-    expect(amendToast(ev('bust'), { by: ['b'] }, nameOf, F, rub)).toEqual({
+    expect(amendToast(ev('bust'), { by: ['b'] }, nameOf, F)).toEqual({
       title: 'Вылет исправлен: Лёша',
       detail: 'Выбивает Саша.',
     });
-    expect(amendToast(ev('bust'), { by: ['b', 'c'] }, nameOf, F, rub).detail).toBe(
+    expect(amendToast(ev('bust'), { by: ['b', 'c'] }, nameOf, F).detail).toBe(
       'Выбивают Саша и Дима — нокаут каждому.',
     );
-    expect(amendToast(ev('bust'), { by: [] }, nameOf, F, rub).detail).toBe(
-      'Кто выбил — не указано.',
-    );
+    expect(amendToast(ev('bust'), { by: [] }, nameOf, F).detail).toBe('Кто выбил — не указано.');
   });
 
-  it('вход и ребай: кратность и сумма', () => {
-    expect(amendToast(ev('join', 'a'), { stacks: 2 }, nameOf, F, rub)).toEqual({
+  it('вход и ребай: сумма и фишки', () => {
+    expect(amendToast(ev('join', 'a'), { rub: 700 }, nameOf, F)).toEqual({
       title: 'Вход исправлен: Женя',
-      detail: '×2 — 1000 ₽.',
+      detail: '700 ₽ · 700 фишек.',
     });
-    expect(amendToast(ev('rebuy', 'a'), { stacks: 1 }, nameOf, F, rub).title).toBe(
+    expect(amendToast(ev('rebuy', 'a'), { rub: 500 }, nameOf, F).title).toBe(
       'Ребай исправлен: Женя',
     );
   });

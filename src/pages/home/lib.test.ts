@@ -3,6 +3,7 @@ import type { EveningEvent, EventPayload, EventType } from '@domain/types.ts';
 import { describe, expect, it } from 'vitest';
 import type { RsvpStatus } from '../../shared/api';
 import {
+  entryFeeText,
   groupRsvps,
   myResult,
   nameWithMe,
@@ -22,6 +23,18 @@ import { nextGameAt } from '../../shared/lib/clubTime';
 import { formatSeason } from '../../shared/lib/season';
 
 const NOW = Date.parse('2026-10-06T12:00:00Z'); // вторник, 15:00 МСК
+
+describe('entryFeeText — взнос в анонсе на главной', () => {
+  const NB = ' ';
+  it('сумма формата — по умолчанию, не нижняя граница: вход любой суммой (027)', () => {
+    expect(entryFeeText(DEFAULT_FORMAT)).toBe(`Вход и ребай${NB}— 500${NB}₽, можно другой суммой`);
+    expect(entryFeeText({ ...DEFAULT_FORMAT, rebuyLimit: 0, buyInRub: 1000 })).toBe(
+      `Вход${NB}— 1${NB}000${NB}₽, можно другой суммой`,
+    );
+    // «от 500 ₽» обещало бы, что меньше нельзя, а журнал принимает и 300 ₽.
+    expect(entryFeeText(DEFAULT_FORMAT)).not.toMatch(/(^|\s)от\s/);
+  });
+});
 
 describe('pickUpcoming', () => {
   const ev = (id: string, status: UpcomingLike['status'], scheduled: string, started?: string) => ({

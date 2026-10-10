@@ -46,6 +46,8 @@ export interface FormatDraft {
   rebuyLimit: string;
   /** Доли призовых в процентах, по местам. */
   payouts: string[];
+  /** Шаг призовых, ₽ (миграция 027): призовые вниз до шага, остаток — 1-му месту. */
+  payoutStep: string;
   levels: LevelDraft[];
 }
 
@@ -71,6 +73,7 @@ function levelToDraft(level: BlindLevel): LevelDraft {
 /**
  * Формат из БД → поля формы. Формат — jsonb, поэтому разбор терпит дыры в нём. bountyRub старых
  * форматов (баунти убрано 07.10.2026) в форму не попадает — и при сохранении из формата уходит.
+ * Шаг призовых (027): у формата без поля — пусто, форма попросит заполнить (1 — до рубля).
  */
 export function draftFromFormat(format: TournamentFormat): FormatDraft {
   return {
@@ -80,11 +83,15 @@ export function draftFromFormat(format: TournamentFormat): FormatDraft {
     rebuyUntil: intToInput(format?.rebuyUntilLevel),
     rebuyLimit: intToInput(format?.rebuyLimit),
     payouts: Array.isArray(format?.payoutPct) ? format.payoutPct.map(decimalToInput) : [],
+    payoutStep: intToInput(format?.payoutStepRub),
     levels: Array.isArray(format?.levels) ? format.levels.map(levelToDraft) : [],
   };
 }
 
-/** Новый формат начинается с клубного: правок обычно меньше, чем ввода с нуля. Название — пустое. */
+/**
+ * Новый формат начинается с клубного: правок обычно меньше, чем ввода с нуля (в том числе шаг
+ * призовых 100 ₽). Название — пустое.
+ */
 export function newFormatDraft(): FormatDraft {
   return { ...draftFromFormat(DEFAULT_FORMAT), name: '' };
 }
@@ -100,6 +107,7 @@ export function formatFromDraft(draft: FormatDraft): TournamentFormat {
     rebuyUntilLevel: intOrNaN(draft.rebuyUntil),
     rebuyLimit: parseIntInput(draft.rebuyLimit),
     payoutPct: draft.payouts.map((p) => parseDecimalInput(p) ?? Number.NaN),
+    payoutStepRub: intOrNaN(draft.payoutStep),
     levels: draft.levels.map((l) => {
       const amount = intOrNaN(l.amount);
       const trigger: LevelTrigger =
@@ -127,7 +135,8 @@ export function sameDraft(a: FormatDraft, b: FormatDraft): boolean {
 
 // --- Проверка: ошибки ввода + validateFormat, разложенные по полям ---------------------------
 
-export type FormatField = 'name' | 'buyIn' | 'chips' | 'rebuyUntil' | 'rebuyLimit' | 'payouts';
+export type FormatField =
+  'name' | 'buyIn' | 'chips' | 'rebuyUntil' | 'rebuyLimit' | 'payouts' | 'payoutStep';
 
 export type LevelField = 'sb' | 'bb' | 'ante' | 'trigger' | 'amount';
 
@@ -158,10 +167,13 @@ const FIELD_PREFIXES: readonly (readonly [string, FormatField])[] = [
   ['Нужно хотя бы одно призовое', 'payouts'],
   ['Доли призовых', 'payouts'],
   ['Сумма долей призовых', 'payouts'],
+  ['Шаг призовых', 'payoutStep'],
 ];
 
 // Сообщения домена с техническими словами — в язык формы.
 const FRIENDLY: Readonly<Record<string, string>> = {
+  'Шаг призовых — целое число рублей от 1 до 10 000':
+    'Шаг — целое число рублей от 1 до 10 000; 1 — до рубля.',
   'Не задано название формата': 'Введи название формата.',
   'Лимит ребаев — целое число не меньше 0 или null (без лимита)':
     'Лимит — целое число от 0. Оставь поле пустым, если без лимита.',
@@ -223,6 +235,7 @@ export function checkDraft(draft: FormatDraft): {
   requiredInt('buyIn', draft.buyIn);
   requiredInt('chips', draft.chips);
   requiredInt('rebuyUntil', draft.rebuyUntil);
+  requiredInt('payoutStep', draft.payoutStep);
   if (Number.isNaN(parseIntInput(draft.rebuyLimit)))
     fields.rebuyLimit = 'Введи целое число или оставь поле пустым.';
   draft.payouts.forEach((p, i) => {

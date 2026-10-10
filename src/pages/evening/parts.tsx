@@ -1,15 +1,14 @@
 // Общие куски экранов вечера: формат турнира, список игроков, «Ты за столом», лента событий.
+import { payoutStep } from '@domain/money.ts';
 import type { EveningState, EventType, PlayerState, TournamentFormat } from '@domain/types.ts';
 import { useState } from 'react';
 import type { EveningEventRecord, Player } from '../../shared/api';
 import {
   formatBlinds,
-  formatNumber,
   formatRub,
   formatTime,
   NBSP,
   paths,
-  plural,
   pluralWithNumber,
 } from '../../shared/lib';
 import {
@@ -29,6 +28,7 @@ import {
 import {
   describeEvent,
   describeTrigger,
+  feeFactText,
   feedEvents,
   orderedPlayers,
   playerLine,
@@ -78,15 +78,19 @@ function levelsText(format: TournamentFormat): string {
   return same ? `${count} по${NBSP}${describeTrigger(first)}` : count;
 }
 
-/** Формат вечера: взнос, фишки, ребаи, призовые и блайнды по уровням. */
+/**
+ * Формат вечера: взнос (вход и ребай — любой суммой, миграция 027: в формате — сумма по умолчанию и
+ * курс фишек), ребаи, призовые с шагом округления и блайнды по уровням.
+ */
 export function FormatSummary({ format }: { format: TournamentFormat }) {
+  const step = payoutStep(format);
   const facts: [string, string][] = [
-    [
-      'Взнос',
-      `${formatRub(format.buyInRub)} · ${formatNumber(format.startingChips)}${NBSP}${plural(format.startingChips, ['фишка', 'фишки', 'фишек'])}`,
-    ],
+    ['Взнос', feeFactText(format)],
     ['Ребаи', rebuyText(format)],
-    ['Призовые', `${format.payoutPct.join(' / ')}${NBSP}%`],
+    [
+      'Призовые',
+      `${format.payoutPct.join(' / ')}${NBSP}%${step > 1 ? ` · вниз до${NBSP}${formatRub(step)}, остаток — 1-му месту` : ''}`,
+    ],
     ['Уровни', levelsText(format)],
   ];
   return (

@@ -1,7 +1,7 @@
 // Табло: что показать из replay — подписи и сигналы часов, экран ожидания, подвал голоса. Чистые
 // функции без React (vitest — boardView.test.ts); деньги и места считает домен, здесь только
 // раскладка посчитанного. Время — серверное nowMs табло (useNow + сверка часов).
-import { payouts } from '@domain/money.ts';
+import { payoutsFor } from '@domain/money.ts';
 import type { BlindLevel, EveningEvent, EveningState, TournamentFormat } from '@domain/types.ts';
 import {
   formatBlinds,
@@ -211,13 +211,13 @@ export interface PayoutRow {
 
 /**
  * Выплаты экрана ожидания: доли формата и, если за столом уже хватает игроков на все призовые
- * места, суммы по нынешнему фонду (доменная раскладка payouts). Игроков меньше — домен делит фонд
+ * места, суммы по нынешнему фонду (доменная раскладка payoutsFor: доли и шаг формата). Игроков меньше — домен делит фонд
  * на меньшее число мест, и доли формата с суммами разошлись бы; тогда только доли.
  */
 export function payoutPlan(format: TournamentFormat, state: EveningState): PayoutRow[] {
   const seated = state.joinOrder.length;
   const enough = seated >= format.payoutPct.length && state.prizePoolRub > 0;
-  const amounts = enough ? payouts(state.prizePoolRub, format.payoutPct, seated) : [];
+  const amounts = enough ? payoutsFor(format, state.prizePoolRub, seated) : [];
   return format.payoutPct.map((pct, i) => ({
     place: i + 1,
     pct,

@@ -1,5 +1,5 @@
 // Формат турнира: клубный пресет и проверка формата, который админ правит руками (jsonb в formats).
-import type { BlindLevel, TournamentFormat } from './types.ts';
+import { MAX_PAYOUT_STEP_RUB, type BlindLevel, type TournamentFormat } from './types.ts';
 
 const level40 = (sb: number, bb: number): BlindLevel => ({
   sb,
@@ -7,7 +7,10 @@ const level40 = (sb: number, bb: number): BlindLevel => ({
   trigger: { type: 'time', minutes: 40 },
 });
 
-/** Клубный формат: 500 ₽ = 500 фишек, весь взнос в фонд, ребаи до конца 5-го уровня (3:20) без лимита. */
+/**
+ * Клубный формат: 500 ₽ = 500 фишек (вход и ребай — любой суммой, 027), весь взнос в фонд, ребаи до
+ * конца 5-го уровня (3:20) без лимита, призовые 70/30 вниз до 100 ₽ (остаток — 1-му месту).
+ */
 export const DEFAULT_FORMAT: TournamentFormat = {
   name: 'Клубный',
   buyInRub: 500,
@@ -15,6 +18,7 @@ export const DEFAULT_FORMAT: TournamentFormat = {
   rebuyUntilLevel: 5,
   rebuyLimit: null,
   payoutPct: [70, 30],
+  payoutStepRub: 100,
   levels: [
     level40(5, 10),
     level40(10, 20),
@@ -66,6 +70,14 @@ export function validateFormat(format: unknown): string[] {
         errors.push(`Сумма долей призовых должна быть 100%, сейчас ${sum}%`);
     }
   }
+  // Шаг призовых (027) необязателен: нет поля — до рубля (форматы до 027).
+  if (
+    f.payoutStepRub !== undefined &&
+    (!isInt(f.payoutStepRub) || f.payoutStepRub < 1 || f.payoutStepRub > MAX_PAYOUT_STEP_RUB)
+  )
+    errors.push(
+      `Шаг призовых — целое число рублей от 1 до ${String(MAX_PAYOUT_STEP_RUB).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`,
+    );
 
   if (!Array.isArray(f.levels) || f.levels.length === 0) {
     errors.push('Нужен хотя бы один уровень блайндов');

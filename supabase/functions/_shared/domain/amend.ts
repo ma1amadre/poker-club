@@ -1,38 +1,40 @@
 // Правка записи на месте (миграция 022): помощники пульта поверх replay.
 //
-// Поправка 'amend' {eventId, stacks | by} исправляет у более ранней записи кратность (вход, ребай)
-// или выбивших (вылет) и встаёт на место исходной: replay применяет её в позиции исходной записи,
-// поэтому порядок мест, ребаи и уровни после неё не сдвигаются (в отличие от «отменить и записать
-// заново» — новая запись встала бы в конец журнала). Отмена поправки возвращает прежнее значение.
-// Кратность и выбившие не участвуют ни в одном правиле приёма записей: поправка принятой записи
-// меняет только деньги (кратность) и нокауты (выбившие), приём остальных записей она не трогает.
+// Поправка 'amend' {eventId, rub | by} исправляет у более ранней записи сумму (вход, ребай; 027 — до
+// него кратность stacks) или выбивших (вылет) и встаёт на место исходной: replay применяет её в
+// позиции исходной записи, поэтому порядок мест, ребаи и уровни после неё не сдвигаются (в отличие от
+// «отменить и записать заново» — новая запись встала бы в конец журнала). Отмена поправки возвращает
+// прежнее значение.
+// Сумма и выбившие не участвуют ни в одном правиле приёма записей: поправка принятой записи меняет
+// только деньги и фишки (сумма) и нокауты (выбившие), приём остальных записей она не трогает.
 // Починка непринятой записи (вылет с выбывшим выбившим) — другое дело: запись вступает в силу в
 // своей позиции, и записи после неё журнал может принять иначе (повторно записанный вылет того же
 // игрока станет «Не принято», ребай после него вступит в силу, места и «Игра окончена» сдвинутся).
 // Такую правку canAmend не пропускает (amendImpact) — replay её по-прежнему читает, как раньше.
-import { readAmend, readStacks, replayLog, type EventDraft, type ReplayLog } from './replay.ts';
+import { readAmend, readEntry, replayLog, type EventDraft, type ReplayLog } from './replay.ts';
 import type { AmendPayload, EveningEvent, PlayerId, TournamentFormat } from './types.ts';
 
-export type AmendField = 'stacks' | 'by';
+export type AmendField = 'rub' | 'by';
 
-/** Что исправляется у записи: кратность у входа и ребая, выбившие у вылета; иначе null. */
+/** Что исправляется у записи: сумма у входа и ребая, выбившие у вылета; иначе null. */
 export function amendField(ev: Pick<EveningEvent, 'type'>): AmendField | null {
-  if (ev.type === 'join' || ev.type === 'rebuy') return 'stacks';
+  if (ev.type === 'join' || ev.type === 'rebuy') return 'rub';
   if (ev.type === 'bust') return 'by';
   return null;
 }
 
-/** Текущее значение записи: кратность или выбившие — из того, что применил replay, иначе исходное. */
-export type AmendValue = { stacks: number } | { by: PlayerId[] };
+/** Текущее значение записи: сумма или выбившие — из того, что применил replay, иначе исходное. */
+export type AmendValue = { rub: number } | { by: PlayerId[] };
 
 function byOf(payload: unknown): PlayerId[] {
   const by = (payload as { by?: unknown } | null)?.by;
   return Array.isArray(by) ? by.filter((x): x is string => typeof x === 'string') : [];
 }
 
-function valueOf(ev: EveningEvent): AmendValue | null {
+function valueOf(format: TournamentFormat, ev: EveningEvent): AmendValue | null {
   const field = amendField(ev);
-  if (field === 'stacks') return { stacks: readStacks(ev.payload) ?? 1 };
+  // Непринятая запись с неверной суммой — правят от стандартного входа.
+  if (field === 'rub') return { rub: readEntry(format, ev.payload)?.rub ?? format.buyInRub };
   if (field === 'by') return { by: byOf(ev.payload) };
   return null;
 }
@@ -50,23 +52,30 @@ export function currentAmendValue(
   const raw = events.find((e) => e.id === eventId);
   if (!raw) return null;
   const applied = replayLog(format, events, nowMs).applied.find((e) => e.id === eventId);
-  return valueOf(applied ?? raw);
+  return valueOf(format, applied ?? raw);
 }
 
-/** Черновик поправки для отправки (add_event 'amend'). */
+/** Черновик поправки для отправки (add_event 'amend'). Сумма пишется всегда — и равная входу формата. */
 export function amendDraft(eventId: number, value: AmendValue): EventDraft {
   const payload: AmendPayload =
-    'stacks' in value ? { eventId, stacks: value.stacks } : { eventId, by: [...value.by] };
+    'rub' in value ? { eventId, rub: value.rub } : { eventId, by: [...value.by] };
   return { type: 'amend', payload };
 }
 
 function sameValue(a: AmendValue, b: AmendValue): boolean {
-  if ('stacks' in a) return 'stacks' in b && a.stacks === b.stacks;
+  if ('rub' in a) return 'rub' in b && a.rub === b.rub;
   if (!('by' in b)) return false;
   // Порядок выбивших ни на что не влияет (денег за голову нет): тот же набор — та же запись.
   const x = [...new Set(a.by)].sort();
   const y = [...new Set(b.by)].sort();
   return x.length === y.length && x.every((id, i) => id === y[i]);
+}
+
+/** Новое значение поправки: правка кратности (022–026) — сумма k·buyInRub. */
+function patchValue(format: TournamentFormat, patch: AmendPayload): AmendValue {
+  if ('by' in patch) return { by: patch.by };
+  if ('rub' in patch) return { rub: patch.rub };
+  return { rub: patch.stacks * format.buyInRub };
 }
 
 /** Журнал до правки и с правкой в хвосте (id — следующий за последним, время — nowMs). */
@@ -77,11 +86,10 @@ function withAmend(
   nowMs: number,
 ): { before: ReplayLog; after: ReplayLog; amendId: number } {
   const amendId = events.reduce((m, e) => Math.max(m, e.id), 0) + 1;
-  const draft = amendDraft(patch.eventId, 'stacks' in patch ? patch : { by: patch.by });
   const tail: EveningEvent = {
     id: amendId,
-    type: draft.type,
-    payload: draft.payload,
+    type: 'amend',
+    payload: patch,
     at: new Date(nowMs).toISOString(),
     voided: false,
   };
@@ -129,7 +137,7 @@ function impactOf(
 
 /**
  * Что правка заденет, кроме самой записи (для шторки: какие записи и почему). У принятой записи
- * всегда пусто — кратность и выбившие в правилах приёма не участвуют; задеть другие записи может
+ * всегда пусто — сумма и выбившие в правилах приёма не участвуют; задеть другие записи может
  * только починка непринятой.
  */
 export function amendImpact(
@@ -166,14 +174,13 @@ export function canAmend(
 ): string | null {
   const patch = readAmend(payload);
   if (patch === null)
-    return 'Правка: нужна исправляемая запись и одно новое значение — кратность или выбившие';
+    return 'Правка: нужна исправляемая запись и одно новое значение — сумма или выбившие';
   const target = events.find((e) => e.id === patch.eventId);
   if (!target) return 'Правка: исправляемой записи нет в журнале';
   if (target.voided) return 'Правка: исправляемая запись отменена';
   const now = currentAmendValue(format, events, target.id, nowMs);
   if (now === null) return 'Правка: исправить можно только вход, ребай или вылет';
-  const next: AmendValue = 'stacks' in patch ? { stacks: patch.stacks } : { by: patch.by };
-  if (sameValue(now, next)) return 'Правка ничего не меняет';
+  if (sameValue(now, patchValue(format, patch))) return 'Правка ничего не меняет';
   const logs = withAmend(format, events, patch, nowMs);
   const own = logs.after.state.errors.find((e) => e.eventId === logs.amendId);
   if (own) return own.message;

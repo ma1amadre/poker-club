@@ -27,9 +27,9 @@ select pg_temp.check(
 select pg_temp.check(
   (select array_agg(k order by k) from public.formats f, jsonb_object_keys(f.config) as k
    where f.id = 'f0000000-0000-4000-8000-000000000001')
-    = array['buyInRub', 'levels', 'name', 'payoutPct', 'rebuyLimit', 'rebuyUntilLevel',
-            'startingChips'],
-  'клубный формат 011 после 018 — ровно ключи DEFAULT_FORMAT');
+    = array['buyInRub', 'levels', 'name', 'payoutPct', 'payoutStepRub', 'rebuyLimit',
+            'rebuyUntilLevel', 'startingChips'],
+  'клубный формат 011 после 018 и 027 — ровно ключи DEFAULT_FORMAT (027 добавила payoutStepRub)');
 select pg_temp.check(
   (select (f.config ->> 'buyInRub')::int = 500 and (f.config ->> 'startingChips')::int = 500
    from public.formats f where f.id = 'f0000000-0000-4000-8000-000000000001'),

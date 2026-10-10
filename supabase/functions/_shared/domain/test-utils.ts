@@ -38,8 +38,15 @@ export interface Journal {
   /** Олл-ин: полное состояние раздачи — руки [игрок, карта, карта] и стол. */
   showdown(showdownId: string, hands: [PlayerId, CardCode, CardCode][], board?: CardCode[]): number;
   closeShowdown(showdownId: string): number;
-  /** Правка записи на месте (022): новая кратность входа/ребая или новые выбившие вылета. */
-  amend(eventId: number, value: { stacks: number } | { by: PlayerId[] }): number;
+  /**
+   * Правка записи на месте (022): новая сумма (027) или кратность (022–026) входа/ребая или новые
+   * выбившие вылета.
+   */
+  amend(eventId: number, value: { rub: number } | { stacks: number } | { by: PlayerId[] }): number;
+  /** Вход на сумму rub (027, payload с полем rub). */
+  joinRub(id: PlayerId, rub: number): number;
+  /** Ребай на сумму rub (027). */
+  rebuyRub(id: PlayerId, rub: number): number;
   /** Пауза на minutes минут (022). */
   pauseFor(minutes: number): number;
   /** Поправка остатка уровня на seconds секунд (022), минус — убавить. */
@@ -68,6 +75,8 @@ export function journal(startIso = '2026-10-08T16:00:00.000Z'): Journal {
       return j;
     },
     joinStacks: (p, stacks) => j.add('join', { playerId: p, stacks }),
+    joinRub: (p, rub) => j.add('join', { playerId: p, rub }),
+    rebuyRub: (p, rub) => j.add('rebuy', { playerId: p, rub }),
     rebuy: (p, stacks) =>
       j.add('rebuy', stacks === undefined ? { playerId: p } : { playerId: p, stacks }),
     bust: (p, by = []) => j.add('bust', { playerId: p, by }),

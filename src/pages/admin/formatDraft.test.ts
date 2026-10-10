@@ -121,12 +121,26 @@ describe('checkDraft', () => {
       [{ payouts: [] }, 'payouts'],
       [{ payouts: ['70', '0'] }, 'payouts'],
       [{ payouts: ['70', '20'] }, 'payouts'],
+      [{ payoutStep: '0' }, 'payoutStep'],
+      [{ payoutStep: '10001' }, 'payoutStep'],
     ];
     for (const [patch, field] of cases) {
       const { problems } = checkDraft(valid(patch));
       expect(Object.keys(problems.fields), JSON.stringify(patch)).toEqual([field]);
       expect(problems.other, JSON.stringify(patch)).toEqual([]);
     }
+  });
+
+  it('шаг призовых (027): по умолчанию 100, пусто — заполнить, 0 — словами формы', () => {
+    expect(newFormatDraft().payoutStep).toBe('100');
+    expect(formatFromDraft(valid({ payoutStep: '50' })).payoutStepRub).toBe(50);
+    expect(checkDraft(valid({ payoutStep: '' })).problems.fields.payoutStep).toBe('Заполни поле.');
+    expect(checkDraft(valid({ payoutStep: '0' })).problems.fields.payoutStep).toBe(
+      `Шаг — целое число рублей от 1 до 10${NBSP}000; 1 — до рубля.`,
+    );
+    // Формат без поля (до 027) — форма просит заполнить, а не молча ставит шаг.
+    const { payoutStepRub: _step, ...old } = DEFAULT_FORMAT;
+    expect(draftFromFormat(old as TournamentFormat).payoutStep).toBe('');
   });
 
   it('технические слова домена — в язык формы', () => {

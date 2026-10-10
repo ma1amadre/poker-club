@@ -61,6 +61,7 @@ import {
   type SegmentedOption,
 } from '../../shared/ui';
 import {
+  entryFeeText,
   groupRsvps,
   playerName,
   type RsvpGroups,
@@ -88,11 +89,6 @@ function Fact({ icon, children }: { icon: IconName; children: ReactNode }) {
       <span>{children}</span>
     </li>
   );
-}
-
-function feeText(format: Evening['format']): string {
-  const fee = formatRub(format.buyInRub);
-  return format.rebuyLimit === 0 ? `Вход — ${fee}` : `Вход и ребай — ${fee}`;
 }
 
 // --- Анонс -----------------------------------------------------------------------------------
@@ -203,7 +199,7 @@ export function AnnouncedEvening({
           <ul className="home-facts">
             {finaleSeasonKey && <Fact icon="trophy">{finaleText(finaleSeasonKey)}</Fact>}
             {evening.location && <Fact icon="map-pin">{evening.location}</Fact>}
-            <Fact icon="coins">{feeText(evening.format)}</Fact>
+            <Fact icon="coins">{entryFeeText(evening.format)}</Fact>
             <Fact icon="user">{banker ? `Банкир — ${banker}` : 'Банкир ещё не назначен'}</Fact>
             {evening.note && <Fact icon="info">{evening.note}</Fact>}
           </ul>

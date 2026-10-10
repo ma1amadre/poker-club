@@ -186,11 +186,18 @@ describe('«На кону» на экране', () => {
     expect(
       plain(
         stakeLine(
-          { kind: 'pool_record', going: 6, poolRub: 3000, recordRub: 3000, status: 'equal' },
+          {
+            kind: 'pool_record',
+            going: 6,
+            entryRub: 500,
+            poolRub: 3000,
+            recordRub: 3000,
+            status: 'equal',
+          },
           nameOf,
         ),
       ),
-    ).toBe('Идут 6 — фонд ещё до ребаев повторит рекорд клуба (3 000 ₽).');
+    ).toBe('Идут 6 — со входами по 500 ₽ фонд ещё до ребаев повторит рекорд клуба (3 000 ₽).');
     expect(stakeLine({ kind: 'oracle_step', playerId: 'c', streak: 2, target: 3 }, nameOf)).toBe(
       'Дима — в одном угаданном победителе от ачивки «Оракул».',
     );

@@ -76,7 +76,7 @@ export interface WelcomeInput {
   /** Формат клуба по умолчанию; не задан — без сумм и долей. */
   format: Pick<
     TournamentFormat,
-    'buyInRub' | 'payoutPct' | 'rebuyUntilLevel' | 'rebuyLimit'
+    'buyInRub' | 'payoutPct' | 'payoutStepRub' | 'rebuyUntilLevel' | 'rebuyLimit'
   > | null;
   /** Правила очков из настроек клуба (по ним посчитают следующие вечера). */
   scoring: ScoringConfig;
@@ -103,11 +103,23 @@ function payoutText(pct: readonly number[]): string {
   return pct.map((p, i) => `${PLACE_WORDS[i] ?? `${i + 1}-е`}${NBSP}— ${p}${NBSP}%`).join(', ');
 }
 
-/** Ребаи формата: «Ребай — столько же, до конца 5-го уровня» (+ «, не больше 2» при лимите). */
-function rebuyText(format: NonNullable<WelcomeInput['format']>): string {
+/**
+ * Вход и ребаи формата: «Вход — 500 ₽, можно другой суммой; ребай — так же, до конца 5-го уровня»
+ * (+ «, не больше 2 на игрока» при лимите). Сумма входа — любая (миграция 027), в формате — сумма
+ * по умолчанию. Не «от 500 ₽»: меньше суммы формата — тоже можно.
+ */
+function entryText(format: NonNullable<WelcomeInput['format']>): string {
+  const entry = `Вход${NBSP}— ${formatRub(format.buyInRub)}, можно другой суммой`;
+  if (format.rebuyLimit === 0) return entry;
   const limit =
     format.rebuyLimit === null ? '' : `, не больше ${format.rebuyLimit} на${NBSP}игрока`;
-  return `ребай — столько же, до конца ${format.rebuyUntilLevel}-го уровня${limit}`;
+  return `${entry}; ребай — так же, до конца ${format.rebuyUntilLevel}-го уровня${limit}`;
+}
+
+/** «Призовые — вниз до 100 ₽, остаток — первому месту»; шаг в рубль — без оговорки. */
+function stepText(format: NonNullable<WelcomeInput['format']>): string {
+  const step = format.payoutStepRub ?? 1;
+  return step > 1 ? ` Призовые — вниз до ${formatRub(step)}, остаток — первому месту.` : '';
 }
 
 /** Три карточки шторки по порядку: вечер и деньги, очки сезона, прогноз и голосование. */
@@ -117,11 +129,11 @@ export function welcomeCards(input: WelcomeInput): WelcomeCard[] {
     'Вечер ведёт банкир: сажает за стол, отмечает вылеты и ребаи. Всё видно в приложении и на табло.',
   ];
   if (format) {
-    evening.push(`Вход — ${formatRub(format.buyInRub)}, ${rebuyText(format)}.`);
+    evening.push(`${entryText(format)}.`);
     evening.push(
       format.payoutPct.length > 0
-        ? `Весь взнос идёт в призовой фонд, его делят призовые места: ${payoutText(format.payoutPct)}.`
-        : 'Весь взнос идёт в призовой фонд, его делят призовые места.',
+        ? `Весь взнос идёт в призовой фонд, его делят призовые места: ${payoutText(format.payoutPct)}.${stepText(format)}`
+        : `Весь взнос идёт в призовой фонд, его делят призовые места.${stepText(format)}`,
     );
   } else {
     evening.push(

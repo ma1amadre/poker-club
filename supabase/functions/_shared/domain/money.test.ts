@@ -3,19 +3,28 @@ import { DEFAULT_FORMAT, validateFormat } from './format.ts';
 import {
   computeMoney,
   entryAmounts,
+  entryPayload,
   isSettled,
   payouts,
+  payoutsFor,
+  payoutStep,
   paymentsFromEvents,
   prepaidPayment,
+  quickEntryAmounts,
   settlement,
   type MoneyTable,
   type Payment,
 } from './money.ts';
-import { readStacks, replay, replayLog } from './replay.ts';
+import { chipsForRub, readEntry, replay, replayLog } from './replay.ts';
 import { journal, prng } from './test-utils.ts';
 import type { EveningEvent, EveningState, PlayerId, TournamentFormat } from './types.ts';
 
-const F = DEFAULT_FORMAT;
+/**
+ * Клубный формат как в снимках вечеров до миграции 027 — без шага призовых: такие вечера считаются
+ * до рубля, как раньше (ручные сценарии ниже — на нём). Встроенный формат с 027 — CLUB (шаг 100 ₽).
+ */
+const { payoutStepRub: _clubStep, ...F } = DEFAULT_FORMAT;
+const CLUB = DEFAULT_FORMAT;
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 describe('payouts', () => {
@@ -206,8 +215,8 @@ describe('нокауты — только статистика, денег за 
 
 describe('вход и ребай кратно стандартному', () => {
   it('entryAmounts: вход на 1 000 ₽ — 1 000 фишек, весь взнос в фонд', () => {
-    expect(entryAmounts(F, 2)).toEqual({ stacks: 2, rub: 1000, chips: 1000 });
-    expect(entryAmounts(F)).toEqual({ stacks: 1, rub: 500, chips: 500 });
+    expect(entryAmounts(F, 1000)).toEqual({ rub: 1000, chips: 1000 });
+    expect(entryAmounts(F)).toEqual({ rub: 500, chips: 500 });
   });
 
   it('вход ×2: взнос 1 000, фонд +1 000', () => {
@@ -216,10 +225,9 @@ describe('вход и ребай кратно стандартному', () => {
     j.start();
     let s = replay(F, j.events, j.now());
     expect(s.totalEntries).toBe(3);
-    expect(s.totalStacks).toBe(4);
     expect(s.totalChips).toBe(2000);
     expect(s.prizePoolRub).toBe(2000);
-    expect(s.players.C).toMatchObject({ entries: 1, stacks: 2 });
+    expect(s.players.C).toMatchObject({ entries: 1, feeRub: 1000, chips: 1000 });
 
     j.wait(5).bust('C', ['A']);
     j.wait(5).bust('B', ['A']);
@@ -247,8 +255,7 @@ describe('вход и ребай кратно стандартному', () => {
     j.finish();
     const s = replay(F, j.events, j.now());
     expect(s.errors).toEqual([]);
-    expect(s.players.A).toMatchObject({ entries: 3, rebuys: 2, stacks: 6, kos: 2 });
-    expect(s.totalStacks).toBe(8);
+    expect(s.players.A).toMatchObject({ entries: 3, rebuys: 2, feeRub: 3000, kos: 2 });
     expect(s.prizePoolRub).toBe(4000);
     const m = computeMoney(F, s);
     // Фонд 4000 → 2800 / 1200; A внёс 6 × 500.
@@ -283,6 +290,10 @@ describe('вход и ребай кратно стандартному', () => {
 
 const PAYOUTS: number[][] = [[70, 30], [100], [50, 30, 20], [33.3, 33.3, 33.4], [60, 25, 10, 5]];
 const BUYINS: number[] = [500, 300, 1000, 7, 101, 1, 333];
+/** Шаг призовых формата: нет поля (вечера до 027), 1, 50, 100, 1 000 ₽. */
+const STEPS: (number | undefined)[] = [undefined, 1, 50, 100, 1000];
+/** Свободные суммы входа и ребая (027): «некруглые», крошечные и предельная. */
+const FREE_RUB: number[] = [300, 700, 750, 1, 2500, 333, 1050, 100_000];
 
 interface Coverage {
   split2: number;
@@ -299,6 +310,10 @@ interface Coverage {
   mixedRebuy: number;
   /** Фонд, который по долям не делится нацело: рубль от округления уходит 1-му месту. */
   unevenPayout: number;
+  /** Входы и ребаи свободной суммой (rub, 027). */
+  freeRub: number;
+  /** Вечера, где шаг призовых что-то округлил (без шага выплаты были бы другими). */
+  stepRounded: number;
 }
 
 const newCoverage = (): Coverage => ({
@@ -312,6 +327,8 @@ const newCoverage = (): Coverage => ({
   multi: 0,
   mixedRebuy: 0,
   unevenPayout: 0,
+  freeRub: 0,
+  stepRounded: 0,
 });
 
 function randomEvening(seed: number, cov: Coverage) {
@@ -322,6 +339,7 @@ function randomEvening(seed: number, cov: Coverage) {
     ...F,
     buyInRub: pick(BUYINS),
     payoutPct: pick(PAYOUTS),
+    payoutStepRub: pick(STEPS),
     rebuyLimit: r() < 0.2 ? 1 : null,
     // Короткие уровни — чтобы ребаи закрывались и до, и после окончания игры.
     levels: F.levels.map((l) => ({
@@ -333,26 +351,33 @@ function randomEvening(seed: number, cov: Coverage) {
   const firstWave = 2 + Math.floor(r() * (n - 1));
   const j = journal();
 
-  // Кратность входа: чаще стандартный, иногда ×2–×3 и изредка предельный ×10. Стандартный — то
-  // без поля stacks (как события до кратных входов), то с явной единицей.
+  // Сумма входа: то кратностью (записи до 027) — чаще стандартный, иногда ×2–×3 и изредка
+  // предельный ×10; стандартный то без поля stacks, то с явной единицей, — то свободной суммой
+  // (rub, 027). Сравнение «ребай другой суммой» — по рублям.
   const current = new Map<PlayerId, number>();
-  const stacksArg = (): number | undefined => {
+  type Arg = { stacks?: number } | { rub: number };
+  const entryArg = (): Arg => {
+    if (r() < 0.4) {
+      cov.freeRub += 1;
+      return { rub: pick(FREE_RUB) };
+    }
     const x = r();
     const k = x < 0.55 ? 1 : x < 0.8 ? 2 : x < 0.95 ? 3 : 10;
     if (k > 1) cov.multi += 1;
-    return k === 1 && r() < 0.5 ? undefined : k;
+    return k === 1 && r() < 0.5 ? {} : { stacks: k };
   };
+  const rubOf = (a: Arg): number =>
+    'rub' in a ? a.rub : fmt.buyInRub * (('stacks' in a ? a.stacks : undefined) ?? 1);
   const enter = (id: PlayerId): void => {
-    const k = stacksArg();
-    if (k === undefined) j.join(id);
-    else j.joinStacks(id, k);
-    current.set(id, k ?? 1);
+    const a = entryArg();
+    j.add('join', { playerId: id, ...a });
+    current.set(id, rubOf(a));
   };
   const rebuy = (id: PlayerId): void => {
-    const k = stacksArg();
-    if ((k ?? 1) !== current.get(id)) cov.mixedRebuy += 1;
-    j.rebuy(id, k);
-    current.set(id, k ?? 1);
+    const a = entryArg();
+    if (rubOf(a) !== current.get(id)) cov.mixedRebuy += 1;
+    j.add('rebuy', { playerId: id, ...a });
+    current.set(id, rubOf(a));
   };
 
   for (const id of ids.slice(0, firstWave)) enter(id);
@@ -412,19 +437,22 @@ function randomEvening(seed: number, cov: Coverage) {
   const pcts = fmt.payoutPct.slice(0, places);
   const pctSum = sum(pcts);
   if (pcts.some((p) => !Number.isInteger((s.prizePoolRub * p) / pctSum))) cov.unevenPayout += 1;
+  const byRuble = payouts(s.prizePoolRub, fmt.payoutPct, s.joinOrder.length);
+  const byStep = payoutsFor(fmt, s.prizePoolRub, s.joinOrder.length);
+  if (byRuble.some((x, i) => x !== byStep[i])) cov.stepRounded += 1;
   return { fmt, s, j };
 }
 
 interface Expected {
-  /** Взносы игрока: buyInRub × кратность каждого его входа и ребая. */
+  /** Взносы игрока: сумма каждого его входа и ребая (rub) или buyInRub × кратность. */
   owesRub: Map<PlayerId, number>;
   /** Нокауты: каждому из by, при дележе — каждому. */
   kos: Map<PlayerId, number>;
 }
 
 /**
- * Независимый пересчёт по журналу — без replay и computeMoney: кратность из payload, нокаут —
- * каждому из by. Годится для журналов, где все события приняты (errors = []).
+ * Независимый пересчёт по журналу — без replay и computeMoney: сумма или кратность из payload,
+ * нокаут — каждому из by. Годится для журналов, где все события приняты (errors = []).
  */
 function expectedFromJournal(fmt: TournamentFormat, events: readonly EveningEvent[]): Expected {
   const e: Expected = { owesRub: new Map(), kos: new Map() };
@@ -432,9 +460,9 @@ function expectedFromJournal(fmt: TournamentFormat, events: readonly EveningEven
     map.set(id, (map.get(id) ?? 0) + v);
   for (const ev of [...events].sort((a, b) => a.id - b.id)) {
     if (ev.voided) continue;
-    const p = ev.payload as { playerId: PlayerId; stacks?: number; by?: PlayerId[] };
+    const p = ev.payload as { playerId: PlayerId; stacks?: number; rub?: number; by?: PlayerId[] };
     if (ev.type === 'join' || ev.type === 'rebuy') {
-      add(e.owesRub, p.playerId, fmt.buyInRub * (p.stacks ?? 1));
+      add(e.owesRub, p.playerId, p.rub ?? fmt.buyInRub * (p.stacks ?? 1));
     } else if (ev.type === 'bust') {
       for (const id of p.by ?? []) add(e.kos, id, 1);
     }
@@ -471,7 +499,7 @@ function checkFinished(
   const all = rows.filter((x): x is NonNullable<typeof x> => x !== undefined);
   const owes = sum(all.map((x) => x.owesRub));
   const exp = expectedFromJournal(fmt, events);
-  const prizesByPlace = payouts(s.prizePoolRub, fmt.payoutPct, ids.length);
+  const prizesByPlace = payouts(s.prizePoolRub, fmt.payoutPct, ids.length, payoutStep(fmt));
   const t0 = settlement(m, []);
   const pays = ids
     .map((id) => ({ playerId: id, amountRub: t0[id]?.dueRub ?? 0 }))
@@ -495,8 +523,7 @@ function checkFinished(
       (x) =>
         ![x.owesRub, x.prizeRub, x.netRub].every(Number.isInteger) ||
         x.prizeRub < 0 ||
-        x.netRub !== x.prizeRub - x.owesRub ||
-        x.owesRub % fmt.buyInRub !== 0,
+        x.netRub !== x.prizeRub - x.owesRub,
     ).length,
     owes: byId((id) => m[id]?.owesRub),
     prize: byId((id) => m[id]?.prizeRub),
@@ -512,7 +539,7 @@ function checkFinished(
     rows: ids.length,
     paid: owes,
     net: 0,
-    // Весь взнос — в фонд: buyIn·Σk.
+    // Весь взнос — в фонд: сумма всех входов и ребаев.
     pool: owes,
     keys: ['netRub,owesRub,prizeRub'],
     malformed: 0,
@@ -531,7 +558,7 @@ function checkFinished(
 }
 
 describe('инвариант: сумма призовых = сумма взносов', () => {
-  it('на 3000 сгенерированных вечерах (2–6 игроков, кратные входы и ребаи, сплиты, вылеты без выбивших)', () => {
+  it('на 3000 сгенерированных вечерах (2–6 игроков, кратные и свободные суммы, шаг призовых, сплиты)', () => {
     const cov = newCoverage();
     for (let seed = 1; seed <= 3000; seed++) {
       const { fmt, s, j } = randomEvening(seed, cov);
@@ -554,6 +581,8 @@ describe('инвариант: сумма призовых = сумма взно�
     expect(cov.multi).toBeGreaterThan(1000);
     expect(cov.mixedRebuy).toBeGreaterThan(100);
     expect(cov.unevenPayout).toBeGreaterThan(100);
+    expect(cov.freeRub).toBeGreaterThan(1000);
+    expect(cov.stepRounded).toBeGreaterThan(300);
     expect([...cov.players].sort()).toEqual([2, 3, 4, 5, 6]);
   });
 
@@ -566,7 +595,7 @@ describe('инвариант: сумма призовых = сумма взно�
       const m = computeMoney(fmt, s);
       const owes = sum(Object.values(m).map((x) => x.owesRub));
       expect(s.prizePoolRub).toBe(owes);
-      expect(s.prizePoolRub).toBe(s.totalStacks * fmt.buyInRub);
+      expect(s.prizePoolRub).toBe(sum([...expectedFromJournal(fmt, open).owesRub.values()]));
       expect(sum(Object.values(m).map((x) => x.prizeRub))).toBe(0);
       expect(Object.values(m).every((x) => x.netRub === -x.owesRub)).toBe(true);
     }
@@ -577,15 +606,17 @@ describe('инвариант: сумма призовых = сумма взно�
 
 /**
  * Все вечера на трёх игроков: каждый входит ×1 (без поля stacks, как старые события) или ×2, любой
- * вылет с любым упорядоченным списком выбивших, один ребай за вечер ×1 или ×3 любым вылетевшим в
- * любой момент, finish, когда остался один. Вход 333 ₽: фонд по 70/30 нацело не делится — рубль от
- * округления виден. Около 22 тысяч вечеров.
+ * вылет с любым упорядоченным списком выбивших, один ребай за вечер ×1, ×3 или на 700 ₽ (свободная
+ * сумма, 027) любым вылетевшим в любой момент, finish, когда остался один. Вход 333 ₽: фонд по 70/30
+ * нацело не делится — рубль от округления виден. Около 30 тысяч вечеров.
  */
 describe('перебор: все маленькие вечера на трёх игроков', () => {
+  /** Листьев перебора на один набор входов (у каждого игрока ×1 или ×2). */
+  const LEAVES_PER_JOIN = 4200;
   const FMT: TournamentFormat = { ...F, buyInRub: 333, payoutPct: [70, 30] };
   const IDS = ['A', 'B', 'C'];
   const MAX_REBUYS = 1;
-  const REBUY_STACKS = [1, 3];
+  const REBUY_PAYLOADS: object[] = [{ stacks: 1 }, { stacks: 3 }, { rub: 700 }];
 
   interface Node {
     events: EveningEvent[];
@@ -625,10 +656,10 @@ describe('перебор: все маленькие вечера на трёх �
     const dead = IDS.filter((id) => !node.alive.has(id));
     if (node.rebuys < MAX_REBUYS) {
       for (const id of dead) {
-        for (const k of REBUY_STACKS) {
+        for (const extra of REBUY_PAYLOADS) {
           const alive = new Set(node.alive).add(id);
           yield* walk({
-            events: mk(node.events, 'rebuy', { playerId: id, stacks: k }),
+            events: mk(node.events, 'rebuy', { playerId: id, ...extra }),
             alive,
             rebuys: node.rebuys + 1,
           });
@@ -653,6 +684,7 @@ describe('перебор: все маленькие вечера на трёх �
   it('инвариант и независимый пересчёт на каждом листе', () => {
     let leaves = 0;
     let sawTripleRebuy = 0;
+    let sawFreeRebuy = 0;
     for (const a of [1, 2])
       for (const b of [1, 2])
         for (const c of [1, 2]) {
@@ -674,22 +706,21 @@ describe('перебор: все маленькие вечера на трёх �
               )
             )
               sawTripleRebuy += 1;
+            if (leaf.some((e) => e.type === 'rebuy' && 'rub' in (e.payload as object)))
+              sawFreeRebuy += 1;
           }
         }
-    // Перебор действительно большой и с ребаями ×3.
-    expect(leaves).toBe(8 * 2820);
+    // Перебор действительно большой и с ребаями ×3 и на 700 ₽.
+    expect(leaves).toBe(8 * LEAVES_PER_JOIN);
     expect(sawTripleRebuy).toBeGreaterThan(1000);
+    expect(sawFreeRebuy).toBeGreaterThan(1000);
   });
 });
 
 describe('«Оплачено сразу»: платёж на взнос тем же действием, что и вход', () => {
-  it('сумма — взнос входа или ребая кратности k', () => {
-    expect(prepaidPayment(F, 'A')).toEqual({ playerId: 'A', amountRub: 500 });
-    expect(prepaidPayment(F, 'A', 3)).toEqual({ playerId: 'A', amountRub: 1500 });
-    expect(prepaidPayment({ ...F, buyInRub: 333 }, 'B', 10)).toEqual({
-      playerId: 'B',
-      amountRub: 3330,
-    });
+  it('сумма — сумма записи входа или ребая', () => {
+    expect(prepaidPayment('A', 500)).toEqual({ playerId: 'A', amountRub: 500 });
+    expect(prepaidPayment('B', 700)).toEqual({ playerId: 'B', amountRub: 700 });
   });
 
   /** Платёж к каждому принятому входу и ребаю журнала — как если бы все платили сразу. */
@@ -698,7 +729,7 @@ describe('«Оплачено сразу»: платёж на взнос тем �
       .applied.filter((e) => e.type === 'join' || e.type === 'rebuy')
       .map((e): Payment => {
         const id = (e.payload as { playerId: PlayerId }).playerId;
-        return prepaidPayment(fmt, id, readStacks(e.payload) ?? 1);
+        return prepaidPayment(id, readEntry(fmt, e.payload)?.rub ?? NaN);
       });
 
   it('ручной вечер: по ходу игры все в расчёте, после финала банкир должен только призовые', () => {
@@ -740,5 +771,173 @@ describe('«Оплачено сразу»: платёж на взнос тем �
       // Банкир раздаёт ровно то, что собрал: сумма остатков — минус фонд.
       expect(sum(Object.values(t).map((r) => r.remainingRub))).toBe(-s.prizePoolRub);
     }
+  });
+});
+
+// ---------- миграция 027: вход и ребай любой суммой, шаг призовых ----------
+
+describe('шаг призовых: вниз до шага, остаток — 1-му месту', () => {
+  it('примеры клуба: 3 700 и 3 500 при 70/30 и шаге 100, шаг 50', () => {
+    // 70 % от 3 700 = 2 590 → 2 500, 30 % = 1 110 → 1 100, остаток 100 — первому.
+    expect(payouts(3700, [70, 30], 6, 100)).toEqual([2600, 1100]);
+    expect(payouts(3500, [70, 30], 6, 100)).toEqual([2500, 1000]);
+    expect(payouts(3500, [70, 30], 6, 50)).toEqual([2450, 1050]);
+    // Без шага (вечера до 027) — до рубля, как раньше.
+    expect(payouts(3700, [70, 30], 6)).toEqual([2590, 1110]);
+    expect(payouts(3500, [70, 30], 6, 1)).toEqual([2450, 1050]);
+  });
+
+  it('фонд меньше шага — весь первому; фонд не кратен шагу — остаток первому', () => {
+    expect(payouts(80, [70, 30], 4, 100)).toEqual([80, 0]);
+    expect(payouts(0, [70, 30], 4, 100)).toEqual([0, 0]);
+    expect(payouts(3750, [70, 30], 6, 100)).toEqual([2650, 1100]);
+    expect(payouts(1000, [50, 30, 20], 5, 100)).toEqual([500, 300, 200]);
+    expect(payouts(1050, [33.3, 33.3, 33.4], 3, 100)).toEqual([450, 300, 300]);
+    // Перенормировка при нехватке игроков — с тем же шагом.
+    expect(payouts(1000, [50, 30, 20], 2, 100)).toEqual([700, 300]);
+  });
+
+  it('неверный шаг — до рубля; шаг формата читает payoutStep', () => {
+    expect(payouts(3700, [70, 30], 6, 0)).toEqual([2590, 1110]);
+    expect(payouts(3700, [70, 30], 6, 12.5)).toEqual([2590, 1110]);
+    expect(payoutStep(CLUB)).toBe(100);
+    expect(payoutStep(F as TournamentFormat)).toBe(1);
+    expect(payoutStep({ payoutStepRub: -5 })).toBe(1);
+    expect(payoutsFor(CLUB, 3700, 6)).toEqual([2600, 1100]);
+    expect(payoutsFor(F, 3700, 6)).toEqual([2590, 1110]);
+  });
+
+  it('validateFormat: шаг — целое 1..10 000 или нет поля', () => {
+    expect(validateFormat(CLUB)).toEqual([]);
+    expect(validateFormat(F)).toEqual([]);
+    expect(validateFormat({ ...CLUB, payoutStepRub: 50 })).toEqual([]);
+    for (const bad of [0, -100, 12.5, 10_001, '100', null])
+      expect(validateFormat({ ...CLUB, payoutStepRub: bad }), String(bad)).toEqual([
+        'Шаг призовых — целое число рублей от 1 до 10 000',
+      ]);
+  });
+
+  it('computeMoney: вечер со снимком без шага — до рубля, с шагом — вниз до шага', () => {
+    const j = journal().join('A', 'B', 'C', 'D');
+    j.joinRub('E', 1700); // фонд 3 700
+    j.start();
+    j.wait(5).bust('E', ['A']);
+    j.wait(5).bust('D', ['A']);
+    j.wait(5).bust('C', ['B']);
+    j.wait(5).bust('B', ['A']);
+    j.finish();
+    const s = replay(CLUB, j.events, j.now());
+    expect(s.prizePoolRub).toBe(3700);
+    const m = computeMoney(CLUB, s);
+    expect([m.A?.prizeRub, m.B?.prizeRub]).toEqual([2600, 1100]);
+    expect(sum(Object.values(m).map((x) => x.prizeRub))).toBe(3700);
+    // Тот же журнал по снимку без шага (вечер до 027) — до рубля.
+    expect(computeMoney(F, replay(F, j.events, j.now())).A?.prizeRub).toBe(2590);
+  });
+});
+
+describe('вход и ребай любой суммой (rub в записи)', () => {
+  it('взнос, фишки, фонд и средний стек — по записям: 500 / 700 / 300 и ребай 300', () => {
+    const j = journal();
+    j.join('A'); // стандартный: 500
+    j.joinRub('B', 700);
+    j.joinRub('C', 300);
+    j.start();
+    j.wait(5).bust('C', ['A']);
+    j.rebuyRub('C', 300);
+    const s = replay(CLUB, j.events, j.now());
+    expect(s.errors).toEqual([]);
+    expect(s.players.A).toMatchObject({ entries: 1, feeRub: 500, chips: 500 });
+    expect(s.players.B).toMatchObject({ entries: 1, feeRub: 700, chips: 700 });
+    expect(s.players.C).toMatchObject({ entries: 2, rebuys: 1, feeRub: 600, chips: 600 });
+    expect(s.prizePoolRub).toBe(1800);
+    expect(s.totalChips).toBe(1800);
+    expect(s.totalEntries).toBe(4);
+    const m = computeMoney(CLUB, s);
+    expect([m.A?.owesRub, m.B?.owesRub, m.C?.owesRub]).toEqual([500, 700, 600]);
+  });
+
+  it('фишки по курсу формата: startingChips за buyInRub, до целого', () => {
+    expect(chipsForRub({ buyInRub: 500, startingChips: 500 }, 700)).toBe(700);
+    expect(chipsForRub({ buyInRub: 500, startingChips: 1000 }, 300)).toBe(600);
+    expect(chipsForRub({ buyInRub: 300, startingChips: 1000 }, 500)).toBe(1667);
+    expect(chipsForRub({ buyInRub: 333, startingChips: 500 }, 1)).toBe(2);
+    expect(chipsForRub({ buyInRub: 0, startingChips: 500 }, 700)).toBe(0);
+    const j = journal();
+    j.joinRub('A', 300);
+    j.join('B');
+    const s = replay({ ...CLUB, startingChips: 1000 }, j.events, j.now());
+    expect(s.totalChips).toBe(600 + 1000);
+  });
+
+  it('записи без суммы читаются как раньше: кратность × вход формата', () => {
+    expect(readEntry(F, { playerId: 'A' })).toEqual({ rub: 500, chips: 500 });
+    expect(readEntry(F, { playerId: 'A', stacks: 3 })).toEqual({ rub: 1500, chips: 1500 });
+    expect(
+      readEntry({ ...F, buyInRub: 333, startingChips: 1000 }, { playerId: 'A', stacks: 2 }),
+    ).toEqual({ rub: 666, chips: 2000 });
+    expect(readEntry(F, { playerId: 'A', rub: 700 })).toEqual({ rub: 700, chips: 700 });
+    // Неверные: обе формы сразу, сумма не целая, ноль, больше предела, строкой.
+    for (const bad of [
+      { playerId: 'A', rub: 700, stacks: 2 },
+      { playerId: 'A', rub: 700.5 },
+      { playerId: 'A', rub: 0 },
+      { playerId: 'A', rub: 100_001 },
+      { playerId: 'A', rub: '700' },
+      { playerId: 'A', stacks: 11 },
+    ])
+      expect(readEntry(F, bad), JSON.stringify(bad)).toBeNull();
+    expect(readEntry(F, { playerId: 'A', rub: 100_000 })).toEqual({
+      rub: 100_000,
+      chips: 100_000,
+    });
+  });
+
+  it('неверная сумма — запись не принята, текст отказа', () => {
+    const j = journal().join('A');
+    const both = j.add('join', { playerId: 'B', rub: 700, stacks: 2 });
+    const zero = j.add('join', { playerId: 'C', rub: 0 });
+    const big = j.add('join', { playerId: 'D', rub: 100_001 });
+    const s = replay(F, j.events, j.now());
+    const rubError = 'Сумма входа или ребая — целое число рублей от 1 до 100 000';
+    expect(s.errors).toEqual([
+      { eventId: both, message: 'Вход: нужна сумма или кратность — что-то одно' },
+      { eventId: zero, message: rubError },
+      { eventId: big, message: rubError },
+    ]);
+    expect(s.prizePoolRub).toBe(500);
+  });
+
+  it('старые записи: тот же вечер с суммами явно (rub = k × вход) — те же деньги и места', () => {
+    const old = journal();
+    old.join('A');
+    old.joinStacks('B', 2);
+    old.join('C');
+    old.start();
+    old.wait(5).bust('C', ['A']);
+    old.rebuy('C', 3);
+    old.wait(5).bust('B', ['C']);
+    old.wait(5).bust('C', ['A']);
+    old.finish();
+    const explicit = old.events.map((e) => {
+      if (e.type !== 'join' && e.type !== 'rebuy') return e;
+      const { stacks, ...rest } = e.payload as { playerId: string; stacks?: number };
+      return { ...e, payload: { ...rest, rub: F.buyInRub * (stacks ?? 1) } };
+    });
+    const a = replay(F, old.events, old.now());
+    const b = replay(F, explicit, old.now());
+    expect(b).toEqual(a);
+    expect(computeMoney(F, b)).toEqual(computeMoney(F, a));
+    expect(a.prizePoolRub).toBe(3500);
+    // Вечер до 027 (снимок без шага) — те же призовые, что считались до него: 2 450 / 1 050.
+    expect(computeMoney(F, a).A?.prizeRub).toBe(2450);
+  });
+
+  it('entryPayload: стандартный вход — без поля, иначе rub; быстрые суммы — ×1, ×2, ×3', () => {
+    expect(entryPayload(CLUB, 'A', 500)).toEqual({ playerId: 'A' });
+    expect(entryPayload(CLUB, 'A', 700)).toEqual({ playerId: 'A', rub: 700 });
+    expect(entryPayload(CLUB, 'A', 1000)).toEqual({ playerId: 'A', rub: 1000 });
+    expect(quickEntryAmounts(CLUB)).toEqual([500, 1000, 1500]);
+    expect(quickEntryAmounts({ ...CLUB, buyInRub: 300 })).toEqual([300, 600, 900]);
   });
 });

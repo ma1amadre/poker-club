@@ -92,9 +92,15 @@ insert into public.evenings (id, scheduled_at, location, note, status, banker_id
   ('e0000000-0000-4000-8000-000000000006', '2026-10-08 16:00:00+00', 'У Жени', 'Возьмите наличку на ребаи',
    'announced', 'a0000000-0000-4000-8000-000000001002', '{}', 'a0000000-0000-4000-8000-000000001001');
 
--- Снимок формата — тот же клубный.
+-- Снимок формата — тот же клубный. Прошедшие вечера — без шага призовых (payoutStepRub, миграция 027):
+-- они сыграны до него и считаются до рубля, как в облаке (027 снимки вечеров не трогает); расчёты
+-- ниже сходятся в ноль именно так. Анонс — с шагом: как вечер, созданный после 027.
 update public.evenings
-set format = (select f.config from public.formats f where f.id = 'f0000000-0000-4000-8000-000000000001');
+set format = (select f.config - 'payoutStepRub' from public.formats f
+              where f.id = 'f0000000-0000-4000-8000-000000000001');
+update public.evenings
+set format = (select f.config from public.formats f where f.id = 'f0000000-0000-4000-8000-000000000001')
+where status = 'announced';
 
 -- Причина отмены — отдельно от заметки (миграция 010).
 update public.evenings set cancel_reason = 'Не собрали состав'

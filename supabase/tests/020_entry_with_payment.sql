@@ -313,9 +313,9 @@ select pg_temp.check(
   and not has_function_privilege('anon', 'public.void_events(bigint[])', 'execute'),
   'void_events: authenticated и service_role, не anon');
 select pg_temp.check(
-  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
-  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
-  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid, integer)', 'execute')
+  has_function_privilege('authenticated', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute')
+  and has_function_privilege('service_role', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute')
+  and not has_function_privilege('anon', 'public.add_guest(uuid, text, integer, uuid, integer, integer)', 'execute')
   and to_regprocedure('public.add_guest(uuid, text, integer, uuid)') is null,
   'add_guest(…, integer): authenticated и service_role, не anon; сигнатуры 019 нет');
 select pg_temp.check(

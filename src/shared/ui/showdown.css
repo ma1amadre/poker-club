@@ -649,6 +649,128 @@
   }
 }
 
+/*
+ * Плотные ауты табло — семь–девять рук (ui-sd--dense, ShowdownView). В колонку из четырёх-пяти рук
+ * прежние ауты (число крупно на две строки подписи, плашки крупнее подписи, делёж плашками отдельной
+ * строкой) не помещались, и useFitToScreen ужимал всю панель — подписи выходили мельче 24 px макета.
+ * Здесь: число и подпись одной строкой («7 аутов к тёрну»; «Догонит…» — строкой ниже: в колонку из
+ * пяти рук обе части в одну строку не помещаются), плашки — размером подписи, делёж — числом в строке
+ * «Догонит…» («Догонит: 3 %, на делёж: 1»; не помещается — переносится целиком), делёж в процентах —
+ * под процентами руки, а не строкой над аутами. Две–шесть рук не меняются: число дележа и делёж под
+ * процентами — только в этом варианте.
+ */
+.ui-sd__outs-split {
+  display: none;
+}
+
+/* Делёж в процентах у плотного табло — под процентами (карты — на две строки сетки), без своей строки. */
+.ui-sd--board.ui-sd--dense .ui-sd__hand {
+  grid-template-areas:
+    'who who'
+    'cards pct'
+    'cards tie'
+    'bar bar'
+    'notes notes';
+}
+
+.ui-sd--dense .ui-sd__tie {
+  grid-area: tie;
+  justify-self: end;
+  align-self: start;
+  line-height: 1.05;
+}
+
+@media (min-width: 1024px) and (orientation: landscape) {
+  .ui-sd--board.ui-sd--dense {
+    /* Число — на строке подписи и чуть крупнее её: строка аутов — высотой в подпись. */
+    --sd-outs-num: calc(var(--sd-outs-text) * 1.2);
+    --sd-chip: var(--sd-outs-text);
+    /* Одних аутов мало: две строки рук с дележом и плашками в два ряда всё равно не помещались. Карты
+       стола и рук — на долю мельче, зазоры — плотнее; подписи и проценты — прежнего размера. */
+    --sd-board-w: calc(var(--sd-u) * 7.5);
+    --sd-hand-w: calc(var(--sd-u) * 5.6);
+    /* Проценты с делёжом под ними — не выше карт руки. */
+    --sd-pct: calc(var(--sd-u) * 5.4);
+    --sd-pad: calc(var(--sd-u) * 1.2);
+    --sd-inner: calc(var(--sd-u) * 0.8);
+    --sd-hands-gap: calc(var(--sd-u) * 1.8);
+  }
+
+  /* Девять рук — пять колонок: ещё на долю плотнее, чтобы «Догонит на тёрне: 23 %» на 1280×720 не
+     рвалась на две строки (поля табло по бокам там шире в долях кадра). Строка — 22 знака моно по
+     1,35 доли (29,7 доли); колонка при 1280×720 — (164,4 − 4·зазор) / 5 − 2·поле − 2 px рамки:
+     с полем 1 и зазором 1,4 — 29,5 доли (не хватало 1,4 px), с полем 0,8 и зазором 1 — 30,2. */
+  .ui-sd--board.ui-sd--dense[data-hands='9'] {
+    --sd-board-w: calc(var(--sd-u) * 7);
+    --sd-hand-w: calc(var(--sd-u) * 5);
+    --sd-pct: calc(var(--sd-u) * 4.6);
+    --sd-name: calc(var(--sd-u) * 2.8);
+    --sd-pad: calc(var(--sd-u) * 0.8);
+    --sd-hands-gap: var(--sd-u);
+  }
+
+  .ui-sd--dense .ui-sd__outs {
+    gap: calc(var(--sd-u) * 0.5);
+    padding-top: calc(var(--sd-u) * 0.6);
+  }
+
+  /* Число и первая часть подписи — одной строкой, «Догонит…» — во всю ширину строкой ниже. */
+  .ui-sd--dense .ui-sd__outs-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    gap: 0 calc(var(--sd-u) * 0.8);
+  }
+
+  .ui-sd--dense .ui-sd__outs-label {
+    display: contents;
+  }
+
+  .ui-sd--dense .ui-sd__outs-catch {
+    display: flex;
+    flex-wrap: wrap;
+    grid-column: 1 / -1;
+    /* Пробел 0.5em и место висячей запятой (1ch, ниже): «Догонит: 3 %, на делёж: 1» — как раньше. */
+    column-gap: calc(0.5em + 1ch);
+  }
+
+  /* «Догонит: 3 %, на делёж: 1» — запятая остаётся в конце строки и при переносе. Запятая висячая —
+     вне потока, сразу за текстом: «Догонит на тёрне: 26 %» у девяти рук на 1280×720 входит в колонку
+     впритык, и запятая в потоке рвала её на «Догонит» / «на тёрне: 26 %,». Место запятой — в зазоре
+     до «на делёж», а при переносе — в поле руки. bottom: 0 — на строке текста (высота строки та же). */
+  .ui-sd--dense .ui-sd__outs-catch > :first-child:not(:last-child) {
+    position: relative;
+  }
+
+  .ui-sd--dense .ui-sd__outs-catch > :first-child:not(:last-child)::after {
+    content: ',';
+    position: absolute;
+    bottom: 0;
+    left: 100%;
+  }
+
+  /* Подписи аутов и «Устоит на …» — без разрядки: в узкой колонке она стоила строки. Селектор —
+     (0,3,0): правила «Терминала» в конце файла ([data-theme] + класс, 0,2,0, разрядка 0.02em) стоят
+     ниже и при равной специфичности перебивали сброс (тест — showdown.test.ts). */
+  .ui-sd--board.ui-sd--dense .ui-sd__outs-label,
+  .ui-sd--board.ui-sd--dense .ui-sd__outs-none,
+  .ui-sd--board.ui-sd--dense .ui-sd__hold {
+    letter-spacing: 0;
+  }
+
+  .ui-sd--dense .ui-sd__outs-num {
+    line-height: 1;
+  }
+
+  .ui-sd--dense .ui-sd__chips--split {
+    display: none;
+  }
+
+  .ui-sd--dense .ui-sd__outs-split {
+    display: inline;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ui-sd__bar > span {
     transition: none;

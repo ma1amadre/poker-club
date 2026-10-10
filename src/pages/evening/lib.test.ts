@@ -13,11 +13,15 @@ import {
   clockView,
   describeEvent,
   describeTrigger,
-  entryPayload,
+  entryAmountText,
+  ENTRY_RUB_HINT,
   eventPlayerId,
+  feeFactText,
+  feedContext,
   feedEvents,
   formatBb,
   formatBbValue,
+  hideKeyboardOnEnter,
   initialKillers,
   killersHint,
   lastBust,
@@ -53,7 +57,9 @@ import {
   reopenedNotice,
   settledNotice,
   rebuyWindow,
+  parseEntryRub,
   seatButtonLabel,
+  seatDetail,
   seatCandidates,
   seatPreselected,
   seatSpectator,
@@ -64,7 +70,6 @@ import {
   settleShareText,
   settleTotals,
   signedPayment,
-  stacksAmountText,
   totalRebuys,
   triggerProgress,
   undoActionText,
@@ -116,15 +121,15 @@ describe('describeEvent', () => {
     expect(ev('payment', { playerId: 'a', amountRub: -300 }).title).toBe('Банкир → Женя 300 ₽');
   });
 
-  it('вход и ребай', () => {
+  it('вход и ребай — с суммой записи (стандартный — вход формата)', () => {
     expect(ev('join', { playerId: 'c' })).toEqual({
       kind: 'entry',
-      title: 'Вход: Дима',
+      title: 'Вход: Дима · 500 ₽',
       detail: null,
     });
     expect(ev('rebuy', { playerId: 'c' })).toEqual({
       kind: 'entry',
-      title: 'Ребай: Дима',
+      title: 'Ребай: Дима · 500 ₽',
       detail: null,
     });
   });
@@ -164,12 +169,45 @@ describe('describeEvent', () => {
     });
   });
 
-  it('вход и ребай кратно стандартному — с суммой; ×1 явно — как стандартный', () => {
-    expect(ev('join', { playerId: 'c', stacks: 2 }).detail).toBe('вход на 1000 ₽');
-    expect(ev('rebuy', { playerId: 'c', stacks: 3 }).detail).toBe('ребай на 1500 ₽');
-    expect(ev('join', { playerId: 'c', stacks: 1 }).detail).toBeNull();
-    // Кривая кратность: журнал её не примет — подписи суммы нет.
-    expect(ev('join', { playerId: 'c', stacks: 0 }).detail).toBeNull();
+  it('сумма записи: rub (027) и кратность (до 027); кривая — без суммы', () => {
+    expect(ev('join', { playerId: 'c', rub: 700 }).title).toBe('Вход: Дима · 700 ₽');
+    expect(ev('rebuy', { playerId: 'c', rub: 300 }).title).toBe('Ребай: Дима · 300 ₽');
+    expect(ev('join', { playerId: 'c', stacks: 2 }).title).toBe('Вход: Дима · 1000 ₽');
+    expect(ev('rebuy', { playerId: 'c', stacks: 3 }).title).toBe('Ребай: Дима · 1500 ₽');
+    expect(ev('join', { playerId: 'c', stacks: 1 }).title).toBe('Вход: Дима · 500 ₽');
+    // Кривая сумма или кратность: журнал её не примет — подписи суммы нет.
+    expect(ev('join', { playerId: 'c', stacks: 0 }).title).toBe('Вход: Дима');
+    expect(ev('join', { playerId: 'c', rub: 0 }).title).toBe('Вход: Дима');
+    expect(ev('join', { playerId: 'c', rub: 700, stacks: 2 }).title).toBe('Вход: Дима');
+  });
+
+  it('правка суммы: новая сумма и «было»; правка кратности — суммой', () => {
+    const j = journal().join('a', 'b');
+    const joinC = j.add('join', { playerId: 'c', rub: 700 });
+    const fix = j.amend(joinC, { rub: 300 });
+    const fixOld = j.amend(joinC, { stacks: 2 });
+    const log = replayLog(DEFAULT_FORMAT, j.events, j.now());
+    const ctx = feedContext(j.events, log);
+    const line = (id: number) =>
+      describeEvent(
+        j.events.find((e) => e.id === id) as EveningEvent,
+        nameOf,
+        rub,
+        DEFAULT_FORMAT,
+        ctx,
+      );
+    expect(line(fix)).toEqual({
+      kind: 'entry',
+      title: 'Правка входа: Дима',
+      detail: '300 ₽ · было: 700 ₽',
+    });
+    expect(line(fixOld).detail).toBe('1000 ₽ · было: 300 ₽');
+    // Сама запись — с суммой в силе и пометкой.
+    expect(line(joinC)).toEqual({
+      kind: 'entry',
+      title: 'Вход: Дима · 1000 ₽',
+      detail: 'исправлено',
+    });
   });
 });
 
@@ -528,22 +566,88 @@ describe('подписи уровня и игрока', () => {
     expect(playerLine(c, DEFAULT_FORMAT)).toBe(`2${NB}входа`);
   });
 
-  it('кратность: сумма и фишки, payload', () => {
-    expect(stacksAmountText(DEFAULT_FORMAT, 1)).toBe(`500${NB}₽ · 500${NB}фишек`);
-    expect(stacksAmountText(DEFAULT_FORMAT, 2)).toBe(`1${NB}000${NB}₽ · 1${NB}000${NB}фишек`);
-    expect(stacksAmountText({ ...DEFAULT_FORMAT, startingChips: 1 }, 1)).toBe(
-      `500${NB}₽ · 1${NB}фишка`,
-    );
-    expect(entryPayload('a', 1)).toEqual({ playerId: 'a' });
-    expect(entryPayload('a', 4)).toEqual({ playerId: 'a', stacks: 4 });
+  it('playerLine: свободные суммы (027) — взнос, если не по входу формата', () => {
+    const j = journal();
+    j.add('join', { playerId: 'a', rub: 700 });
+    j.add('join', { playerId: 'b', rub: 300 });
+    j.join('c');
+    j.bust('b', ['a']);
+    j.add('rebuy', { playerId: 'b', rub: 700 });
+    const s = replay(DEFAULT_FORMAT, j.events, j.now());
+    const [a, b, c] = ['a', 'b', 'c'].map((id) => s.players[id]);
+    if (!a || !b || !c) throw new Error('нет игрока');
+    expect(playerLine(a, DEFAULT_FORMAT)).toBe(`взнос 700${NB}₽ · 1${NB}нокаут`);
+    // 300 + 700 = 1 000 = два входа формата: сумма совпала со стандартной — без взноса.
+    expect(playerLine(b, DEFAULT_FORMAT)).toBe(`2${NB}входа`);
+    expect(playerLine(c, DEFAULT_FORMAT)).toBe('');
   });
 
-  it('seatButtonLabel: при ×k сумма видна на кнопке до записи', () => {
-    expect(seatButtonLabel(0, DEFAULT_FORMAT, 2)).toBe('Выбери, кого посадить');
-    // Стандартный вход — подпись как раньше.
-    expect(seatButtonLabel(6, DEFAULT_FORMAT, 1)).toBe('Посадить за стол: 6');
-    expect(seatButtonLabel(6, DEFAULT_FORMAT, 2)).toBe(`Посадить: 6 · по${NB}1${NB}000${NB}₽`);
-    expect(seatButtonLabel(1, DEFAULT_FORMAT, 3)).toBe(`Посадить: 1 · 1${NB}500${NB}₽`);
+  it('feeFactText: «Взнос» формата — сумма по умолчанию, не нижняя граница', () => {
+    expect(feeFactText(DEFAULT_FORMAT)).toBe(
+      `500${NB}₽, можно другой суммой · 500${NB}фишек за${NB}500${NB}₽`,
+    );
+    expect(feeFactText({ ...DEFAULT_FORMAT, buyInRub: 1000, startingChips: 2000 })).toBe(
+      `1${NB}000${NB}₽, можно другой суммой · 2${NB}000${NB}фишек за${NB}1${NB}000${NB}₽`,
+    );
+    // Не «от 500 ₽»: вход и ребай — любой суммой от 1 ₽ (027), 300 ₽ — тоже можно.
+    expect(feeFactText(DEFAULT_FORMAT)).not.toMatch(/(^|\s)от\s/);
+  });
+
+  it('сумма и фишки, поле «Другая сумма»', () => {
+    expect(entryAmountText(DEFAULT_FORMAT, 500)).toBe(`500${NB}₽ · 500${NB}фишек`);
+    expect(entryAmountText(DEFAULT_FORMAT, 700)).toBe(`700${NB}₽ · 700${NB}фишек`);
+    expect(entryAmountText(DEFAULT_FORMAT, 1000)).toBe(`1${NB}000${NB}₽ · 1${NB}000${NB}фишек`);
+    expect(entryAmountText({ ...DEFAULT_FORMAT, startingChips: 1000 }, 300)).toBe(
+      `300${NB}₽ · 600${NB}фишек`,
+    );
+    expect(entryAmountText({ ...DEFAULT_FORMAT, startingChips: 1 }, 500)).toBe(
+      `500${NB}₽ · 1${NB}фишка`,
+    );
+    expect(parseEntryRub('700')).toBe(700);
+    expect(parseEntryRub(' 1 500 ₽ ')).toBe(1500);
+    expect(parseEntryRub('100000')).toBe(100000);
+    for (const bad of ['', '0', '-5', '700.5', '7,5', 'семьсот', '100001', '1000000'])
+      expect(parseEntryRub(bad), bad).toBeNull();
+    expect(ENTRY_RUB_HINT).toBe(
+      `Нужна сумма в целых рублях — от 1 до 100${NB}000${NB}₽, например 700.`,
+    );
+  });
+
+  it('hideKeyboardOnEnter: «Готово» в поле суммы гостя не отправляет форму «Добавить гостя»', () => {
+    const press = (key: string, isComposing = false) => {
+      const calls: string[] = [];
+      hideKeyboardOnEnter({
+        key,
+        nativeEvent: { isComposing },
+        preventDefault: () => calls.push('preventDefault'),
+        currentTarget: { blur: () => calls.push('blur') },
+      });
+      return calls;
+    };
+    // Enter (и «Готово» клавиатуры телефона — тот же Enter): отправка формы отменена, клавиатура
+    // спрятана — гость не садится, пока банкир не нажал «Добавить гостя».
+    expect(press('Enter')).toEqual(['preventDefault', 'blur']);
+    // Цифры, стирание и Tab — как обычно.
+    for (const key of ['1', '0', 'Backspace', 'Tab', 'ArrowLeft'])
+      expect(press(key), key).toEqual([]);
+    // Enter, которым IME подтверждает набор, — не «Готово».
+    expect(press('Enter', true)).toEqual([]);
+  });
+
+  it('seatButtonLabel и seatDetail: суммы и оплата у каждой строки свои', () => {
+    const F = DEFAULT_FORMAT;
+    expect(seatButtonLabel([])).toBe('Выбери, кого посадить');
+    expect(seatButtonLabel([{ rub: 500 }, { rub: 700 }])).toBe('Посадить за стол: 2');
+    expect(seatButtonLabel([{ rub: 500 }, { rub: null }])).toBe('Проверь сумму входа');
+    const row = (playerId: string, rub: number | null, paid = false) => ({ playerId, rub, paid });
+    expect(seatDetail(F, [row('a', 500), row('b', 500)], nameOf)).toBeUndefined();
+    expect(seatDetail(F, [row('a', 700, true)], nameOf)).toBe(`Вход — 700${NB}₽. Оплачено сразу.`);
+    expect(seatDetail(F, [row('a', 500, true), row('b', 500, true)], nameOf)).toBe(
+      'Оплачено сразу у всех.',
+    );
+    expect(seatDetail(F, [row('a', 700, true), row('b', 500), row('c', 300, true)], nameOf)).toBe(
+      `Вход: Женя — 700${NB}₽, Дима — 300${NB}₽. Оплачено сразу: Женя и Дима.`,
+    );
   });
 
   it('describeTrigger и formatBbValue', () => {
@@ -862,7 +966,7 @@ describe('voidImpact / voidImpactText', () => {
       [rebuy, 'Игрок ещё в игре — ребай только после вылета'],
     ]);
     expect(voidImpactText(impact, label)).toBe(
-      'Журнал перестанет принимать запись: «Ребай: Саша» (игрок ещё в игре — ребай только после вылета). Она останется в ленте с пометкой «Не принято», места, нокауты и деньги посчитаются без неё.',
+      'Журнал перестанет принимать запись: «Ребай: Саша · 500 ₽» (игрок ещё в игре — ребай только после вылета). Она останется в ленте с пометкой «Не принято», места, нокауты и деньги посчитаются без неё.',
     );
   });
 
@@ -1096,28 +1200,43 @@ describe('nameMatches / nameMatchNotice — подсказка под полем
 describe('одно действие — несколько записей: черновики пульта', () => {
   const F = DEFAULT_FORMAT;
 
-  it('посадка: вход каждого, с «Оплачено сразу» — его платёж следом на сумму взноса', () => {
-    expect(seatDrafts(F, ['a', 'b'], 1, false)).toEqual([
+  it('посадка: вход каждого на его сумму, с «Оплачено сразу» — его платёж следом на эту сумму', () => {
+    expect(
+      seatDrafts(F, [
+        { playerId: 'a', rub: 500, paid: false },
+        { playerId: 'b', rub: 500, paid: false },
+      ]),
+    ).toEqual([
       { type: 'join', payload: { playerId: 'a' } },
       { type: 'join', payload: { playerId: 'b' } },
     ]);
-    expect(seatDrafts(F, ['a', 'b'], 2, true)).toEqual([
-      { type: 'join', payload: { playerId: 'a', stacks: 2 } },
-      { type: 'payment', payload: { playerId: 'a', amountRub: 1000 } },
-      { type: 'join', payload: { playerId: 'b', stacks: 2 } },
-      { type: 'payment', payload: { playerId: 'b', amountRub: 1000 } },
+    expect(
+      seatDrafts(F, [
+        { playerId: 'a', rub: 700, paid: true },
+        { playerId: 'b', rub: 500, paid: false },
+        { playerId: 'c', rub: 300, paid: true },
+        { playerId: 'd', rub: null, paid: true },
+      ]),
+    ).toEqual([
+      { type: 'join', payload: { playerId: 'a', rub: 700 } },
+      { type: 'payment', payload: { playerId: 'a', amountRub: 700 } },
+      { type: 'join', payload: { playerId: 'b' } },
+      { type: 'join', payload: { playerId: 'c', rub: 300 } },
+      { type: 'payment', payload: { playerId: 'c', amountRub: 300 } },
     ]);
   });
 
   it('ребай и «вылет и ребай»: оплата — на сумму ребая, не входа', () => {
-    expect(rebuyDrafts(F, 'c', 1, false)).toEqual([{ type: 'rebuy', payload: { playerId: 'c' } }]);
-    expect(rebuyDrafts(F, 'c', 3, true)).toEqual([
-      { type: 'rebuy', payload: { playerId: 'c', stacks: 3 } },
-      { type: 'payment', payload: { playerId: 'c', amountRub: 1500 } },
+    expect(rebuyDrafts(F, 'c', 500, false)).toEqual([
+      { type: 'rebuy', payload: { playerId: 'c' } },
     ]);
-    expect(bustRebuyDrafts(F, { playerId: 'c', by: ['a', 'b'] }, 2, true)).toEqual([
+    expect(rebuyDrafts(F, 'c', 300, true)).toEqual([
+      { type: 'rebuy', payload: { playerId: 'c', rub: 300 } },
+      { type: 'payment', payload: { playerId: 'c', amountRub: 300 } },
+    ]);
+    expect(bustRebuyDrafts(F, { playerId: 'c', by: ['a', 'b'] }, 1000, true)).toEqual([
       { type: 'bust', payload: { playerId: 'c', by: ['a', 'b'] } },
-      { type: 'rebuy', payload: { playerId: 'c', stacks: 2 } },
+      { type: 'rebuy', payload: { playerId: 'c', rub: 1000 } },
       { type: 'payment', payload: { playerId: 'c', amountRub: 1000 } },
     ]);
   });
@@ -1126,24 +1245,28 @@ describe('одно действие — несколько записей: че�
     const j = journal().join('a', 'b', 'c');
     j.start();
     j.wait(5);
-    const drafts = bustRebuyDrafts(F, { playerId: 'c', by: ['a'] }, 2, true);
+    const drafts = bustRebuyDrafts(F, { playerId: 'c', by: ['a'] }, 300, true);
     expect(canApplySequence(F, j.events, drafts, j.now())).toBeNull();
     for (const d of drafts) j.add(d.type, d.payload);
     const s = replay(F, j.events, j.now());
     const t = settlement(computeMoney(F, s), paymentsFromEvents(j.events));
-    expect(s.players.c).toMatchObject({ alive: true, stacks: 3 });
-    // Ребай ×2 оплачен сразу: остаётся только первый вход.
-    expect(t.c).toMatchObject({ dueRub: 1500, paidRub: 1000, remainingRub: 500 });
+    expect(s.players.c).toMatchObject({ alive: true, feeRub: 800, chips: 800 });
+    // Ребай на 300 ₽ оплачен сразу: остаётся только первый вход.
+    expect(t.c).toMatchObject({ dueRub: 800, paidRub: 300, remainingRub: 500 });
   });
 
-  it('подписи: кратность на кнопке — только у крупного ребая; подсказка оплаты', () => {
-    expect(bustRebuyLabel(1)).toBe('Вылет и ребай');
-    expect(bustRebuyLabel(3)).toBe('Вылет и ребай ×3');
-    expect(prepaidHint(F, 'rebuy', 2)).toBe(
+  it('подписи: сумма на кнопке — только у ребая не на вход формата; подсказка оплаты', () => {
+    expect(bustRebuyLabel(F, 500)).toBe('Вылет и ребай');
+    expect(bustRebuyLabel(F, null)).toBe('Вылет и ребай');
+    expect(bustRebuyLabel(F, 700)).toBe('Вылет и ребай · 700\u00a0₽');
+    expect(prepaidHint('rebuy', 1000)).toBe(
       'Вместе с ребаем запишется платёж банкиру — 1\u00a0000\u00a0₽. В расчёте это обычный платёж.',
     );
-    expect(prepaidHint(F, 'entry', 1, true)).toBe(
-      'Вместе со входом каждого запишется его платёж банкиру — по\u00a0500\u00a0₽. В расчёте это обычный платёж.',
+    expect(prepaidHint('rebuy', 700, true)).toBe(
+      'Вместе с ребаем каждого запишется его платёж банкиру — по\u00a0700\u00a0₽. В расчёте это обычный платёж.',
+    );
+    expect(prepaidHint('entry', null)).toBe(
+      'Вместе со входом запишется платёж банкиру на сумму входа. В расчёте это обычный платёж.',
     );
   });
 });
@@ -1163,6 +1286,12 @@ describe('linkedPayment: оплата, записанная вместе со в
     const join = rec(1, 'join', { playerId: 'a', stacks: 2 });
     const pay = rec(2, 'payment', { playerId: 'a', amountRub: 1000 });
     expect(linkedPayment([join, pay], join, F)?.id).toBe(2);
+    // Свободная сумма (027): оплата — на сумму именно этой записи.
+    const joinC = rec(5, 'join', { playerId: 'c', rub: 700 }, '2026-10-08T18:00:00.000Z');
+    const pay500 = rec(6, 'payment', { playerId: 'c', amountRub: 500 }, '2026-10-08T18:00:00.000Z');
+    const pay700 = rec(7, 'payment', { playerId: 'c', amountRub: 700 }, '2026-10-08T18:00:00.000Z');
+    expect(linkedPayment([joinC, pay500, pay700], joinC, F)?.id).toBe(7);
+    expect(linkedPayment([joinC, pay500], joinC, F)).toBeNull();
     const rebuy = rec(3, 'rebuy', { playerId: 'b' }, '2026-10-08T17:00:00.000Z');
     const payB = rec(4, 'payment', { playerId: 'b', amountRub: 500 }, '2026-10-08T17:00:00.000Z');
     expect(linkedPayment([join, pay, rebuy, payB], rebuy, F)?.id).toBe(4);
@@ -1185,7 +1314,10 @@ describe('linkedPayment: оплата, записанная вместе со в
   });
 
   it('посадка нескольких: у каждого входа — свой платёж', () => {
-    const drafts = seatDrafts(F, ['a', 'b'], 1, true);
+    const drafts = seatDrafts(F, [
+      { playerId: 'a', rub: 500, paid: true },
+      { playerId: 'b', rub: 700, paid: true },
+    ]);
     const recs = drafts.map((d, i) => rec(i + 1, d.type, d.payload));
     expect(linkedPayment(recs, recs[0] as Rec, F)?.id).toBe(2);
     expect(linkedPayment(recs, recs[2] as Rec, F)?.id).toBe(4);
@@ -1276,7 +1408,13 @@ describe('rejectedPart / rejectedToast: записано, но журнал пр
   it('посадка нескольких: непринятый вход — со своей оплатой, остальные входы остаются', () => {
     const j = journal().join('a');
     // «a» уже за столом (второе устройство), «b» садится впервые.
-    const recs = addAll(j, seatDrafts(F, ['a', 'b'], 1, true));
+    const recs = addAll(
+      j,
+      seatDrafts(F, [
+        { playerId: 'a', rub: 500, paid: true },
+        { playerId: 'b', rub: 500, paid: true },
+      ]),
+    );
     const part = rejectedPart(F, recs, errorsOf(j));
     expect(part?.rejected).toHaveLength(1);
     expect(part?.toVoid.map((e) => [e.type, e.payload])).toEqual([
@@ -1311,7 +1449,13 @@ describe('rejectedPart / rejectedToast: записано, но журнал пр
 
   it('несколько непринятых и одиночная запись без своего слова', () => {
     const j = journal().join('a', 'b');
-    const many = addAll(j, seatDrafts(F, ['a', 'b'], 1, false));
+    const many = addAll(
+      j,
+      seatDrafts(F, [
+        { playerId: 'a', rub: 500, paid: false },
+        { playerId: 'b', rub: 500, paid: false },
+      ]),
+    );
     const part = rejectedPart(F, many, errorsOf(j));
     const toast = rejectedToast(part as NonNullable<typeof part>, '18:05');
     expect(toast.actionLabel).toBe('Отменить записи');
@@ -1379,7 +1523,7 @@ describe('mySeat: «Ты за столом»', () => {
       place: null,
       // Ребаи до конца 5-го уровня по 40 мин: прошло 20 мин — ещё 3 ч.
       rebuyNote: 'Можно докупиться — ещё 3 ч',
-      entries: '2 входа: ×2, ×1 · взнос 1 500 ₽',
+      entries: '2 входа: 1 000 ₽, 500 ₽ · взнос 1 500 ₽',
       kos: 'Нокаутов пока нет',
       balance: 'Твой долг банкиру — 500 ₽',
       paid: 'оплачено 1 000 ₽',

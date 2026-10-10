@@ -38,8 +38,8 @@ describe('лента: правка записи на месте', () => {
     });
     expect(line(joinA)).toEqual({
       kind: 'entry',
-      title: 'Вход: Женя',
-      detail: 'вход на 1000 ₽ · исправлено',
+      title: 'Вход: Женя · 1000 ₽',
+      detail: 'исправлено',
     });
     // Без контекста — как записано (старый вызов не меняется).
     const raw = j.events.find((e) => e.id === bustC) as EveningEvent;
@@ -55,7 +55,7 @@ describe('лента: правка записи на месте', () => {
     expect(line(amendJoin)).toEqual({
       kind: 'entry',
       title: 'Правка входа: Женя',
-      detail: '×2 — 1000 ₽ · было: ×1',
+      detail: '1000 ₽ · было: 500 ₽',
     });
   });
 
@@ -73,16 +73,18 @@ describe('лента: правка записи на месте', () => {
     const voided = k.amend(join, { stacks: 5 });
     k.voidEvent(voided);
     const j4 = k.amend(join, { stacks: 1 });
+    const j5 = k.amend(join, { rub: 700 }); // сумма (027) после кратностей
     const c = feedContext(k.events, replayLog(F, k.events, k.now()));
     const detail = (id: number) =>
       describeEvent(k.events.find((e) => e.id === id) as EveningEvent, nameOf, rub, F, c).detail;
-    expect(detail(j2)).toBe('×2 — 1000 ₽ · было: ×1');
-    expect(detail(j3)).toBe('×3 — 1500 ₽ · было: ×2');
+    expect(detail(j2)).toBe('1000 ₽ · было: 500 ₽');
+    expect(detail(j3)).toBe('1500 ₽ · было: 1000 ₽');
     expect(detail(b1)).toBe('выбивает Саша · было: Женя');
     expect(detail(bad)).toBe('выбивает Дима · было: Саша');
     expect(detail(b2)).toBe('выбивают Женя и Саша — нокаут каждому · было: Саша');
     // Отменённая правка в силе не была: следующая считает «было» без неё.
-    expect(detail(j4)).toBe('×1 — 500 ₽ · было: ×3');
+    expect(detail(j4)).toBe('500 ₽ · было: 1500 ₽');
+    expect(detail(j5)).toBe('700 ₽ · было: 500 ₽');
   });
 
   it('отменённая правка: запись снова как была, без пометки', () => {

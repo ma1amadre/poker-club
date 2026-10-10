@@ -271,10 +271,14 @@ describe('табло: экран ожидания', () => {
     expect(payoutPlan(DEFAULT_FORMAT, at(j, DEFAULT_FORMAT).state)[0]?.rub).toBeNull();
     j.join('b', 'c');
     j.joinStacks('d', 2); // фонд 2 500
+    // Шаг клубного формата 100 ₽ (027): 1 750 → 1 700, 750 → 700, остаток 100 — первому.
     expect(payoutPlan(DEFAULT_FORMAT, at(j, DEFAULT_FORMAT).state)).toEqual([
-      { place: 1, pct: 70, rub: 1750 },
-      { place: 2, pct: 30, rub: 750 },
+      { place: 1, pct: 70, rub: 1800 },
+      { place: 2, pct: 30, rub: 700 },
     ]);
+    // Снимок формата без шага (вечер до 027) — до рубля, как раньше.
+    const { payoutStepRub: _step, ...old } = DEFAULT_FORMAT;
+    expect(payoutPlan(old, at(j, old).state).map((r) => r.rub)).toEqual([1750, 750]);
   });
 });
 

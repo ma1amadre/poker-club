@@ -60,9 +60,18 @@ export function ShowdownView({
   const anyoneAhead = players?.some((p) => p.ahead) ?? false;
   const allAhead = players?.every((p) => p.ahead) ?? false;
 
+  // Семь–девять рук на табло — плотные ауты (showdown.css): число и подпись одной строкой, плашки
+  // размером подписи, делёж — числом. Иначе на ТВ панель ужималась целиком (--sd-fit < 1).
+  const dense = variant === 'board' && showdown.hands.length >= 7;
+
   return (
     <section
-      className={cn('ui-sd', `ui-sd--${variant}`, showdown.hands.length > 4 && 'ui-sd--rows2')}
+      className={cn(
+        'ui-sd',
+        `ui-sd--${variant}`,
+        showdown.hands.length > 4 && 'ui-sd--rows2',
+        dense && 'ui-sd--dense',
+      )}
       // Раскладка табло на ТВ — по числу рук (showdown.css): колонки, размер карт и цифр.
       data-hands={showdown.hands.length}
       aria-label="Олл-ин"
@@ -126,6 +135,15 @@ export function ShowdownView({
                   {share === null ? 'шансы считаются' : `шансы ${share}${NBSP}%`}
                 </span>
               </p>
+              {/* Плотное табло (7–9 рук): делёж — под процентами, рядом с картами, а не строкой над
+                  аутами — высота руки достаётся аутам (showdown.css). */}
+              {dense && winners === null && tie > 0 && (
+                <p className="ui-sd__note ui-sd__tie">
+                  делёж{NBSP}
+                  {tie}
+                  {NBSP}%
+                </p>
+              )}
               <div className="ui-sd__bar" aria-hidden="true">
                 <span style={{ inlineSize: `${share ?? 0}%` }} />
               </div>
@@ -136,7 +154,7 @@ export function ShowdownView({
                 {winners === null && p?.ahead && anyoneAhead && !allAhead && (
                   <p className="ui-sd__tag">Впереди</p>
                 )}
-                {winners === null && tie > 0 && (
+                {!dense && winners === null && tie > 0 && (
                   <p className="ui-sd__note">
                     делёж{NBSP}
                     {tie}
@@ -173,7 +191,9 @@ export function ShowdownView({
  * тёрне: 33 %»; следующая карта — аут или делёж), под ними — плашки мастей на светлом лице карты
  * (outsBySuit: значок масти и её ранги строкой, в две краски, как карты стола), отдельной строкой —
  * «на делёж», плашками мельче (второстепенное). Аутов нет — «[ Аутов нет ]» (на флопе — «[ Аутов к
- * тёрну нет ]»: до ривера ещё две карты).
+ * тёрну нет ]»: до ривера ещё две карты). Плотный вариант табло (7–9 рук, ui-sd--dense): число и
+ * подпись одной строкой, делёж — числом («на делёж: 3») вместо плашек; число дележа видно только там
+ * (showdown.css).
  */
 function OutsBlock({ outs, street, target }: { outs: PlayerOuts; street: Street; target: string }) {
   const count = outs.outs.length + outs.splitOuts.length;
@@ -194,7 +214,15 @@ function OutsBlock({ outs, street, target }: { outs: PlayerOuts; street: Street;
         </span>
         <span className="ui-sd__outs-label" aria-hidden="true">
           <span>{label}</span>
-          <span>{catchUp}</span>
+          <span className="ui-sd__outs-catch">
+            <span>{catchUp}</span>
+            {outs.splitOuts.length > 0 && (
+              <span className="ui-sd__outs-split">
+                на{NBSP}делёж:{NBSP}
+                {outs.splitOuts.length}
+              </span>
+            )}
+          </span>
         </span>
         <span className="sr-only">
           {count} {label}. {catchUp}
