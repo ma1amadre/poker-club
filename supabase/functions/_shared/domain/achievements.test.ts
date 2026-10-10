@@ -10,6 +10,7 @@ import {
   diffAchievements,
   levelFor,
   playerLevel,
+  seasonGameDays,
   starAchievements,
   starAwards,
   titles,
@@ -284,6 +285,37 @@ describe('ачивки', () => {
         false,
       );
       expect(only(run([simpleEvening('x', q4(1), ['A', 'B'])]), 'iron_chair')).toEqual([]);
+    });
+    // Решение клуба 10.10.2026: по игровым дням (московская дата вечера), а не по вечерам.
+    const late = '2026-07-02T19:30:00.000Z'; // 22:30 МСК того же дня, что i1 (19:00 МСК)
+    it('две игры в день: сел только за одну — день засчитан, стул сохраняется', () => {
+      const game2 = simpleEvening('i1b', late, ['A', 'C']);
+      const rows = only(run([i1, game2, i2, i3]), 'iron_chair');
+      expect(rows).toEqual([['A', '2026-Q3', 1]]);
+      // B сел только за игру 1 в день 02.07 и не пропустил другие дни — стул у него есть.
+      const both = [i1, game2, simpleEvening('i2b', q3(9), ['A', 'B', 'C']), i3];
+      const withB = [...both.slice(0, 3), simpleEvening('i3b', q3(16), ['C', 'A', 'B'])];
+      expect(only(run(withB), 'iron_chair').map(([p]) => p)).toEqual(['A', 'B', 'C']);
+    });
+    it('пропуск игрового дня — нет стула, даже если игр в сезоне сыграно больше', () => {
+      const game2 = simpleEvening('i2b', '2026-07-09T19:30:00.000Z', ['B', 'C']);
+      // C: 02.07 и 16.07 — да, 09.07 — только игра 2 (есть); B пропустил 16.07.
+      expect(only(run([i1, i2, game2, i3]), 'iron_chair').map(([p]) => p)).toEqual(['A', 'C']);
+      // Вечер, начатый после полуночи по Москве, — уже другой игровой день.
+      const night = simpleEvening('n', '2026-07-16T21:30:00.000Z', ['A']); // 00:30 МСК 17.07
+      expect(only(run([i1, i2, i3, night]), 'iron_chair').map(([p]) => p)).toEqual(['A']);
+      expect(
+        only(
+          run([i1, i2, i3, simpleEvening('n2', '2026-07-16T21:30:00.000Z', ['B'])]),
+          'iron_chair',
+        ),
+      ).toEqual([]);
+    });
+    it('seasonGameDays: дни сезона и дни игрока, гости не в счёт', () => {
+      const game2 = simpleEvening('i1b', late, ['A', 'G']);
+      const { days, playedDays } = seasonGameDays([i1, game2, i2, i3], new Set(['G']));
+      expect(days).toBe(3);
+      expect(Object.fromEntries(playedDays)).toEqual({ A: 3, B: 2, C: 2 });
     });
   });
 

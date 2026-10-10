@@ -78,7 +78,10 @@ export function isoToMoscow(value: string | number | Date): ClubDateTime {
   };
 }
 
-/** Московский день момента — «2026-10-08»: два вечера в один день клуба — почти всегда ошибка. */
+/**
+ * Московский день момента — «2026-10-08». Второй вечер в тот же день — только игрой 2 и дальше
+ * (evenings.game_no, миграция 026).
+ */
 export function moscowDateKey(value: string | number | Date): string {
   return isoToMoscow(value).date;
 }

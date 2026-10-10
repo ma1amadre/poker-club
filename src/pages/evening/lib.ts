@@ -1294,7 +1294,8 @@ export interface SeatCandidate<P> {
  * Кого можно посадить за стол: активные игроки клуба, ещё не вошедшие в турнир. Сначала ответившие
  * «иду», затем «под вопросом», молчавшие и «не иду»; постоянные игроки раньше болельщиков (миграция
  * 024: их тоже можно посадить — тогда на этот вечер они игроки), болельщики раньше гостей; дальше
- * по имени.
+ * по имени. roster — состав прошлой игры того же дня (игра 2 и дальше, миграция 026): его игроки
+ * первыми, в порядке входа в ту игру.
  */
 export function seatCandidates<
   P extends {
@@ -1308,14 +1309,20 @@ export function seatCandidates<
   players: readonly P[],
   state: EveningState,
   rsvps: readonly { player_id: string; status: RsvpAnswer }[],
+  roster: readonly string[] = [],
 ): SeatCandidate<P>[] {
   const answer = new Map(rsvps.map((r) => [r.player_id, r.status]));
   const rank = (c: SeatCandidate<P>) => (c.player.is_guest ? 2 : seatSpectator(c) ? 1 : 0);
+  const order = (c: SeatCandidate<P>) => {
+    const i = roster.indexOf(c.player.id);
+    return i < 0 ? roster.length : i;
+  };
   return players
     .filter((p) => p.is_active && !state.players[p.id])
     .map((player) => ({ player, rsvp: answer.get(player.id) ?? null }))
     .sort(
       (a, b) =>
+        order(a) - order(b) ||
         RSVP_ORDER[a.rsvp ?? 'none'] - RSVP_ORDER[b.rsvp ?? 'none'] ||
         rank(a) - rank(b) ||
         a.player.display_name.localeCompare(b.player.display_name, 'ru'),
@@ -1331,7 +1338,11 @@ export function seatCandidates<
 export function seatPreselected<P extends { id: string }>(
   candidates: readonly SeatCandidate<P>[],
   mode: 'start' | 'late',
+  roster: readonly string[] = [],
 ): string[] {
+  // Игра 2 и дальше (миграция 026): анонса не было — на старте отмечен состав прошлой игры дня.
+  if (mode === 'start' && roster.length > 0)
+    return candidates.filter((c) => roster.includes(c.player.id)).map((c) => c.player.id);
   const going = candidates.filter((c) => c.rsvp === 'yes').map((c) => c.player.id);
   return mode === 'start' || going.length === 1 ? going : [];
 }

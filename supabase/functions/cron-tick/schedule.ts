@@ -105,6 +105,16 @@ export function holdsSlot(evening: SlotEvening, gameMs: number): boolean {
   return (at >= startMs && at < endMs) || evening.slot_date === clubDateKey(gameMs);
 }
 
+/**
+ * Фильтр PostgREST (`.or(...)`) окна допосылки итогов: финал не старше windowMs — или зачёт тренировки
+ * (evenings.promoted_at, миграция 026) не старше windowMs. У засчитанной тренировки finished_at
+ * прежний и может быть старше окна, а пост итогов для группы — новость с момента зачёта.
+ */
+export function resultsWindowFilter(nowMs: number, windowMs: number): string {
+  const since = new Date(nowMs - windowMs).toISOString();
+  return `finished_at.gte.${since},promoted_at.gte.${since}`;
+}
+
 /** Фильтр PostgREST (`.or(...)`) для кандидатов holdsSlot: тот же день по времени или по слоту. */
 export function slotFilter(gameMs: number): string {
   const { startMs, endMs } = clubDayRange(gameMs);

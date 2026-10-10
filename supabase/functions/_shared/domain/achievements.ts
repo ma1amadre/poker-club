@@ -14,6 +14,7 @@ import {
   seasonStandings,
   type SeasonBestN,
 } from './season.ts';
+import { gameDayKey } from './seasonCalendar.ts';
 import type { EveningSummary } from './summary.ts';
 import type { PlayerId } from './types.ts';
 import { starWinner, VOTE_CATEGORIES, type VoteCategory, type VoteResult } from './votes.ts';
@@ -181,7 +182,10 @@ export const ACHIEVEMENT_META: Record<AchievementCode, { title: string; descript
   phoenix: { title: 'Феникс', description: 'Первый вылет вечера — и всё равно победа' },
   clean_win: { title: 'Чистая победа', description: 'Победа в вечере без единого ребая' },
   rebuy_king: { title: 'Ребай-король', description: 'Больше всех ребаев за сезон' },
-  iron_chair: { title: 'Железный стул', description: 'Ни одного пропущенного вечера за сезон' },
+  iron_chair: {
+    title: 'Железный стул',
+    description: 'Ни одного пропущенного игрового дня за сезон',
+  },
   hat_trick: {
     title: 'Хет-трик',
     description: 'Три победы подряд (пропущенный вечер серию не рвёт)',
@@ -583,19 +587,17 @@ export function computeAchievements(input: AchievementInput): Achievement[] {
   for (const key of seasons) {
     const inSeason = evenings.filter((s) => s.seasonKey === key);
     const rebuys = new Map<PlayerId, number>();
-    const played = new Map<PlayerId, number>();
     for (const s of inSeason) {
       for (const id of s.entrants) {
         if (excluded.has(id)) continue; // гость не может «отнять» ребай-короля у постоянного
         rebuys.set(id, (rebuys.get(id) ?? 0) + (s.rebuys[id] ?? 0));
-        played.set(id, (played.get(id) ?? 0) + 1);
       }
     }
     const maxRebuys = Math.max(0, ...rebuys.values());
     if (maxRebuys > 0)
       for (const [id, n] of rebuys) if (n === maxRebuys) add(id, 'rebuy_king', { seasonKey: key });
-    for (const [id, n] of played)
-      if (n === inSeason.length) add(id, 'iron_chair', { seasonKey: key });
+    const { days, playedDays } = seasonGameDays(inSeason, excluded);
+    for (const [id, n] of playedDays) if (n === days) add(id, 'iron_chair', { seasonKey: key });
 
     const rows = seasonStandings(inSeason, {
       bestN: input.bestN,
@@ -609,6 +611,34 @@ export function computeAchievements(input: AchievementInput): Achievement[] {
   const list = rows();
   markFirst(list, order);
   return list.sort(byKey);
+}
+
+/**
+ * «Железный стул» по игровым дням (решение клуба 10.10.2026): день — московская дата вечера
+ * (gameDayKey), в один день бывает несколько игр (миграция 026). days — сколько игровых дней в
+ * сезоне; playedDays — в скольких из них игрок сел хотя бы за одну игру (гости — нет). Стул — у тех,
+ * у кого playedDays === days: ушёл после игры 1 — день всё равно засчитан.
+ */
+export function seasonGameDays(
+  inSeason: readonly Pick<EveningSummary, 'date' | 'entrants'>[],
+  excluded: ReadonlySet<PlayerId> = new Set(),
+): { days: number; playedDays: Map<PlayerId, number> } {
+  const all = new Set<string>();
+  const byPlayer = new Map<PlayerId, Set<string>>();
+  for (const s of inSeason) {
+    const day = gameDayKey(s.date);
+    all.add(day);
+    for (const id of s.entrants) {
+      if (excluded.has(id)) continue;
+      const set = byPlayer.get(id) ?? new Set<string>();
+      set.add(day);
+      byPlayer.set(id, set);
+    }
+  }
+  return {
+    days: all.size,
+    playedDays: new Map([...byPlayer].map(([id, set]) => [id, set.size])),
+  };
 }
 
 /** Уровень игрока в ачивке — наибольший из его строк; 0 — не получена. */

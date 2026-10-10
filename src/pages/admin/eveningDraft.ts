@@ -117,8 +117,9 @@ export interface EveningCheck {
 }
 
 /**
- * Проверка формы. taken — московские даты других неотменённых вечеров: БД не даст второй вечер
- * на тот же день (evenings_one_per_club_day_idx), лучше сказать это у поля даты заранее.
+ * Проверка формы. taken — московские даты, где игра с тем же номером уже занята (takenDates): БД не
+ * даст вторую игру 1 на тот же день (evenings_club_day_game_idx, миграция 026), лучше сказать это у
+ * поля даты заранее.
  */
 export function checkEveningDraft(
   draft: EveningDraft,
@@ -131,7 +132,7 @@ export function checkEveningDraft(
   if (!time) errors.time = 'Укажи время начала, например 19:00.';
   const scheduledAt = dateOk && time ? moscowToIso(draft.date, time) : null;
   if (scheduledAt && opts.taken.has(draft.date)) {
-    errors.date = `На ${formatDate(scheduledAt, opts.nowMs)} уже есть вечер. Выбери другую дату или открой тот вечер.`;
+    errors.date = `На ${formatDate(scheduledAt, opts.nowMs)} уже есть вечер. Выбери другую дату или открой тот вечер. Вторую игру в тот же день создают кнопкой «Ещё игра сегодня» на экране завершённого вечера.`;
   }
   if (!opts.format) {
     errors.format = 'Выбери формат вечера.';

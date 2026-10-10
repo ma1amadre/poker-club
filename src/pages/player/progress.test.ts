@@ -192,7 +192,7 @@ describe('строка прогресса', () => {
     expect(v.muted).toBe(true);
     const ok = progressView(p({ code: 'iron_chair', current: 3, target: 3 }), other);
     expect(sp(ok.bar?.text)).toBe('3 из 3');
-    expect(sp(ok.hint)).toBe('Все вечера сезона без пропусков');
+    expect(sp(ok.hint)).toBe('Все игровые дни сезона без пропусков');
   });
 
   it('ребай-король: мои ребаи из ребаев лидера', () => {

@@ -1,7 +1,7 @@
 // Чистые помощники админки: разбор чисел из полей ввода, порядок вечеров и игроков, статусы,
 // тексты ошибок записи. Деньги, очки и места здесь не считаются — это делает домен.
 import { errorMessage } from '../../shared/api/errors';
-import type { EveningStatus } from '../../shared/api/types';
+import { gameNoOf, type EveningStatus } from '../../shared/api/types';
 import { clubWeekday, moscowDateKey, parseClubDate } from '../../shared/lib/clubTime';
 import { pluralWithNumber } from '../../shared/lib/format';
 import { NAME_MAX, nameMatchKey, normalizeName } from '../../shared/lib/text';
@@ -219,6 +219,8 @@ export interface EveningLike {
   scheduled_at: string;
   /** Тренировочный вечер (миграция 023): день клуба не занимает. */
   is_training?: boolean | null;
+  /** Номер игры в дне (миграция 026); без колонки — 1. */
+  game_no?: number | null;
 }
 
 const UPCOMING: readonly EveningStatus[] = ['live', 'announced'];
@@ -246,13 +248,25 @@ export function splitEvenings<T extends EveningLike>(
 }
 
 /**
- * Московские даты неотменённых вечеров, кроме exceptId, — в один день клуба только один вечер.
- * Тренировки день не занимают (индекс evenings_one_per_club_day_idx их не видит, миграция 023).
+ * Московские даты, где игра с номером gameNo уже занята неотменённым настоящим вечером (кроме exceptId):
+ * в один день клуба — одна игра 1, одна игра 2 и т. д. (индекс evenings_club_day_game_idx, миграция
+ * 026). Новый вечер из формы — игра 1; вторую игру дня создаёт «Ещё игра сегодня». Тренировки день не
+ * занимают (миграция 023).
  */
-export function takenDates(evenings: readonly EveningLike[], exceptId?: string): Set<string> {
+export function takenDates(
+  evenings: readonly EveningLike[],
+  exceptId?: string,
+  gameNo = 1,
+): Set<string> {
   return new Set(
     evenings
-      .filter((e) => e.status !== 'cancelled' && e.id !== exceptId && e.is_training !== true)
+      .filter(
+        (e) =>
+          e.status !== 'cancelled' &&
+          e.id !== exceptId &&
+          e.is_training !== true &&
+          gameNoOf(e) === gameNo,
+      )
       .map((e) => moscowDateKey(e.scheduled_at)),
   );
 }
@@ -376,8 +390,13 @@ function pgCode(error: unknown): { code: string; message: string } | null {
  */
 export function adminErrorText(error: unknown): string {
   const pg = pgCode(error);
-  if (pg?.code === '23505' && pg.message.includes('evenings_one_per_club_day')) {
-    return 'На этот день уже есть вечер. Выбери другую дату или сначала отмени тот вечер.';
+  // evenings_club_day_game_idx (026), до неё — evenings_one_per_club_day_idx (006, 023).
+  if (
+    pg?.code === '23505' &&
+    (pg.message.includes('evenings_club_day_game') ||
+      pg.message.includes('evenings_one_per_club_day'))
+  ) {
+    return 'На этот день уже есть вечер. Выбери другую дату или сначала отмени тот вечер. Вторую игру в тот же день создают кнопкой «Ещё игра сегодня» на экране завершённого вечера.';
   }
   if (pg?.code === '23514') {
     return 'Значение вне допустимых пределов. Проверь числа в форме.';

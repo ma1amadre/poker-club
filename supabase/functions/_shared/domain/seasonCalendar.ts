@@ -47,6 +47,14 @@ export function clubDateKey(ms: number): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 
+/**
+ * Игровой день вечера — московская дата его начала (scheduled_at): «2026-10-09». В один день бывает
+ * несколько игр (evenings.game_no, миграция 026) — «Железный стул» считается по игровым дням.
+ */
+export function gameDayKey(dateIso: string): string {
+  return clubDateKey(Date.parse(dateIso));
+}
+
 /** Начало московского дня момента, мс UTC. */
 function clubDayStartMs(ms: number): number {
   return Math.floor((ms + CLUB_OFFSET_MS) / DAY_MS) * DAY_MS - CLUB_OFFSET_MS;

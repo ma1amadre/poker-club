@@ -29,6 +29,7 @@ export {
 } from './equity';
 export {
   analyzeShowdown,
+  computeHolds,
   computeOuts,
   roundShares,
   type PlayerOuts,

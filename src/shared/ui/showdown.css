@@ -242,36 +242,102 @@
   color: var(--ink-muted);
 }
 
+/*
+ * Ауты отстающего (OutsBlock): число — моно, как цифры; рядом «аутов к риверу» / «Догонит: 20 %» —
+ * цветом текста, не приглушённо; под ними — плашки мастей (значок масти и её ранги строкой) на лице
+ * карты, в две краски, как карты стола. У того, кто впереди, — строка «Устоит на N картах из M».
+ * Телефон (экран вечера): плашки — 15 px (крупнее подписей), число — как цифры плиток.
+ */
 .ui-sd__outs {
   display: grid;
   flex-basis: 100%;
-  gap: 2px;
+  justify-items: start;
+  gap: var(--space-2);
+  min-width: 0;
 }
 
-.ui-sd__outs-list {
+.ui-sd__outs-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 2px var(--space-3);
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.ui-sd__outs-num {
+  font-family: var(--m-figure-family);
+  font-weight: var(--m-figure-weight);
+  font-size: var(--m-figure-size);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-sd__outs-label {
+  display: grid;
+  font-size: var(--m-small-size);
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.ui-sd__outs-none,
+.ui-sd__hold {
   margin: 0;
   font-size: var(--m-small-size);
   line-height: 1.4;
 }
 
-.ui-sd__outs-prefix {
-  color: var(--ink-muted);
-}
-
-.ui-sd__outs-group {
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  white-space: nowrap;
-}
-
-.ui-sd__outs-rank {
-  margin-inline-end: 2px;
+.ui-sd__outs-none {
   font-weight: 600;
+}
+
+.ui-sd__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+}
+
+.ui-sd__chips-prefix {
+  font-size: var(--m-small-size);
+  font-weight: 600;
+}
+
+/* Плашка масти: значок и ранги — моно 700, цвет масти (класс ui-card-suit--*). */
+.ui-sd__chip {
+  --chip-size: 15px;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 0.4em;
+  max-inline-size: 100%;
+  padding: 0.18em 0.4em;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--m-font-mono);
+  font-size: var(--chip-size);
+  font-weight: 700;
+  line-height: 1.15;
+  font-variant-numeric: lining-nums;
+}
+
+.ui-sd__chip-rank {
+  /* «10» — одной группой: зазор между рангами шире, чем между цифрами. */
+  letter-spacing: -0.05em;
+}
+
+.ui-sd__chip-pip {
+  inline-size: 1.05em;
+  block-size: 1.05em;
+  margin-inline-end: 0.08em;
+  vertical-align: 0;
+}
+
+/* Ауты на делёж — второстепенное: плашки на ступень мельче основных. */
+.ui-sd__chips--split .ui-sd__chip {
+  --chip-size: 13px;
 }
 
 /* Экран вечера в Mini App: панель — карточка, руки строками. */
@@ -341,9 +407,12 @@
  * долях --sd-u, сотой высоты кадра 16:9, вписанного в экран (1920×1080 — 10,8 px, 1280×720 — 7,2 px),
  * поэтому на любом ТВ раскладка одна и та же. Стол — справа от заголовка: высота достаётся рукам.
  * Руки: до четырёх — в один ряд, больше — в два (5–6 по три, 7–8 по четыре, 9 по пять), карты и
- * цифры мельче с каждым шагом. Имя и рука словами — в одну строку (длинное — с многоточием), ауты —
- * сплошной строкой за подписью. Если что-то всё же не поместилось, ShowdownBoard (useFitToScreen)
- * уменьшает всё через --sd-fit.
+ * цифры мельче с каждым шагом; у пятерых-шестерых карты, имя и проценты — одной строкой, чтобы
+ * высота ряда досталась аутам, имя и рука словами там — до двух строк; у остальных — в одну строку
+ * (длинное — с многоточием). Ауты — своим блоком под чертой: число крупно, подписи не мельче 24 px
+ * макета, ниже плашки мастей — крупнее подписей (делёж — размером подписи), без многоточий: не
+ * помещаются в строку — переносятся. Если что-то всё же не поместилось,
+ * ShowdownBoard (useFitToScreen) уменьшает всё через --sd-fit.
  */
 @media (min-width: 1024px) and (orientation: landscape) {
   .ui-sd--board {
@@ -356,6 +425,11 @@
     --sd-pct: calc(var(--sd-u) * 13);
     --sd-name: calc(var(--sd-u) * 3.7);
     --sd-text: calc(var(--sd-u) * 2);
+    /* Ауты: число — как цифры фонда (72 px макета у двоих), подписи — не мельче 24 px макета
+       (2,25 доли при 1080), плашки мастей — крупнее подписей, почти как ранг на карте руки. */
+    --sd-outs-num: calc(var(--sd-u) * 6.6);
+    --sd-outs-text: calc(var(--sd-u) * 2.5);
+    --sd-chip: calc(var(--sd-u) * 4.2);
     --sd-pad: calc(var(--sd-u) * 2.2);
     --sd-inner: calc(var(--sd-u) * 1.5);
     --sd-hands-gap: calc(var(--sd-u) * 2.2);
@@ -373,12 +447,17 @@
     --sd-cols: 3;
     --sd-hand-w: calc(var(--sd-u) * 12);
     --sd-pct: calc(var(--sd-u) * 9.5);
+    --sd-outs-num: calc(var(--sd-u) * 6);
+    --sd-chip: calc(var(--sd-u) * 3.8);
   }
 
   .ui-sd--board[data-hands='4'] {
     --sd-cols: 4;
     --sd-hand-w: calc(var(--sd-u) * 9);
     --sd-pct: calc(var(--sd-u) * 6.5);
+    --sd-outs-num: calc(var(--sd-u) * 5.4);
+    --sd-outs-text: calc(var(--sd-u) * 2.3);
+    --sd-chip: calc(var(--sd-u) * 3.3);
   }
 
   /* Пятеро и больше — два ряда: всё плотнее. */
@@ -389,6 +468,11 @@
     --sd-pct: calc(var(--sd-u) * 6);
     --sd-name: calc(var(--sd-u) * 3);
     --sd-text: calc(var(--sd-u) * 1.8);
+    --sd-outs-num: calc(var(--sd-u) * 5.2);
+    --sd-outs-text: calc(var(--sd-u) * 2.25);
+    /* Плашки — 30 px макета: в колонку из трёх помещаются четыре масти по два ранга с десяткой
+       («♠ 10 5 ♥ 10 5 ♦ 10 5 ♣ 10 5», стрит-дро) — одной строкой. */
+    --sd-chip: calc(var(--sd-u) * 2.8);
     --sd-pad: calc(var(--sd-u) * 1.6);
     --sd-inner: var(--sd-u);
   }
@@ -401,6 +485,32 @@
   .ui-sd--board[data-hands='9'] {
     --sd-cols: 5;
     --sd-pct: calc(var(--sd-u) * 5);
+    --sd-outs-num: calc(var(--sd-u) * 4.6);
+    --sd-chip: calc(var(--sd-u) * 2.7);
+  }
+
+  /* Пятеро-шестеро (по три в ряд): карты, имя и проценты — одной строкой, как на телефоне, — высота
+     ряда достаётся аутам. Семерым-девятерым колонки уже — у них прежняя раскладка. */
+  .ui-sd--board[data-hands='5'] .ui-sd__hand,
+  .ui-sd--board[data-hands='6'] .ui-sd__hand {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'cards who pct'
+      'bar bar bar'
+      'notes notes notes';
+  }
+
+  /* Имя и рука словами здесь уже колонки (рядом карты и проценты) — переносятся, до двух строк
+     каждое, а не обрываются многоточием: «Евгений Козлов» из Telegram (имя и фамилия) — две строки.
+     Две строки имени и строка руки ниже карт; многоточие — только у третьей строки. */
+  .ui-sd--board[data-hands='5'] .ui-sd__name,
+  .ui-sd--board[data-hands='6'] .ui-sd__name,
+  .ui-sd--board[data-hands='5'] .ui-sd__made,
+  .ui-sd--board[data-hands='6'] .ui-sd__made {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
   }
 
   .ui-sd--board .ui-sd__head {
@@ -460,30 +570,69 @@
     line-height: 1.05;
   }
 
-  .ui-sd--board .ui-sd__made,
-  .ui-sd--board .ui-sd__note,
-  .ui-sd--board .ui-sd__tag,
-  .ui-sd--board .ui-sd__outs-list {
+  .ui-sd--board .ui-sd__made {
     font-size: var(--sd-text);
     line-height: 1.3;
   }
 
+  /* Метка «[ Впереди ]», делёж, «Устоит на …» и подписи аутов — не мельче 24 px макета. */
+  .ui-sd--board .ui-sd__note,
+  .ui-sd--board .ui-sd__tag,
+  .ui-sd--board .ui-sd__hold,
+  .ui-sd--board .ui-sd__outs-none,
+  .ui-sd--board .ui-sd__outs-label,
+  .ui-sd--board .ui-sd__chips-prefix {
+    font-size: var(--sd-outs-text);
+    line-height: 1.2;
+  }
+
   .ui-sd--board .ui-sd__notes {
-    gap: 0 calc(var(--sd-u) * 1.5);
+    gap: calc(var(--sd-u) * 0.6) calc(var(--sd-u) * 1.5);
   }
 
-  /* Ауты — сплошной строкой: «Ауты к тёрну: 9 · 20 %  A ♠♥♦  K ♠♥♦  на делёж: …». */
+  /* «Устоит на …» — своей строкой под меткой «[ Впереди ]», как ауты у отстающих. */
+  .ui-sd--board .ui-sd__hold {
+    flex-basis: 100%;
+  }
+
+  /* Ауты — своим блоком под чертой: число и подпись, ниже плашки карт. */
   .ui-sd--board .ui-sd__outs {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    flex-basis: auto;
-    gap: 0 calc(var(--sd-u) * 1.5);
-    min-width: 0;
+    gap: calc(var(--sd-u) * 0.8);
+    padding-top: calc(var(--sd-u) * 0.8);
+    border-top: 1px solid var(--line);
+    inline-size: 100%;
   }
 
-  .ui-sd--board .ui-sd__outs-list {
-    gap: 0 calc(var(--sd-u) * 1.2);
+  .ui-sd--board .ui-sd__outs-head {
+    gap: calc(var(--sd-u) * 1.2);
+  }
+
+  .ui-sd--board .ui-sd__outs-label {
+    line-height: 1.15;
+  }
+
+  .ui-sd--board .ui-sd__outs-num {
+    font-size: var(--sd-outs-num);
+    line-height: 0.9;
+  }
+
+  .ui-sd--board .ui-sd__chips {
+    gap: calc(var(--sd-u) * 0.8);
+  }
+
+  /* Плашки плотнее, чем на телефоне: стрит-дро с десяткой («♠ 10 5» по всем мастям) — одной строкой
+     и у шестерых. */
+  .ui-sd--board .ui-sd__chip {
+    --chip-size: var(--sd-chip);
+    gap: 0 0.3em;
+    padding: 0.08em 0.28em;
+    line-height: 1.05;
+  }
+
+  /* Делёж — плашками размером подписи: на спаренном столе и в споре кикеров строка дележа длинная,
+     и перенос плашками основного размера отнимал у табло целую строку (useFitToScreen ужимал всё). */
+  .ui-sd--board .ui-sd__chips--split .ui-sd__chip {
+    --chip-size: var(--sd-outs-text);
   }
 
   .ui-sd--board .ui-sd__foot {
@@ -561,7 +710,10 @@
 /* Рука словами («Пара дам»), ауты и делёж — моно прописными (сырой лог), цифры аутов — моно. */
 [data-theme='terminal'] .ui-sd__made,
 [data-theme='terminal'] .ui-sd__note,
-[data-theme='terminal'] .ui-sd__outs-list,
+[data-theme='terminal'] .ui-sd__hold,
+[data-theme='terminal'] .ui-sd__outs-label,
+[data-theme='terminal'] .ui-sd__outs-none,
+[data-theme='terminal'] .ui-sd__chips-prefix,
 [data-theme='terminal'] .ui-sd__foot {
   font-family: var(--m-font-mono);
   letter-spacing: 0.02em;
@@ -604,4 +756,38 @@
 [data-theme='terminal'] .ui-sd__name {
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+/*
+ * Ауты в «Терминале»: подписи — ink и 700 (читаются с дивана), «Аутов нет» — меткой в скобках,
+ * спокойно, цветом текста; «Устоит на …» у того, кто впереди, — ink без жирного: одна тихая строка.
+ * Плашки мастей — лицо карты (card-face, рамка line-strong) и две краски, как на карте: ♠♣ card-ink,
+ * ♥♦ suit-red (цвет — класс ui-card-suit--* плашки).
+ */
+[data-theme='terminal'] .ui-sd__outs-label,
+[data-theme='terminal'] .ui-sd__outs-none,
+[data-theme='terminal'] .ui-sd__chips-prefix {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+[data-theme='terminal'] .ui-sd__outs-none::before {
+  content: '[\a0';
+}
+
+[data-theme='terminal'] .ui-sd__outs-none::after {
+  content: '\a0]';
+}
+
+[data-theme='terminal'] .ui-sd__hold {
+  color: var(--ink);
+}
+
+[data-theme='terminal'] .ui-sd__chip {
+  --suit-s: var(--card-ink);
+  --suit-c: var(--card-ink);
+  --suit-h: var(--suit-red);
+  --suit-d: var(--suit-red);
+  background: var(--card-face);
+  border-color: var(--line-strong);
 }

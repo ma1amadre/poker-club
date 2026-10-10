@@ -3,6 +3,7 @@ import {
   clubDateKey,
   holdsSlot,
   nextGameAt as cronNextGameAt,
+  resultsWindowFilter,
   slotFilter,
 } from '../../../supabase/functions/cron-tick/schedule.ts';
 import {
@@ -254,6 +255,16 @@ describe('cron-tick: занят ли слот расписания (holdsSlot, �
   it('фильтр PostgREST: тот же московский день по времени или слот', () => {
     expect(slotFilter(GAME)).toBe(
       'and(scheduled_at.gte.2026-10-07T21:00:00.000Z,scheduled_at.lt.2026-10-08T21:00:00.000Z),slot_date.eq.2026-10-08',
+    );
+  });
+});
+
+describe('окно допосылки итогов (cron-tick, миграция 026)', () => {
+  it('финал или зачёт тренировки не старше окна', () => {
+    const now = Date.parse('2026-10-14T12:00:00Z');
+    // Тренировку 09.10 засчитали 14.10: финал старше 3 суток, но зачёт свежий — итоги бот допошлёт.
+    expect(resultsWindowFilter(now, 3 * 24 * 60 * 60 * 1000)).toBe(
+      'finished_at.gte.2026-10-11T12:00:00.000Z,promoted_at.gte.2026-10-11T12:00:00.000Z',
     );
   });
 });

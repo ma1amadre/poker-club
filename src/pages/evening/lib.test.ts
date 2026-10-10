@@ -633,6 +633,24 @@ describe('seatCandidates / normalizeGuestName', () => {
     expect(seatPreselected([], 'start')).toEqual([]);
   });
 
+  it('игра 2 (миграция 026): состав прошлой игры первым и отмечен на старте, опоздавшему — нет', () => {
+    const state = replay(DEFAULT_FORMAT, journal().join('a').events, 0);
+    const players = [
+      p('a', 'Аня'),
+      p('b', 'Борис'),
+      p('c', 'Вова', { is_guest: true }),
+      p('d', 'Глеб'),
+    ];
+    // В игре 1 сидели Глеб, гость Вова и Аня (Аня уже за столом игры 2).
+    const roster = ['d', 'c', 'a'];
+    const list = seatCandidates(players, state, [], roster);
+    expect(list.map((x) => x.player.id)).toEqual(['d', 'c', 'b']);
+    expect(seatPreselected(list, 'start', roster)).toEqual(['d', 'c']);
+    expect(seatPreselected(list, 'late', roster)).toEqual([]);
+    // Без состава — как раньше: по ответам «иду».
+    expect(seatPreselected(list, 'start')).toEqual([]);
+  });
+
   it('имя гостя: пробелы схлопываются, 1–40 символов', () => {
     expect(normalizeGuestName('  Петя   Гость ')).toBe('Петя Гость');
     expect(normalizeGuestName('   ')).toBeNull();

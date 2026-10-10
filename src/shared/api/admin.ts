@@ -134,6 +134,37 @@ export function useDeleteTrainingEvening() {
   });
 }
 
+/**
+ * Засчитать завершённую тренировку как настоящий вечер (миграция 026, только админ, в одну сторону):
+ * вечер попадает в историю, рейтинг, ачивки и ленту, голосование открыто 24 ч с момента зачёта.
+ * Номер игры в дне — следующий свободный на дату вечера. Пост итогов в группу клиент просит сразу
+ * (notify), не дошедший добьёт cron-tick.
+ */
+export async function promoteTrainingEvening(
+  eveningId: string,
+): Promise<{ gameNo: number; votingClosesAt: string | null }> {
+  const { data, error } = await supabase.rpc('promote_training_evening', { p_evening: eveningId });
+  if (error) throw toError(error);
+  const row = (data ?? {}) as { gameNo?: unknown; votingClosesAt?: unknown };
+  return {
+    gameNo: typeof row.gameNo === 'number' ? row.gameNo : 1,
+    votingClosesAt: typeof row.votingClosesAt === 'string' ? row.votingClosesAt : null,
+  };
+}
+
+export function usePromoteTrainingEvening() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: promoteTrainingEvening,
+    onSuccess: (_result, eveningId) => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.evening(eveningId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.eveningsAll });
+      // Вечер вошёл в историю: рейтинг, ачивки, лента, расчёты.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clubHistory });
+    },
+  });
+}
+
 export function useUpsertEvening() {
   const queryClient = useQueryClient();
   return useMutation({

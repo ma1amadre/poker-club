@@ -12,7 +12,15 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMarkSettled, useUnmarkSettled } from '../../shared/api';
 import { useAuth } from '../../shared/auth';
-import { copyText, formatDate, formatNumber, formatRub, formatTime, paths } from '../../shared/lib';
+import {
+  copyText,
+  formatDate,
+  formatNumber,
+  formatRub,
+  formatTime,
+  gameSuffix,
+  paths,
+} from '../../shared/lib';
 import {
   Amount,
   Avatar,
@@ -148,7 +156,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
   // «Скопировать расчёт»: остатки settlement домена текстом для чата; буфер недоступен — шторка.
   const copySettle = async () => {
     const text = settleShareText({
-      dateLabel: formatDate(evening.scheduled_at, nowMs),
+      dateLabel: `${formatDate(evening.scheduled_at, nowMs)}${gameSuffix(evening.game_no)}`,
       bankerId: evening.banker_id,
       ids,
       table,
@@ -162,7 +170,7 @@ function SettleScreen({ model }: { model: EveningModel }) {
   return (
     <Page
       back
-      eyebrow={`Вечер ${formatDate(evening.scheduled_at, nowMs)}`}
+      eyebrow={`Вечер ${formatDate(evening.scheduled_at, nowMs)}${gameSuffix(evening.game_no)}`}
       title="Расчёт"
       subtitle={
         evening.banker_id

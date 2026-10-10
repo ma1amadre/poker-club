@@ -1,14 +1,15 @@
-// Выбор в шторке олл-ина после ривера: кто вылетел (по умолчанию — все проигравшие раздачу), кто
-// кого выбил, порядок по фишкам перед раздачей (у кого больше — место выше) и ребай сразу.
-// Кто выбил — домен: обычно однозначно (строкой), а если сняли отметку с проигравшего («остался в
-// игре») и возможен побочный банк — выбор из тех, кто мог забрать последние фишки, по умолчанию
-// лучшая рука. Состояние — useRiverChoice.
+// Выбор в шторке олл-ина после ривера: кто вылетел (отметок заранее нет — банкир отмечает, кому не
+// хватило фишек), кто кого выбил, порядок по фишкам перед раздачей (у кого больше — место выше) и
+// ребай сразу — с кратностью, как в шторке игрока (одна на всех, кто докупается), и «Оплачено сразу».
+// Кто выбил — домен: обычно однозначно (строкой), а если кто-то из проигравших остался в игре и
+// возможен побочный банк — выбор из тех, кто мог забрать последние фишки, по умолчанию лучшая рука.
+// Состояние — useRiverChoice.
 import type { PlayerId, TournamentFormat } from '@domain/types.ts';
 import { capitalize, joinNames } from '../../shared/lib';
 import { Checkbox, FieldGroup, IconButton, PlayerPicker, Segmented } from '../../shared/ui';
 import { haptic } from '../../shared/telegram';
 import { killerKey, killersInColumn, riverKillersText } from './riverBusts';
-import { PaidNowCheckbox } from './StacksPicker';
+import { PaidNowCheckbox, StacksPicker } from './StacksPicker';
 import type { RiverChoice } from './useRiverBusts';
 import type { EveningModel } from './useEveningModel';
 
@@ -32,7 +33,7 @@ export function RiverBustsChoice({
     <div className="ev-river">
       <FieldGroup
         label="Кто вылетел"
-        hint="Проиграли раздачу. Фишек хватило и игрок остаётся за столом — сними отметку."
+        hint="Проиграли раздачу. Отметь, кому не хватило фишек: остальные остаются за столом."
       >
         <PlayerPicker
           players={choice.victims.map((id) => ({
@@ -121,15 +122,29 @@ export function RiverBustsChoice({
         </FieldGroup>
       )}
       {rebuys.length > 0 && (
-        <PaidNowCheckbox
-          format={format}
-          checked={choice.paid}
-          onChange={choice.setPaid}
-          kind="rebuy"
-          stacks={1}
-          many={rebuys.length > 1}
-          disabled={disabled}
-        />
+        <>
+          <StacksPicker
+            format={format}
+            value={choice.rebuyStacks}
+            onChange={choice.setRebuyStacks}
+            label="Ребай"
+            note={
+              rebuys.length > 1
+                ? 'Кратность одна на всех, кто сразу докупается. Другая сумма — ребай отдельно, в шторке игрока.'
+                : undefined
+            }
+            disabled={disabled}
+          />
+          <PaidNowCheckbox
+            format={format}
+            checked={choice.paid}
+            onChange={choice.setPaid}
+            kind="rebuy"
+            stacks={choice.rebuyStacks}
+            many={rebuys.length > 1}
+            disabled={disabled}
+          />
+        </>
       )}
     </div>
   );

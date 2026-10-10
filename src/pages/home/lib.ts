@@ -7,7 +7,7 @@ import { seasonKey } from '@domain/season.ts';
 import { spectatesEvening } from '@domain/spectators.ts';
 import type { EveningSummary } from '@domain/summary.ts';
 import type { EveningEvent, PlayerId, TournamentFormat } from '@domain/types.ts';
-import type { EveningStatus, Player, Rsvp } from '../../shared/api';
+import { gameNoOf, type EveningStatus, type Player, type Rsvp } from '../../shared/api/types';
 
 // --- Ближайший вечер -------------------------------------------------------------------------
 
@@ -155,11 +155,15 @@ export interface SettleEveningLike {
   format: TournamentFormat;
   /** Закрытый расчёт открылся сам из-за правки журнала (миграция 008). */
   settle_reopened_at?: string | null;
+  /** Номер игры в дне (миграция 026); без колонки — игра 1. */
+  game_no?: number | null;
 }
 
 export interface MyDebt {
   eveningId: string;
   scheduledAt: string;
+  /** Номер игры в дне: две игры одного дня в напоминаниях различает «· игра 2». */
+  gameNo: number;
   bankerId: string | null;
   /** owe — я должен банкиру, await — банкир должен мне. */
   kind: 'owe' | 'await';
@@ -171,6 +175,7 @@ export interface MyDebt {
 export interface BankerDuty {
   eveningId: string;
   scheduledAt: string;
+  gameNo: number;
   /** Сколько игроков (кроме самого банкира) ещё не рассчитались. */
   pending: number;
   /**
@@ -216,6 +221,7 @@ export function openSettlements(
       out.banker.push({
         eveningId: evening.id,
         scheduledAt: evening.scheduled_at,
+        gameNo: gameNoOf(evening),
         pending,
         selfRemainingRub: table[meId]?.remainingRub ?? 0,
         allSettled: isSettled(table),
@@ -228,6 +234,7 @@ export function openSettlements(
     out.debts.push({
       eveningId: evening.id,
       scheduledAt: evening.scheduled_at,
+      gameNo: gameNoOf(evening),
       bankerId: evening.banker_id,
       kind: row.status === 'owes' ? 'owe' : 'await',
       amountRub: Math.abs(row.remainingRub),

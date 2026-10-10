@@ -5,6 +5,7 @@ import { clubEvents, clubMoments, mergeFeed, momentItems } from '@domain/feed.ts
 import { useMemo, useState } from 'react';
 import {
   clubFeedInput,
+  gameNoOf,
   momentsNowMs,
   useVotePhotoUrl,
   type ClubHistory,
@@ -39,6 +40,11 @@ export function FeedSection({ history, me, playersById, nowMs }: FeedSectionProp
     () => new Map(history.evenings.map((e) => [e.id, e.scheduled_at])),
     [history],
   );
+  // Вторая игра дня (миграция 026) — «вчера · игра 2».
+  const eveningGames = useMemo(
+    () => new Map(history.evenings.map((e) => [e.id, gameNoOf(e)])),
+    [history],
+  );
 
   if (items.length === 0) {
     return (
@@ -53,7 +59,7 @@ export function FeedSection({ history, me, playersById, nowMs }: FeedSectionProp
 
   const rows = feedRows(
     items,
-    { names: playersById, meId: me.id, nowMs, eveningDates },
+    { names: playersById, meId: me.id, nowMs, eveningDates, eveningGames },
     FEED_LIMIT,
   );
   return (

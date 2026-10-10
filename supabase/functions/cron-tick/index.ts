@@ -5,7 +5,9 @@
 // За один вызов:
 //   1) до ближайшей игры по расписанию ≤ announce_hours_before и слот свободен (нет вечера ни
 //      на эту дату, ни перенесённого с неё — evenings.slot_date) —
-//      создаёт вечер (формат по умолчанию, банкир не назначен); постит неотправленные анонсы;
+//      создаёт вечер (формат по умолчанию, банкир не назначен) — всегда игру 1 (game_no по умолчанию,
+//      миграция 026): вторую игру дня создаёт только «Ещё игра сегодня» (create_next_game), у неё анонс
+//      и пост дня игры сразу отмечены; постит неотправленные анонсы;
 //   2) добивает неотправленные итоги вечеров (если notify банкира не дошёл);
 //   3) постит итоги голосования, когда оно закрылось;
 //   4) подстраховка notify evening_changed: о переносе, месте, отмене или возврате вечера, чей
@@ -52,7 +54,7 @@ import {
 } from '../_shared/gameday.ts';
 import {
   announcePost,
-  formatClubDate,
+  formatEveningDate,
   gamedayPost,
   votingPost,
   votingReminderPost,
@@ -91,7 +93,13 @@ import {
   votingTurnout,
   type TurnoutPlayerRow,
 } from '../_shared/votingReminder.ts';
-import { holdsSlot, nextGameAt, slotFilter, type SlotEvening } from './schedule.ts';
+import {
+  holdsSlot,
+  nextGameAt,
+  resultsWindowFilter,
+  slotFilter,
+  type SlotEvening,
+} from './schedule.ts';
 
 const HOUR_MS = 60 * 60 * 1000;
 /** Итоги старше — уже не новость: при подключении группы не вываливаем в неё всю историю. */
@@ -153,7 +161,8 @@ function fail(t: TickState, kind: AlertKind, label: string, err: unknown, detail
   t.failures.push({ kind, detail, err });
 }
 
-const eveningDetail = (e: EveningRow): string => `вечер ${formatClubDate(e.scheduled_at)}`;
+const eveningDetail = (e: EveningRow): string =>
+  `вечер ${formatEveningDate(e.scheduled_at, e.game_no)}`;
 
 /**
  * Алерты по итогам тика: один вызов alertAdmin на вид сбоя (первая ошибка + сколько ещё было в том
@@ -507,7 +516,8 @@ async function backfillResults(db: Db, nowMs: number, report: TickState): Promis
     .is('results_posted_at', null)
     .not('finished_at', 'is', null)
     .lte('finished_at', new Date(nowMs - RESULTS_GRACE_MS).toISOString())
-    .gte('finished_at', new Date(nowMs - BACKFILL_WINDOW_MS).toISOString())
+    // Окно — от финала или от зачёта тренировки (promoted_at, миграция 026).
+    .or(resultsWindowFilter(nowMs, BACKFILL_WINDOW_MS))
     .order('finished_at');
   if (error) throw new Error(`evenings: ${describeError(error)}`);
   for (const e of (data ?? []) as unknown as EveningRow[]) {
@@ -574,6 +584,7 @@ async function postVotingResults(
       const post = votingPost({
         eveningId: e.id,
         scheduledAt: e.scheduled_at,
+        gameNo: e.game_no,
         names,
         results: voteResults(votesOf((votes ?? []) as VoteRow[])),
         botUsername: s.bot_username,
@@ -696,6 +707,7 @@ async function postVotingReminders(
         votingReminderPost({
           eveningId: e.id,
           scheduledAt: e.scheduled_at,
+          gameNo: e.game_no,
           votingClosesAt: e.voting_closes_at,
           voted: turnout.voted,
           eligible: turnout.eligible,

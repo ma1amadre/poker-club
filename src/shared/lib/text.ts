@@ -99,6 +99,14 @@ export function formatShortDate(value: string | number | Date): string {
 
 // --- Мелкий набор ----------------------------------------------------------------------------
 
+/**
+ * «· игра 2» — после даты у второй и следующих игр одного дня (evenings.game_no, миграция 026): там,
+ * где вечер отличают только по дате (шапка экрана, история, лента, табло). У игры 1 — пусто.
+ */
+export function gameSuffix(gameNo: number | null | undefined): string {
+  return typeof gameNo === 'number' && gameNo > 1 ? ` · игра${NBSP}${gameNo}` : '';
+}
+
 /** Заглавная только в начале: «четверг, 8 октября» → «Четверг, 8 октября». */
 export function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);

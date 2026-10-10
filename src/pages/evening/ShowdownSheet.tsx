@@ -3,11 +3,12 @@
 // касания переходит к следующему пустому. Занятые карты в сетке недоступны. Каждая отправка пишет
 // в журнал полное состояние раздачи ('showdown'); ошибку правят следующей отправкой или «Отменить»
 // в тосте — вечер она не ломает (на игру и деньги раздача не влияет).
-// После ривера — «Записать вылет: X, выбивает Y» (useRiverBusts.ts): проигравшие раздачу отмечены,
-// банкир снимает отметку с того, кому фишек хватило; кто выбил — по картам (при побочном банке —
-// выбор), несколько вылетевших — с порядком по фишкам, «Сразу ребай» — тем же действием. Запись
-// закрывает раздачу. Открыта с пульта по «Записать вылеты» или «Вылет и ребай» (river) — на раздаче
-// после ривера, даже если табло её уже спрятало.
+// После ривера (useRiverBusts.ts) — кто проиграл раздачу, без отметок заранее (решение клуба
+// 10.10.2026: стек проигравшего может быть больше олл-ина соперника): банкир отмечает, кому не
+// хватило фишек; кто выбил — по картам (при побочном банке — выбор), несколько вылетевших — с порядком
+// по фишкам, «Сразу ребай» с кратностью — тем же действием. Запись закрывает раздачу; хватило всем —
+// «Все остаются за столом» (раздача закрывается без вылетов). Открыта с пульта по «Отметить вылет»
+// или «Вылет и ребай» (river) — на раздаче после ривера, даже если табло её уже спрятало.
 // В игре ровно двое (хедз-ап вечера) — новый олл-ин начинается с обоими отмеченными.
 // Карты можно и сказать голосом («Сказать карты», ShowdownVoice.tsx): они ложатся в те же места по
 // очереди, на табло уходят той же главной кнопкой; пока телефон слушает, кнопки внизу недоступны.
@@ -22,7 +23,7 @@ import { haptic } from '../../shared/telegram';
 import { Button, PlayerPicker, PlayingCard, Sheet, SuitPip } from '../../shared/ui';
 import { RiverBustsChoice } from './RiverBustsChoice';
 import { useRiverChoice, type RiverBusts } from './useRiverBusts';
-import { riverBustLabel } from './riverBusts';
+import { RIVER_ANSWER, riverBustLabel } from './riverBusts';
 import {
   cardIn,
   checkDraft,
@@ -120,7 +121,9 @@ function ShowdownSheetInner({
   const suggestion =
     riverDone && published ? riverBustSuggestion(published, isAlive, applied) : null;
   const choice = useRiverChoice(published, suggestion, isAlive, rebuyFor);
-  const rebuyable = new Set(choice.byChips.filter((id) => river.canRebuyAfter(choice, id)));
+  const rebuyable = new Set(
+    choice.byChips.filter((id) => river.canRebuyAfter(choice, id, choice.rebuyStacks)),
+  );
   const rebuys = choice.rebuys.filter((id) => rebuyable.has(id));
 
   // Кого можно отметить: кто в игре, и те, кто уже в раздаче на табло или в черновике
@@ -173,18 +176,25 @@ function ShowdownSheetInner({
   const recordBusts = async () => {
     if (!published) return;
     setSending(true);
-    const done = await river.record(
-      {
-        showdownId: published.showdownId,
-        byChips: choice.byChips,
-        killers: choice.killers,
-        rebuys,
-        paid: choice.paid,
-      },
-      false,
-    );
+    const done = await river.record({
+      showdownId: published.showdownId,
+      byChips: choice.byChips,
+      killers: choice.killers,
+      rebuys,
+      rebuyStacks: choice.rebuyStacks,
+      paid: choice.paid,
+    });
     setSending(false);
     // Записано — раздача закрыта (или скроется сама): шторке больше нечего показывать.
+    if (done) onClose();
+  };
+
+  // Хватило всем: раздача закрывается без вылетов (тост — «… остаётся за столом»).
+  const stayAll = async () => {
+    if (!published || !suggestion) return;
+    setSending(true);
+    const done = await river.stay(published.showdownId, suggestion.victims);
+    setSending(false);
     if (done) onClose();
   };
 
@@ -212,7 +222,9 @@ function ShowdownSheetInner({
       : domainProblem
         ? domainProblem
         : riverDone && suggestion
-          ? 'Запись закроет раздачу. Никто не вылетел — «Закрыть раздачу».'
+          ? suggestion.victims.length === 1
+            ? `Не хватило фишек — отметь игрока: запись закроет раздачу. Хватило — «${RIVER_ANSWER.stay}».`
+            : `Отметь, кому не хватило фишек: запись закроет раздачу. Хватило всем — «${RIVER_ANSWER.stayAll}».`
           : riverDone
             ? published === visible
               ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
@@ -249,15 +261,10 @@ function ShowdownSheetInner({
                 disabled={footerBusy || choice.byChips.length === 0}
                 onClick={() => void recordBusts()}
               >
-                {riverBustLabel(choice.byChips.map(nameOf), rebuys.length)}
+                {riverBustLabel(choice.byChips.map(nameOf), rebuys.length, choice.rebuyStacks)}
               </Button>
-              <Button
-                variant="ghost"
-                block
-                disabled={footerBusy}
-                onClick={() => void closeShowdown()}
-              >
-                Закрыть раздачу
+              <Button block icon="check" disabled={footerBusy} onClick={() => void stayAll()}>
+                {suggestion.victims.length === 1 ? RIVER_ANSWER.stay : RIVER_ANSWER.stayAll}
               </Button>
             </>
           ) : riverDone ? (

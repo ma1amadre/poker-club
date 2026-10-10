@@ -2,7 +2,7 @@
 // а банкиру — сколько игроков ему ещё рассчитать. Каждое сообщение ведёт на экран расчёта.
 import { useMemo } from 'react';
 import type { ClubHistory, Player } from '../../shared/api';
-import { formatDate, formatRub, paths, pluralWithNumber } from '../../shared/lib';
+import { formatDate, formatRub, gameSuffix, paths, pluralWithNumber } from '../../shared/lib';
 import { ButtonLink, Notice } from '../../shared/ui';
 import { openSettlements, type BankerDuty } from './lib';
 
@@ -30,7 +30,7 @@ export function SettlementNotices({ history, me, playersById }: SettlementNotice
       {open.debts.map((debt) => {
         const banker = debt.bankerId ? playersById.get(debt.bankerId)?.display_name : null;
         const where =
-          `Вечер ${formatDate(debt.scheduledAt)}${banker ? ` · банкир — ${banker}` : ''}.` +
+          `Вечер ${formatDate(debt.scheduledAt)}${gameSuffix(debt.gameNo)}${banker ? ` · банкир — ${banker}` : ''}.` +
           (debt.reopened ? ' Журнал изменился после закрытия расчёта.' : '');
         return debt.kind === 'owe' ? (
           <Notice
@@ -58,8 +58,8 @@ export function SettlementNotices({ history, me, playersById }: SettlementNotice
           tone={duty.reopened ? 'caution' : 'info'}
           title={
             duty.reopened
-              ? `Расчёт за ${formatDate(duty.scheduledAt)} снова открыт`
-              : `Расчёт за ${formatDate(duty.scheduledAt)} не закрыт`
+              ? `Расчёт за ${formatDate(duty.scheduledAt)}${gameSuffix(duty.gameNo)} снова открыт`
+              : `Расчёт за ${formatDate(duty.scheduledAt)}${gameSuffix(duty.gameNo)} не закрыт`
           }
           action={action(duty.eveningId)}
         >

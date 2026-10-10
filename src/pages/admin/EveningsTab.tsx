@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import {
+  isFinishedStatus,
   isTrainingEvening,
   useEvenings,
   usePlayersById,
   useSettings,
   type Evening,
 } from '../../shared/api';
-import { formatDateTime, paths, pluralWithNumber, useNow } from '../../shared/lib';
+import { formatDateTime, gameSuffix, paths, pluralWithNumber, useNow } from '../../shared/lib';
 import {
   Button,
   ButtonLink,
@@ -71,7 +72,11 @@ export function EveningsTab() {
       e.location,
       banker ? `банкир ${banker}` : isUpcoming ? 'банкир не назначен' : null,
       stale ? 'дата прошла' : null,
-      training ? 'удали после прогона' : null,
+      training
+        ? isFinishedStatus(e.status)
+          ? 'удали или засчитай как вечер'
+          : 'удали после прогона'
+        : null,
     ]
       .filter(Boolean)
       .join(' · ');
@@ -82,6 +87,7 @@ export function EveningsTab() {
           // Бейдж — в строке заголовка с переносом: справа он сжимал дату в три строки на 320 px.
           <span className="adm-title-badge">
             {formatDateTime(e.scheduled_at, now)}
+            {training ? '' : gameSuffix(e.game_no)}
             <EveningStatusBadge status={e.status} />
             {isTrainingEvening(e) && <TrainingBadge />}
           </span>

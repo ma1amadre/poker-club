@@ -17,6 +17,7 @@ import {
   formatDateTime,
   formatPoints,
   formatWeekdayDate,
+  gameSuffix,
   paths,
   signedNumber,
   votingPhase,
@@ -72,7 +73,10 @@ export function LastEveningSection({ history, me, playersById, nowMs }: LastEven
   const failure = data.failed.find((f) => f.eveningId === evening.id);
 
   return (
-    <Section title="Последний вечер" aside={formatDate(evening.scheduled_at, nowMs)}>
+    <Section
+      title="Последний вечер"
+      aside={`${formatDate(evening.scheduled_at, nowMs)}${gameSuffix(evening.game_no)}`}
+    >
       {summary ? (
         <Card>
           <p className="m-eyebrow">

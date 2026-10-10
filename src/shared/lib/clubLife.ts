@@ -20,7 +20,7 @@ export const ACHIEVEMENT_SHORT: Record<AchievementCode, string> = {
   phoenix: 'первый вылет вечера — и всё равно победа',
   clean_win: 'победа без единого ребая',
   rebuy_king: 'больше всех ребаев за сезон',
-  iron_chair: 'ни одного пропущенного вечера за сезон',
+  iron_chair: 'ни одного пропущенного игрового дня за сезон',
   hat_trick: 'три победы подряд',
   sworn_enemy: 'нокауты одного и того же игрока: 5, 10 и 15',
   revenge: 'нокаут своей Немезиды',

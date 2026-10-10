@@ -1,11 +1,19 @@
-import { streetOf } from '@domain/showdown.ts';
+import { streetOf, type Street } from '@domain/showdown.ts';
 import type { ShowdownHand } from '@domain/types.ts';
 import type { ReactNode } from 'react';
 import { cn } from '../lib/cn';
 import { formatNumber, NBSP } from '../lib/format';
-import { roundShares } from '../lib/poker/analysis';
+import { roundShares, type PlayerOuts } from '../lib/poker/analysis';
 import { cardName } from '../lib/poker/cards';
-import { groupOuts, outsTarget, STREET_LABEL } from '../lib/poker/display';
+import {
+  catchUpText,
+  holdsText,
+  noOutsText,
+  outsBySuit,
+  outsLabel,
+  outsTarget,
+  STREET_LABEL,
+} from '../lib/poker/display';
 import { useShowdownAnalysis } from '../lib/poker/useShowdownEquity';
 import { PlayingCard, SuitPip, type PlayingCardSize } from './PlayingCard';
 import './showdown.css';
@@ -26,7 +34,9 @@ const BOARD_SLOTS = ['флоп', 'флоп', 'флоп', 'тёрн', 'ривер
 /**
  * Панель олл-ина: стол, руки игроков, шансы на победу (%, полоса), делёж и ауты. Шансы считает
  * useShowdownAnalysis (точно с флопа, до флопа — Монте-Карло в Web Worker с seed из карт): на табло,
- * у банкира и у игроков цифры одни и те же. Проценты — целые, в сумме 100.
+ * у банкира и у игроков цифры одни и те же. Проценты — целые, в сумме 100. Ауты отстающего — крупным
+ * числом и плашками мастей на светлом лице карты (OutsBlock); у того, кто впереди, — одна строка: на
+ * скольких картах следующей улицы он устоит.
  */
 export function ShowdownView({
   showdown,
@@ -86,7 +96,9 @@ export function ShowdownView({
           const isLead = winners === null && hasLeader && share === top;
           const tie = p ? Math.round(p.tie) : 0;
           const outs = p?.outs ?? null;
-          const outsCount = outs ? outs.outs.length + outs.splitOuts.length : 0;
+          // «Устоит на 35 картах из 44» — только когда кто-то позади (иначе все вровень и
+          // строка — шум) и аналитика ещё не на ривере.
+          const holds = winners === null && anyoneAhead && !allAhead ? (p?.holds ?? null) : null;
           return (
             <li
               key={hand.playerId}
@@ -131,19 +143,10 @@ export function ShowdownView({
                     {NBSP}%
                   </p>
                 )}
-                {outs && target && (
-                  <div className="ui-sd__outs">
-                    <p className="ui-sd__note">
-                      {outsCount === 0
-                        ? `Аутов ${target} нет`
-                        : `Ауты ${target}: ${outsCount} · ${Math.round(outs.hitPct)}${NBSP}%`}
-                    </p>
-                    {outs.outs.length > 0 && <OutsLine codes={outs.outs} />}
-                    {outs.splitOuts.length > 0 && (
-                      <OutsLine codes={outs.splitOuts} prefix="на делёж" />
-                    )}
-                  </div>
+                {holds !== null && analysis && (
+                  <p className="ui-sd__hold">{holdsText(holds, analysis.unseen, street)}</p>
                 )}
+                {outs && target && <OutsBlock outs={outs} street={street} target={target} />}
               </div>
             </li>
           );
@@ -165,27 +168,71 @@ export function ShowdownView({
   );
 }
 
-/** Ауты по рангам: «A ♠♥♦ · K ♠♥♦». */
-function OutsLine({ codes, prefix }: { codes: readonly string[]; prefix?: string }) {
+/**
+ * Ауты отстающего: число крупно, рядом — «аутов к риверу» и «Догонит: 20 %» (на флопе — «Догонит на
+ * тёрне: 33 %»; следующая карта — аут или делёж), под ними — плашки мастей на светлом лице карты
+ * (outsBySuit: значок масти и её ранги строкой, в две краски, как карты стола), отдельной строкой —
+ * «на делёж», плашками мельче (второстепенное). Аутов нет — «[ Аутов нет ]» (на флопе — «[ Аутов к
+ * тёрну нет ]»: до ривера ещё две карты).
+ */
+function OutsBlock({ outs, street, target }: { outs: PlayerOuts; street: Street; target: string }) {
+  const count = outs.outs.length + outs.splitOuts.length;
+  if (count === 0) {
+    return (
+      <div className="ui-sd__outs">
+        <p className="ui-sd__outs-none">{noOutsText(street)}</p>
+      </div>
+    );
+  }
+  const label = outsLabel(count, target);
+  const catchUp = catchUpText(Math.round(outs.hitPct), street);
   return (
-    <p className="ui-sd__outs-list">
+    <div className="ui-sd__outs">
+      <p className="ui-sd__outs-head">
+        <span className="ui-sd__outs-num" aria-hidden="true">
+          {count}
+        </span>
+        <span className="ui-sd__outs-label" aria-hidden="true">
+          <span>{label}</span>
+          <span>{catchUp}</span>
+        </span>
+        <span className="sr-only">
+          {count} {label}. {catchUp}
+        </span>
+      </p>
+      {outs.outs.length > 0 && <OutsSuits codes={outs.outs} />}
+      {outs.splitOuts.length > 0 && <OutsSuits codes={outs.splitOuts} prefix="на делёж" />}
+    </div>
+  );
+}
+
+/**
+ * Ауты по мастям: плашка на масть — «♥ A K Q J 7», в две краски, как карты стола. С prefix — ауты
+ * на делёж: плашки мельче основных (ui-sd__chips--split), чтобы строка дележа не отнимала высоту у
+ * табло.
+ */
+function OutsSuits({ codes, prefix }: { codes: readonly string[]; prefix?: string }) {
+  return (
+    <div className={cn('ui-sd__chips', prefix && 'ui-sd__chips--split')}>
       <span className="sr-only">
         {prefix ? `${prefix}: ` : ''}
         {codes.map(cardName).join(', ')}
       </span>
       {prefix && (
-        <span className="ui-sd__outs-prefix" aria-hidden="true">
-          {prefix}:
+        <span className="ui-sd__chips-prefix" aria-hidden="true">
+          {prefix}
         </span>
       )}
-      {groupOuts(codes).map((g) => (
-        <span key={g.rank} className="ui-sd__outs-group" aria-hidden="true">
-          <span className="ui-sd__outs-rank">{g.rank}</span>
-          {g.suits.map((s) => (
-            <SuitPip key={s} suit={s} className={`ui-card-suit--${s}`} />
+      {outsBySuit(codes).map(({ suit, ranks }) => (
+        <span key={suit} className={`ui-sd__chip ui-card-suit--${suit}`} aria-hidden="true">
+          <SuitPip suit={suit} className="ui-sd__chip-pip" />
+          {ranks.map((r) => (
+            <span key={r} className="ui-sd__chip-rank">
+              {r}
+            </span>
           ))}
         </span>
       ))}
-    </p>
+    </div>
   );
 }

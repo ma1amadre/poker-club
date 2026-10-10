@@ -21,6 +21,7 @@ import {
   levelThreshold,
   reigningChampionsFor,
   SEASONAL_ACHIEVEMENTS,
+  seasonGameDays,
   titles,
   type AchievementCode,
   type AchievementInput,
@@ -244,21 +245,23 @@ export function achievementProgress(
         },
   );
 
-  // Сезонные — по текущему сезону.
+  // Сезонные — по текущему сезону. «Железный стул» — по игровым дням (seasonGameDays): две игры в
+  // один день — один день, хватит сесть за одну из них.
   const season = evenings.filter((s) => s.seasonKey === key);
-  const played = season.filter((s) => s.entrants.includes(playerId)).length;
+  const { days, playedDays } = seasonGameDays(season);
+  const played = playedDays.get(playerId) ?? 0;
   put({
     code: 'iron_chair',
     measure: 'count',
     current: played,
-    target: season.length,
-    possible: played === season.length,
+    target: days,
+    possible: played === days,
     hint:
-      season.length === 0
-        ? 'в этом сезоне ещё не было вечеров'
-        : played === season.length
-          ? 'вечера сезона без пропусков'
-          : 'в этом сезоне уже есть пропуск',
+      days === 0
+        ? 'в этом сезоне ещё не было игр'
+        : played === days
+          ? 'игровые дни сезона без пропусков'
+          : 'в этом сезоне уже есть пропущенный игровой день',
     seasonKey: key,
   });
 

@@ -5,17 +5,22 @@
 // игроков. Админу —
 // правка закрытого вечера (отмена записей, правка входа, ребая и вылета на месте — AmendSheet, возврат
 // вечера в игру).
+// Миграция 026: банкиру и админу 12 ч после финала — «Ещё игра сегодня» (create_next_game: вечер на сейчас,
+// то же место, формат и банкир, открывается его экран); админу на завершённой тренировке — «Засчитать как
+// настоящий вечер» (promote_training_evening) с вопросом о последствиях и постом итогов сразу (notify).
 import { amendField } from '@domain/amend.ts';
 import { computeMoney } from '@domain/money.ts';
 import { eveningPoints, eveningScoring } from '@domain/scoring.ts';
 import { isShowdownEvent } from '@domain/showdown.ts';
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   notifyEveningFinished,
   errorMessage,
   isTrainingEvening,
   scoringFromSettings,
   useClubHistory,
+  useCreateNextGame,
   usePredictions,
   useSettings,
   type EveningEventRecord,
@@ -56,6 +61,8 @@ import { StoryFacts } from './EveningStory';
 import { useEveningRecap } from './useEveningRecap';
 import { useEveningStory } from './useEveningStory';
 import { bestHunters, orderedPlayers, ordinalPlace, reopenedNotice, totalRebuys } from './lib';
+import { nextGameAvailable, nextGameQuestion, nextGameToast } from './nextGame';
+import { usePromoteTraining } from './usePromoteTraining';
 import { EventFeed, PlayersList } from './parts';
 import {
   ORACLE_NOTE,
@@ -154,6 +161,30 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
       });
   };
 
+  // «Ещё игра сегодня» (миграция 026): вечер на сейчас и сразу его экран.
+  const navigate = useNavigate();
+  const nextGame = useCreateNextGame(evening.id);
+  const canNextGame = state.finished && nextGameAvailable(evening, canControl, nowMs);
+  const createNextGame = async () => {
+    if (!(await actions.confirm(nextGameQuestion()))) return;
+    nextGame.mutate(undefined, {
+      onSuccess: (result) => {
+        const { success, detail } = nextGameToast(result);
+        toast.show(success, { tone: 'positive', detail });
+        navigate(paths.evening(result.eveningId));
+      },
+    });
+  };
+
+  // Зачёт тренировки (миграция 026): только админ, только завершённая, отменить нельзя.
+  const promote = usePromoteTraining(actions.confirm);
+  const canPromote = training && isAdmin && state.finished;
+  const promoteTraining = () =>
+    promote.run(
+      evening.id,
+      state.joinOrder.filter((id) => playersById.get(id)?.is_guest).map(nameOf),
+    );
+
   return (
     <>
       {!state.finished && (
@@ -244,7 +275,34 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
             {formatTime(evening.voting_closes_at)}.
           </p>
         )}
+        {canNextGame && (
+          <Button
+            block
+            icon="plus"
+            loading={nextGame.isPending}
+            onClick={() => void createNextGame()}
+          >
+            Ещё игра сегодня
+          </Button>
+        )}
       </div>
+
+      {canPromote && (
+        <Section
+          title="Зачёт тренировки"
+          footer="Если тренировку сыграли всерьёз, её можно засчитать: места, очки, ачивки и деньги войдут в историю клуба, в группу уйдёт пост итогов, голосование откроется на 24 часа. В одну сторону — обратно в тренировку вечер не вернуть."
+        >
+          <Button
+            variant="danger"
+            block
+            icon="check"
+            loading={promote.pending}
+            onClick={() => void promoteTraining()}
+          >
+            Засчитать как настоящий вечер
+          </Button>
+        </Section>
+      )}
 
       {recap && player && (
         <Section title="Твой вечер">

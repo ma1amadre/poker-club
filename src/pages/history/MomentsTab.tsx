@@ -2,10 +2,17 @@ import { eveningAllIns, type AllIn } from '@domain/allins.ts';
 import { VOTE_CATEGORY_META } from '@domain/votes.ts';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useVotePhotoUrl, type ClubHistory, type Evening, type Player } from '../../shared/api';
+import {
+  gameNosById,
+  useVotePhotoUrl,
+  type ClubHistory,
+  type Evening,
+  type Player,
+} from '../../shared/api';
 import {
   capitalize,
   formatDate,
+  gameSuffix,
   formatDateTime,
   formatWeekdayDate,
   paths,
@@ -53,6 +60,8 @@ export function MomentsTab({ history, moments, open, playersById }: MomentsTabPr
     }
     return out;
   }, [history.evenings, history.eventsByEvening]);
+  // «Пятница, 9 октября · игра 2»: у двух игр одного дня — две секции, их иначе не отличить.
+  const gameNos = gameNosById(history.evenings);
   const groups = momentEvenings(
     groupMoments(moments, (id) => history.summaryById.get(id)?.date),
     history.evenings,
@@ -64,7 +73,7 @@ export function MomentsTab({ history, moments, open, playersById }: MomentsTabPr
       {open.map((evening) => (
         <Notice
           key={evening.id}
-          title={`Идёт голосование за вечер ${formatDate(evening.scheduled_at)}`}
+          title={`Идёт голосование за вечер ${formatDate(evening.scheduled_at)}${gameSuffix(evening.game_no)}`}
           action={
             <ButtonLink to={paths.vote(evening.id)} size="sm">
               Открыть голосование
@@ -85,7 +94,9 @@ export function MomentsTab({ history, moments, open, playersById }: MomentsTabPr
         />
       ) : (
         groups.map((group) => {
-          const title = group.date ? capitalize(formatWeekdayDate(group.date)) : 'Вечер';
+          const title = group.date
+            ? `${capitalize(formatWeekdayDate(group.date))}${gameSuffix(gameNos.get(group.eveningId))}`
+            : 'Вечер';
           return (
             <Section key={group.eveningId} title={title}>
               {group.moments.length > 0 && (

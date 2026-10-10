@@ -267,6 +267,16 @@ describe('незакрытые расчёты', () => {
     expect(openSettlements([evening()], map, 'Z').debts).toEqual([]);
   });
 
+  it('номер игры в дне (миграция 026): без колонки — 1, у игры 2 — 2', () => {
+    const map = new Map([
+      ['e1', log],
+      ['e2', log],
+    ]);
+    const two = [evening(), evening({ id: 'e2', game_no: 2 })];
+    expect(openSettlements(two, map, 'A').debts.map((d) => d.gameNo)).toEqual([1, 2]);
+    expect(openSettlements(two, map, 'C').banker.map((d) => d.gameNo)).toEqual([1, 2]);
+  });
+
   it('частичная оплата уменьшает долг, полная — убирает', () => {
     const partial = [...log, ...events([['payment', { playerId: 'B', amountRub: 100 }]])].map(
       (e, i) => ({ ...e, id: i + 1 }),

@@ -3,7 +3,7 @@ import { bestNForSeason, sameRank, seasonStandings, type StandingRow } from '@do
 import type { EveningSummary } from '@domain/summary.ts';
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { scoringFromSettings } from '../../shared/api';
+import { gameNosById, scoringFromSettings } from '../../shared/api';
 import {
   bestNRule,
   cn,
@@ -12,6 +12,7 @@ import {
   formatPoints,
   formatSeason,
   formatSeasonGenitive,
+  gameSuffix,
   paths,
   placeLabel,
   scoringRuleOf,
@@ -162,6 +163,7 @@ function SeasonRow({ ctx, row, place, move, summaries, open, onToggle }: SeasonR
     () => (open ? markCountedEvenings(summaries, row.playerId, row.counted) : []),
     [open, summaries, row.playerId, row.counted],
   );
+  const gameNos = gameNosById(ctx.history.evenings);
 
   return (
     <li className={cn('rt-row', ctx.meId === row.playerId && 'rt-row--me')}>
@@ -192,7 +194,10 @@ function SeasonRow({ ctx, row, place, move, summaries, open, onToggle }: SeasonR
                     to={paths.evening(mark.eveningId)}
                     className={cn('rt-ev', mark.counted ? 'rt-ev--in' : 'rt-ev--out')}
                   >
-                    <span className="rt-ev__date">{formatDate(mark.date)}</span>
+                    <span className="rt-ev__date">
+                      {formatDate(mark.date)}
+                      {gameSuffix(gameNos.get(mark.eveningId))}
+                    </span>
                     <span className="rt-ev__points m-mono">{formatPoints(mark.points)}</span>
                     <span className="rt-ev__place">{placeLabel(mark.place, mark.entrants)}</span>
                     <span className="rt-ev__mark">

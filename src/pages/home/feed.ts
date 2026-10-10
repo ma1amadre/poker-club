@@ -9,7 +9,7 @@ import type { Player } from '../../shared/api/types';
 import { CLUB_TZ, formatDate, formatRub, NBSP, plural } from '../../shared/lib/format';
 import { paths } from '../../shared/lib/paths';
 import { formatSeason } from '../../shared/lib/season';
-import { capitalize, joinNames, kosCount, playersCount } from '../../shared/lib/text';
+import { capitalize, gameSuffix, joinNames, kosCount, playersCount } from '../../shared/lib/text';
 // «Твой вечер», лента и «Рекорды» говорят об ачивках и рекордах одинаково.
 import {
   ACHIEVEMENT_TARGET_ROLE,
@@ -109,6 +109,11 @@ export interface FeedContext {
    * моментом finish — игра, закончившаяся после полуночи, всё равно «четверговая».
    */
   eveningDates: ReadonlyMap<string, string>;
+  /**
+   * Номер игры в дне по id вечера (evenings.game_no, миграция 026): у второй и дальше к дню
+   * добавляется «· игра 2» — иначе две игры одного дня в ленте не различить. Нет — игра 1.
+   */
+  eveningGames?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -119,7 +124,8 @@ export interface FeedContext {
  */
 function dayOf(item: FeedItem, ctx: FeedContext): string {
   const date = (item.eveningId && ctx.eveningDates.get(item.eveningId)) || item.at;
-  return relativeDay(date, ctx.nowMs);
+  const game = item.eveningId ? ctx.eveningGames?.get(item.eveningId) : undefined;
+  return `${relativeDay(date, ctx.nowMs)}${gameSuffix(game)}`;
 }
 
 function line(parts: readonly (string | null | false | undefined)[]): string {

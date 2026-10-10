@@ -2,9 +2,13 @@
 // раздачи». Кто проиграл и кто кого выбил (с побочными банками) решает домен — riverBusts.ts домена;
 // здесь только раскладка (тесты — riverBusts.test.ts). Места считает домен: вылеты одной раздачи
 // пишутся одним действием (add_events) от меньшего стека к большему — позже записанный вылет даёт
-// место выше; ребаи — после всех вылетов (каждый — как «Вылет и ребай» на пульте).
-// Здесь же — сколько предложение держится на пульте (riverSuggestionLive) и где помнится ответ
-// «Не записывать» (sessionStorage: переживает переход на другой экран и перезагрузку WebView).
+// место выше; ребаи — после всех вылетов (каждый — как «Вылет и ребай» на пульте), кратность одна
+// на всех, кто сразу докупается (как в шторке игрока).
+// Стеков приложение не знает, поэтому после ривера пульт не подталкивает к вылету (решение клуба
+// 10.10.2026): нейтральный вопрос «X проигрывает раздачу. Фишек хватило?» и две равные кнопки —
+// «Вылет» и «Остаётся за столом» (закрывает раздачу, табло её убирает). Проигравших несколько —
+// «Отметить вылет» (шторка, отметок заранее нет) и «Все остаются за столом».
+// Здесь же — сколько предложение держится на пульте (riverSuggestionLive).
 import {
   riverBustDrafts,
   riverBustSuggestion,
@@ -23,10 +27,10 @@ import { capitalize, joinNames } from '../../shared/lib/text';
 import { rebuyDrafts } from './lib';
 
 /**
- * Сколько предложение вылета держится на пульте после ривера (последней правки раздачи). Табло
- * прячет раздачу через 2 минуты — банкиру этого мало: он сверяет фишки, а кнопка пропадала. Но и
- * бессрочно нельзя: проигравший, которому фишек хватило, может вылететь через полчаса в другой
- * раздаче, и готовая кнопка «Записать вылет» отдала бы нокаут победителю старой.
+ * Сколько вопрос после ривера держится на пульте (с последней правки раздачи). Табло прячет раздачу
+ * через 2 минуты — банкиру этого мало: он сверяет фишки, а вопрос пропадал. Но и бессрочно нельзя:
+ * проигравший, которому фишек хватило, может вылететь через полчаса в другой раздаче, и готовая
+ * кнопка «Вылет» отдала бы нокаут победителю старой.
  */
 export const RIVER_BUST_HOLD_MS = 5 * 60_000;
 
@@ -55,48 +59,18 @@ export function riverSuggestionLive(
 }
 
 /**
- * Предложение вылета на пульте (кнопки «Записать вылет: X», «Вылет и ребай»): раздача в состоянии
- * вечера — и спрятанная табло, но в срок (riverSuggestionLive); declined — версия раздачи, по которой
- * банкир ответил «Не записывать». Кто проиграл и кто выбил — домен (riverBustSuggestion).
+ * Вопрос после ривера на пульте (кнопки «Вылет» / «Остаётся за столом»): раздача в состоянии вечера —
+ * и спрятанная табло, но в срок (riverSuggestionLive). Ответ «Остаётся» закрывает раздачу — и вопрос
+ * пропадает на всех устройствах. Кто проиграл и кто выбил — домен (riverBustSuggestion).
  */
 export function pultRiverSuggestion(
   hand: ShowdownState | null,
   isAlive: (id: PlayerId) => boolean,
   applied: readonly Pick<EveningEvent, 'id' | 'type' | 'payload'>[],
   nowMs: number,
-  declined: number | null = null,
 ): RiverBustSuggestion | null {
-  if (!hand || hand.eventId === declined || !riverSuggestionLive(hand, applied, nowMs)) return null;
+  if (!hand || !riverSuggestionLive(hand, applied, nowMs)) return null;
   return riverBustSuggestion(hand, isAlive, applied);
-}
-
-type SessionLike = Pick<Storage, 'getItem' | 'setItem'>;
-
-/** Ключ sessionStorage: версия раздачи, по которой банкир ответил «Не записывать» в этом вечере. */
-export const riverDeclinedKey = (eveningId: string): string =>
-  `poker-club:river-declined:${eveningId}`;
-
-/** Версия раздачи (eventId), по которой ответили «Не записывать», или null. */
-export function readRiverDeclined(storage: SessionLike | null, eveningId: string): number | null {
-  try {
-    const raw = storage?.getItem(riverDeclinedKey(eveningId));
-    const id = raw ? Number(raw) : NaN;
-    return Number.isSafeInteger(id) && id > 0 ? id : null;
-  } catch {
-    return null;
-  }
-}
-
-export function writeRiverDeclined(
-  storage: SessionLike | null,
-  eveningId: string,
-  eventId: number,
-): void {
-  try {
-    storage?.setItem(riverDeclinedKey(eveningId), String(eventId));
-  } catch {
-    // Приватный режим или запрет хранилища — ответ живёт, пока открыт экран вечера.
-  }
 }
 
 /** Что записать по раздаче после ривера: вылеты, кто выбил, ребаи сразу и закрыть раздачу. */
@@ -106,8 +80,10 @@ export interface RiverPlan {
   byChips: PlayerId[];
   /** Кто выбил каждого (делёж — нокаут каждому, пусто — никому). */
   killers: Record<PlayerId, PlayerId[]>;
-  /** Кто из вылетевших сразу докупается (×1). */
+  /** Кто из вылетевших сразу докупается. */
   rebuys: PlayerId[];
+  /** Кратность ребая (×1…×10) — одна на всех, кто сразу докупается, как в шторке игрока. */
+  rebuyStacks: number;
   /** «Оплачено сразу» у этих ребаев. */
   paid: boolean;
 }
@@ -118,7 +94,7 @@ export function riverPlanDrafts(format: TournamentFormat, plan: RiverPlan): Even
     ...riverBustDrafts(plan.byChips, plan.killers),
     ...plan.byChips
       .filter((id) => plan.rebuys.includes(id))
-      .flatMap((id) => rebuyDrafts(format, id, 1, plan.paid)),
+      .flatMap((id) => rebuyDrafts(format, id, plan.rebuyStacks, plan.paid)),
   ];
 }
 
@@ -164,28 +140,68 @@ export function riverKillersText(killerNames: readonly string[]): string {
   return `выбивают ${joinNames(killerNames)} — нокаут каждому`;
 }
 
+/** « ×2» после «ребай», если кратность больше стандартной. */
+const stacksMark = (k: number): string => (k > 1 ? ` ×${k}` : '');
+
 /**
- * Главная кнопка: «Записать вылет: Дима», «Вылет и ребай: Дима», «Записать вылеты: 2»,
- * «Записать вылеты: 2 и ребай» / «…: 3 и 2 ребая»; никого не отметили — что сделать.
+ * Главная кнопка шторки: «Записать вылет: Дима», «Вылет и ребай: Дима» («Вылет и ребай ×2: Дима»),
+ * «Записать вылеты: 2», «Записать вылеты: 2 и ребай» / «…: 3 и 2 ребая ×2»; никого не отметили — что
+ * сделать.
  */
-export function riverBustLabel(victimNames: readonly string[], rebuys = 0): string {
+export function riverBustLabel(victimNames: readonly string[], rebuys = 0, k = 1): string {
   if (victimNames.length === 0) return 'Отметь, кто вылетел';
   if (victimNames.length === 1)
-    return rebuys > 0 ? `Вылет и ребай: ${victimNames[0]}` : `Записать вылет: ${victimNames[0]}`;
+    return rebuys > 0
+      ? `Вылет и ребай${stacksMark(k)}: ${victimNames[0]}`
+      : `Записать вылет: ${victimNames[0]}`;
   const base = `Записать вылеты: ${victimNames.length}`;
   if (rebuys === 0) return base;
-  return `${base} и ${rebuys === 1 ? 'ребай' : pluralWithNumber(rebuys, ['ребай', 'ребая', 'ребаев'])}`;
+  return `${base} и ${rebuys === 1 ? 'ребай' : pluralWithNumber(rebuys, ['ребай', 'ребая', 'ребаев'])}${stacksMark(k)}`;
 }
 
-/** Вопрос перед записью одного вылета с пульта. Без склонения имён и без рода. */
-export function riverBustQuestion(
-  victimName: string,
+/** Ответы на вопрос после ривера: две равные кнопки пульта и «закрыть без вылета» в шторке. */
+export const RIVER_ANSWER = {
+  /** Один проигравший: записать вылет (кто выбил — по картам). */
+  bust: 'Вылет',
+  /** Несколько проигравших: открыть шторку и отметить, кому не хватило фишек. */
+  mark: 'Отметить вылет',
+  /** Один проигравший: фишек хватило — раздача закрывается без вылета. */
+  stay: 'Остаётся за столом',
+  /** Несколько проигравших (и шторка): никто не вылетел — раздача закрывается. */
+  stayAll: 'Все остаются за столом',
+} as const;
+
+/**
+ * Нейтральный вопрос после ривера (решение клуба 10.10.2026: стек проигравшего может быть больше
+ * олл-ина соперника — не подталкиваем к вылету). Без склонения имён и без рода: «проигрывает» — в
+ * настоящем времени. hint — что будет при каждом ответе.
+ */
+export function riverQuestion(
+  victimNames: readonly string[],
   killerNames: readonly string[],
-): { title: string; message: string; confirmText: string } {
+): { text: string; hint: string } {
+  if (victimNames.length === 1)
+    return {
+      text: `${victimNames[0]} проигрывает раздачу. Фишек хватило?`,
+      hint: `«${RIVER_ANSWER.bust}» — ${riverKillersText(killerNames)}. В обоих случаях раздача закроется.`,
+    };
   return {
-    title: `Записать вылет: ${victimName}?`,
-    message: `${victimName} — вылет, ${riverKillersText(killerNames)}. Раздача закроется. Фишек хватило и игрок остаётся за столом — нажми «Не записывать».`,
-    confirmText: 'Записать вылет',
+    text: `Раздачу проигрывают: ${joinNames(victimNames)}. Фишек хватило?`,
+    hint: `Кому не хватило — отметь в шторке олл-ина. «${RIVER_ANSWER.stayAll}» закроет раздачу без вылетов.`,
+  };
+}
+
+/** Тост «Остаётся за столом»: раздача закрыта без вылета. */
+export function riverStayToast(victimNames: readonly string[]): {
+  success: string;
+  detail: string;
+} {
+  return {
+    success: 'Раздача закрыта',
+    detail:
+      victimNames.length === 1
+        ? `${victimNames[0]} остаётся за столом.`
+        : 'Все остаются за столом. Табло вернулось к таймеру.',
   };
 }
 
@@ -194,15 +210,17 @@ export function riverBustQuestion(
  * Лёша», в подробностях — кто кого выбил (у всех один — одной фразой) и ребаи.
  */
 export function riverToast(
-  plan: Pick<RiverPlan, 'byChips' | 'killers' | 'rebuys' | 'paid'>,
+  plan: Pick<RiverPlan, 'byChips' | 'killers' | 'rebuys' | 'paid'> &
+    Partial<Pick<RiverPlan, 'rebuyStacks'>>,
   nameOf: (id: PlayerId) => string,
 ): { success: string; detail: string } {
   const names = plan.byChips.map(nameOf);
   const rebuys = plan.byChips.filter((id) => plan.rebuys.includes(id));
   const single = names.length === 1;
+  const k = plan.rebuyStacks ?? 1;
   const success = single
     ? rebuys.length > 0
-      ? `Вылет и ребай: ${names[0]}`
+      ? `Вылет и ребай${stacksMark(k)}: ${names[0]}`
       : `Вылет записан: ${names[0]}`
     : `Вылеты записаны: ${joinNames(names)}`;
   const killerKeys = new Set(plan.byChips.map((id) => killerKey(plan.killers[id] ?? [])));
@@ -217,6 +235,6 @@ export function riverToast(
         ? plan.paid
           ? 'Ребай оплачен сразу.'
           : null
-        : `Ребай: ${joinNames(rebuys.map(nameOf))}${plan.paid ? ', оплачено сразу' : ''}.`;
+        : `Ребай${stacksMark(k)}: ${joinNames(rebuys.map(nameOf))}${plan.paid ? ', оплачено сразу' : ''}.`;
   return { success, detail: [ko, rebuyText].filter(Boolean).join(' ') };
 }

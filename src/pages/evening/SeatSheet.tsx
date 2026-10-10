@@ -15,6 +15,8 @@
 // вместе со входом пишется платёж на сумму взноса. Отмеченные садятся одним действием
 // (add_events, миграция 020): все входы и платежи ложатся вместе или не ложатся вовсе, повтор после
 // тайм-аута — тем же ключом. Гость с оплатой — add_guest с p_paid_rub, тоже одной транзакцией.
+// Игра 2 и дальше (миграция 026): анонса и ответов нет — на старте отмечен состав прошлой игры дня
+// (roster, из истории клуба), его игроки первыми в списке с пометкой «в игре 1».
 import { entryAmounts } from '@domain/money.ts';
 import { useState } from 'react';
 import {
@@ -49,6 +51,8 @@ export interface SeatSheetProps {
   rsvps: readonly Rsvp[];
   /** start — отметка пришедших до старта, late — опоздавший во время игры. */
   mode: 'start' | 'late';
+  /** Состав прошлой игры того же дня (previousGameRoster) — у игры 2 и дальше. */
+  roster?: { gameNo: number; playerIds: readonly string[] } | null;
 }
 
 export function SeatSheet(props: SeatSheetProps) {
@@ -56,14 +60,16 @@ export function SeatSheet(props: SeatSheetProps) {
   return props.open ? <SeatSheetInner {...props} /> : null;
 }
 
-function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps) {
+function SeatSheetInner({ onClose, model, actions, rsvps, mode, roster }: SeatSheetProps) {
   const { data: players = [] } = usePlayers();
   const toast = useToast();
   const addGuest = useAddGuest(model.evening.id);
-  const candidates = seatCandidates(players, model.state, rsvps);
+  const rosterIds = roster?.playerIds ?? [];
+  const candidates = seatCandidates(players, model.state, rsvps, rosterIds);
 
-  // Кандидаты — только кто ещё не за столом: у опоздавшего это «иду» и пока не сел, если он один.
-  const preselected = seatPreselected(candidates, mode);
+  // Кандидаты — только кто ещё не за столом: у опоздавшего это «иду» и пока не сел, если он один;
+  // у игры 2 на старте — состав прошлой игры дня.
+  const preselected = seatPreselected(candidates, mode, rosterIds);
   const [selected, setSelected] = useState<string[]>(() => preselected);
   const [guestName, setGuestName] = useState('');
   const [guestError, setGuestError] = useState<string | null>(null);
@@ -96,6 +102,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
       c.player.id,
       [
         c.player.is_guest ? 'гость' : seatSpectator(c) ? 'болельщик' : null,
+        roster && rosterIds.includes(c.player.id) ? `в игре ${roster.gameNo}` : null,
         c.rsvp ? RSVP_STATUS_META[c.rsvp].other.toLowerCase() : null,
       ]
         .filter(Boolean)
@@ -183,7 +190,9 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode }: SeatSheetProps
       description={
         closedReason ??
         (mode === 'start'
-          ? 'Ответившие «иду» уже отмечены. Сними отметку с тех, кто не пришёл.'
+          ? roster && rosterIds.length > 0
+            ? `Игроки игры ${roster.gameNo} уже отмечены. Сними отметку с тех, кто не садится.`
+            : 'Ответившие «иду» уже отмечены. Сними отметку с тех, кто не пришёл.'
           : preselected.length > 0
             ? 'Отметка уже стоит у того, кто ответил «иду» и ещё не за столом: пришёл другой — сними её. Опоздавший входит с полным стеком, пока открыта регистрация.'
             : 'Опоздавший входит с полным стеком, пока открыта регистрация.')

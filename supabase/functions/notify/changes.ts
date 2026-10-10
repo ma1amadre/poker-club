@@ -101,6 +101,7 @@ export async function postAnnounceChange(
     after: current,
     reason: evening.cancel_reason,
     botUsername: s.bot_username,
+    gameNo: evening.game_no,
   });
 
   if (!(await swapSnapshot(db, evening.id, rawKnown, current))) {

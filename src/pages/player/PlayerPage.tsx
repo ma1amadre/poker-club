@@ -4,7 +4,13 @@ import { recordsTable, type RecordKind } from '@domain/records.ts';
 import { allTimeStandings, hallOfFame, seasonStandings } from '@domain/season.ts';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { useClubHistory, useSetMySpectator, type ClubHistory, type Player } from '../../shared/api';
+import {
+  gameNosById,
+  useClubHistory,
+  useSetMySpectator,
+  type ClubHistory,
+  type Player,
+} from '../../shared/api';
 import { useAuth } from '../../shared/auth';
 import {
   cn,
@@ -16,6 +22,7 @@ import {
   formatPointsWithUnit,
   formatRubSigned,
   formatSeason,
+  gameSuffix,
   isVoiced,
   kosCount,
   paths,
@@ -125,6 +132,8 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
     () => playerEvenings(history.summaries, player.id),
     [history.summaries, player.id],
   );
+  // «· игра 2» у второй игры дня: в списке вечеров и в «Форме» иначе две одинаковые даты.
+  const gameNos = gameNosById(history.evenings);
   const net = useMemo(() => cumulativeNet(evenings), [evenings]);
 
   // Место и очки текущего сезона — таблица домена, место с дележом как на экране рейтинга.
@@ -343,7 +352,7 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
             <NetChart points={net} />
           </Section>
 
-          <FormStrip evenings={recentForm(evenings, 5)} />
+          <FormStrip evenings={recentForm(evenings, 5)} gameNos={gameNos} />
 
           <Numbers numbers={numbers} clubRecords={clubRecords} />
 
@@ -367,7 +376,7 @@ function PlayerCard({ history, player }: { history: ClubHistory; player: Player 
                 <ListItem
                   key={e.eveningId}
                   to={paths.evening(e.eveningId)}
-                  title={formatDate(e.date)}
+                  title={`${formatDate(e.date)}${gameSuffix(gameNos.get(e.eveningId))}`}
                   subtitle={[
                     placeLabel(e.place, e.entrants),
                     formatPointsWithUnit(e.points),

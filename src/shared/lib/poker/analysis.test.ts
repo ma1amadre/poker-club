@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeShowdown, computeOuts, roundShares } from './analysis';
+import { analyzeShowdown, computeHolds, computeOuts, roundShares } from './analysis';
 import { cardCode, parseCards } from './cards';
 import { computeEquity, exactEquity, mulberry32 } from './equity';
 import { outsEquity } from './pokermath';
@@ -124,6 +124,79 @@ describe('ауты', () => {
     expect(pre.exact).toBe(false);
     expect(pre.players.every((p) => p.outs === null && p.hand === null && !p.ahead)).toBe(true);
     expect(pre.winners).toBeNull();
+  });
+});
+
+describe('устоит ли тот, кто впереди', () => {
+  it('тёрн, хедз-ап: дамы устоят на всех картах, кроме 15 аутов туза-короля', () => {
+    const a = analyze(['AhKh', 'QsQd'], '2h7h9cJd');
+    const [ak, qq] = a.players;
+    expect(qq?.holds).toBe(44 - 15);
+    expect(ak?.holds).toBeNull();
+  });
+
+  it('флоп: тузы устоят к тёрну на 30 картах из 45 (15 аутов дро)', () => {
+    const a = analyze(['8h9h', 'AsAd'], 'ThJc2h');
+    expect(a.players[1]?.holds).toBe(30);
+    expect(a.players[0]?.holds).toBeNull();
+  });
+
+  it('карта, на которой отстающий догоняет до дележа, — не «устоял»', () => {
+    // T♥4♣ против 2♦3♦ на A♠K♠Q♠J♠: у первого стрит; любая пика — флеш на столе у обоих, десятка
+    // — стрит и у второго: 9 пик и 2 десятки — делёж. Устоит на остальных 33 из 44 — ровно столько,
+    // сколько у второго не аутов на делёж.
+    const a = analyze(['Th4c', '2d3d'], 'AsKsQsJs');
+    expect(a.players[0]?.holds).toBe(33);
+    expect(a.players[1]?.outs?.outs).toEqual([]);
+    expect(a.players[1]?.outs?.splitOuts).toHaveLength(11);
+    expect(a.players[1]?.holds).toBeNull();
+  });
+
+  it('впереди вдвоём вровень: устоят, пока никто из отстающих не догнал', () => {
+    // A♦2♣ и A♥3♣ — оба стрит до туза на K♥Q♥J♦T♠; у 9♣8♣ — стрит до короля, туз даст ему делёж
+    // (A♠ A♣ — 2 карты): лидеры устоят на остальных 40 из 42 (флеша не будет: червей на столе две).
+    const a = analyze(['Ad2c', 'Ah3c', '9c8c'], 'KhQhJdTs');
+    expect(a.players[2]?.outs?.splitOuts).toHaveLength(2);
+    expect(a.players[0]?.holds).toBe(42 - 2);
+    expect(a.players[1]?.holds).toBe(42 - 2);
+  });
+
+  it('у одного лидера «устоит» + ауты и ауты на делёж всех отстающих = вся колода — 200 раздач с seed', () => {
+    const rng = mulberry32(171);
+    for (let k = 0; k < 200; k += 1) {
+      const n = 2 + (k % 5);
+      const deck = Array.from({ length: 52 }, (_, i) => i);
+      for (let i = 51; i > 0; i -= 1) {
+        const j = (rng() * (i + 1)) | 0;
+        [deck[i], deck[j]] = [deck[j]!, deck[i]!];
+      }
+      const hands = Array.from({ length: n }, (_, i) => [deck[2 * i]!, deck[2 * i + 1]!]);
+      const board = deck.slice(2 * n, 2 * n + (k % 2 ? 4 : 3));
+      const holds = computeHolds(hands, board);
+      const outs = computeOuts(hands, board);
+      const eq = board.length === 4 ? exactEquity(hands, board) : null;
+      const unseen = 52 - board.length - 2 * n;
+      const leaders = holds?.filter((h) => h !== null).length ?? 0;
+      const caught = new Set(outs?.flatMap((o) => (o ? [...o.outs, ...o.splitOuts] : [])));
+      holds?.forEach((h, i) => {
+        // У каждого либо ауты, либо «устоит» — не оба сразу.
+        expect(h === null).toBe(outs?.[i] !== null);
+        if (h === null) return;
+        if (leaders === 1) expect(h).toBe(unseen - caught.size);
+        // Устоит — не чаще, чем остаётся на вершине (точный перебор, на тёрне — та же одна карта).
+        if (eq) {
+          expect(h / unseen).toBeLessThanOrEqual(
+            ((eq.win[i] ?? 0) + (eq.tie[i] ?? 0)) / 100 + 1e-9,
+          );
+        }
+      });
+    }
+  });
+
+  it('до флопа и на ривере — нет', () => {
+    expect(computeHolds([H('AsKd'), H('QhQc')], [])).toBeNull();
+    expect(computeHolds([H('AsKd'), H('QhQc')], H('2c7d9hJdTc'))).toBeNull();
+    expect(analyze(['AsKd', 'QhQc'], '').players.every((p) => p.holds === null)).toBe(true);
   });
 });
 

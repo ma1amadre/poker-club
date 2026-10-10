@@ -4,9 +4,11 @@
 // У банкира и админа под «Столом» — «Проверка перед игрой» (PregameCheck): за 3 ч до начала разделом
 // со всеми пунктами, раньше — строкой. Тренировка (миграция 023): без ответа, прогноза и «Кто идёт».
 // «На кону» (EveningStakes) — под прогнозом: кто в шаге от ачивки или рекорда, расклад сезона.
+// Игра 2 и дальше (миграция 026): в шторке посадки на старте отмечен состав прошлой игры дня.
 import { useState } from 'react';
 import {
   isTrainingEvening,
+  useClubHistory,
   type Rsvp,
   RSVP_CHOICES,
   RSVP_ORDER,
@@ -40,6 +42,7 @@ import { eventPlayerId, rsvpSegmentValue } from './lib';
 import { FormatSummary, PlayersList } from './parts';
 import { PayoutSheet } from './PayoutSheet';
 import { PredictionSection } from './PredictionSection';
+import { previousGameRoster } from './nextGame';
 import { PregameRow, PregameSection } from './PregameCheck';
 import { SeatSheet } from './SeatSheet';
 import type { EveningActions } from './useEveningActions';
@@ -69,6 +72,9 @@ export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
   const goingCount = rsvps.filter((r) => r.status === 'yes').length;
   const stakes = useEveningStakes(evening, rsvps, players);
   const training = isTrainingEvening(evening);
+  // Состав прошлой игры того же дня — из истории клуба (у игры 1 и тренировки — null).
+  const history = useClubHistory();
+  const roster = canControl ? previousGameRoster(evening, history.data) : null;
   const pregameOpen = Date.parse(evening.scheduled_at) - model.nowMs <= PREGAME_OPEN_MS;
 
   const seated = state.joinOrder.length;
@@ -125,7 +131,9 @@ export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
             <p className="m-small">
               {training
                 ? 'Отметь, кто садится за стол: на тренировке можно посадить любых игроков и гостей.'
-                : 'Перед стартом отметь, кто пришёл: ответившие «иду» будут уже выбраны.'}
+                : roster
+                  ? `Отметь, кто садится за стол: игроки игры ${roster.gameNo} будут уже выбраны.`
+                  : 'Перед стартом отметь, кто пришёл: ответившие «иду» будут уже выбраны.'}
             </p>
           )}
           <div className="ev-actions">
@@ -287,6 +295,7 @@ export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
         actions={actions}
         rsvps={rsvps}
         mode="start"
+        roster={roster}
       />
     </>
   );

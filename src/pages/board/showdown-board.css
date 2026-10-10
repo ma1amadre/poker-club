@@ -43,6 +43,16 @@
     max-width: none;
   }
 
+  /* Поля сверху и снизу и зазоры табло на время олл-ина — в пикселях макета 1920×1080, как сама
+     панель: на 1280×720 их доля экрана та же, что на 1920×1080, и высота достаётся рукам с аутами
+     (в px регистра на 720 они съедали лишнюю восьмую часть высоты). */
+  .bd.bd--showdown {
+    --bd-sd-px: min(100vw / 1920, 100vh / 1080);
+    gap: calc(var(--bd-sd-px) * 32);
+    padding-top: calc(var(--bd-sd-px) * 24 + var(--pc-safe-top));
+    padding-bottom: calc(var(--bd-sd-px) * 32 + var(--pc-safe-bottom));
+  }
+
   .bd-sd-clock .m-eyebrow {
     font-size: calc(var(--sd-u) * 2.2);
     line-height: 1.2;

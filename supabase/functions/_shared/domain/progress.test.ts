@@ -226,6 +226,23 @@ describe('прогресс до ачивок', () => {
     expect(b.get('iron_chair')).toMatchObject({ current: 3, target: 3, possible: true });
   });
 
+  it('iron_chair по игровым дням: вторая игра того же дня не добавляет день', () => {
+    // Игра 2 в день c3 (22:30 МСК), в ней только A: у A день c3 есть, пропуска больше нет.
+    const c3b = simpleEvening('c3b', '2026-10-15T19:30:00.000Z', ['A', 'C']);
+    const withSecond = input({ summaries: [c3, p1, c1, c2, c3b] });
+    expect(byCode(achievementProgress(withSecond, 'A')).get('iron_chair')).toMatchObject({
+      current: 3,
+      target: 3,
+      possible: true,
+    });
+    // B сел только за игру 1 — день засчитан, стул по-прежнему возможен.
+    expect(byCode(achievementProgress(withSecond, 'B')).get('iron_chair')).toMatchObject({
+      current: 3,
+      target: 3,
+      possible: true,
+    });
+  });
+
   it('rebuy_king: мои ребаи против лидера сезона', () => {
     expect(a.get('rebuy_king')).toMatchObject({
       current: 0,

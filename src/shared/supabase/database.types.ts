@@ -163,11 +163,13 @@ export type Database = {
           created_by: string | null;
           finished_at: string | null;
           format: NonNullable<Json>;
+          game_no: number;
           gameday_posted_at: string | null;
           id: string;
           is_training: boolean;
           location: string | null;
           note: string | null;
+          promoted_at: string | null;
           results_posted_at: string | null;
           results_revision: number;
           scheduled_at: string;
@@ -191,11 +193,13 @@ export type Database = {
           created_by?: string | null;
           finished_at?: string | null;
           format: NonNullable<Json>;
+          game_no?: number;
           gameday_posted_at?: string | null;
           id?: string;
           is_training?: boolean;
           location?: string | null;
           note?: string | null;
+          promoted_at?: string | null;
           results_posted_at?: string | null;
           results_revision?: number;
           scheduled_at: string;
@@ -219,11 +223,13 @@ export type Database = {
           created_by?: string | null;
           finished_at?: string | null;
           format?: NonNullable<Json>;
+          game_no?: number;
           gameday_posted_at?: string | null;
           id?: string;
           is_training?: boolean;
           location?: string | null;
           note?: string | null;
+          promoted_at?: string | null;
           results_posted_at?: string | null;
           results_revision?: number;
           scheduled_at?: string;
@@ -648,6 +654,7 @@ export type Database = {
         Args: { p_code: string; p_hashes: string[]; p_voice: string };
         Returns: Json;
       };
+      create_next_game: { Args: { p_evening: string }; Returns: Json };
       cron_last_tick: { Args: Record<PropertyKey, never>; Returns: Json };
       current_player_id: { Args: Record<PropertyKey, never>; Returns: string };
       delete_training_evening: { Args: { p_evening: string }; Returns: Json };
@@ -667,6 +674,7 @@ export type Database = {
       merge_guests_preview: { Args: { p_guest: string; p_target: string }; Returns: Json };
       merge_players: { Args: { p_guest: string; p_target: string }; Returns: Json };
       merge_players_preview: { Args: { p_guest: string; p_target: string }; Returns: Json };
+      promote_training_evening: { Args: { p_evening: string }; Returns: Json };
       rotate_club_board_token: { Args: Record<PropertyKey, never>; Returns: string };
       server_now: { Args: Record<PropertyKey, never>; Returns: string };
       set_my_name: { Args: { p_name: string }; Returns: undefined };

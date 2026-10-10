@@ -45,6 +45,8 @@ export interface BoardState {
   > & {
     /** Тренировочный вечер (миграция 023; до неё поля нет). */
     is_training?: boolean;
+    /** Номер игры в дне (миграция 026; до неё поля нет — игра 1): «· игра 2» в шапке табло. */
+    game_no?: number;
   };
   format: TournamentFormat;
   events: EveningEvent[];
@@ -72,6 +74,32 @@ export interface ClubBoardState {
  */
 export function isTrainingEvening(evening: { is_training?: boolean | null }): boolean {
   return evening.is_training === true;
+}
+
+/**
+ * Номер игры в московском дне (evenings.game_no, миграция 026): вторая игра того же дня — 2. Без
+ * колонки (фронт выложен раньше миграции) — 1.
+ */
+export function gameNoOf(evening: { game_no?: number | null }): number {
+  return typeof evening.game_no === 'number' && evening.game_no > 1 ? evening.game_no : 1;
+}
+
+const gameNosCache = new WeakMap<object, ReadonlyMap<string, number>>();
+
+/**
+ * Номера игр по id вечера (gameNoOf) — для «· игра 2» там, где от вечера есть только id и дата: итоги
+ * истории клуба, рекорды, вечера игрока, «Моменты». Кэш — на массив вечеров (история клуба — один
+ * массив на загрузку).
+ */
+export function gameNosById(
+  evenings: readonly { id: string; game_no?: number | null }[],
+): ReadonlyMap<string, number> {
+  let map = gameNosCache.get(evenings);
+  if (!map) {
+    map = new Map(evenings.map((e) => [e.id, gameNoOf(e)]));
+    gameNosCache.set(evenings, map);
+  }
+  return map;
 }
 
 /** Только настоящие вечера — для истории, рейтинга и всего, что считает клуб. */

@@ -1,14 +1,15 @@
-// Олл-ин после ривера: «Записать вылет: X, выбивает Y». Кто проиграл и кто кого выбил (побочные
-// банки) — домен (riverBusts.ts домена), вылетел ли проигравший — решает банкир: стеков пульт не
-// знает (вопрос, отметки). Один проигравший — кнопка с вопросом прямо на пульте; несколько, выбор
-// выбившего или «Вылет и ребай» — шторка олл-ина: отметить вылетевших, кто выбил, порядок по фишкам
-// перед раздачей (у кого больше — место выше) и ребаи. Запись — одним действием (add_events) в
-// правильном порядке мест, следом — «Закрыть раздачу» отдельным запросом (SendOptions.then).
-// Предложение на пульте держится дольше табло (оно прячет раздачу через 2 минуты после ривера), но
-// не бессрочно (riverSuggestionLive): до RIVER_BUST_HOLD_MS после ривера и пока раздачу не закрыли,
-// не начали новую, а журнал не принял вылет любого игрока, сыгранную раздачу или смену уровня.
-// «Не записывать» в вопросе убирает его с пульта на этом устройстве (sessionStorage, до правки
-// раздачи); шторка олл-ина, открытая на раздаче, его всё равно покажет.
+// Олл-ин после ривера. Кто проиграл и кто кого выбил (побочные банки) — домен (riverBusts.ts домена),
+// вылетел ли проигравший — решает банкир: стеков пульт не знает, а стек проигравшего может быть
+// больше олл-ина соперника (решение клуба 10.10.2026). Поэтому на пульте — нейтральный вопрос
+// «X проигрывает раздачу. Фишек хватило?» и две равные кнопки: «Вылет» (одно нажатие, кто выбил — по
+// картам) и «Остаётся за столом» (закрывает раздачу, табло её убирает). Проигравших несколько —
+// «Отметить вылет» (шторка олл-ина, отметок заранее нет: банкир отмечает, кому не хватило фишек) и
+// «Все остаются за столом». «Вылет и ребай» — шторка с отмеченным «Сразу ребай» и выбором кратности.
+// Запись — одним действием (add_events) в правильном порядке мест, следом — «Закрыть раздачу»
+// отдельным запросом (SendOptions.then).
+// Вопрос на пульте держится дольше табло (оно прячет раздачу через 2 минуты после ривера), но не
+// бессрочно (riverSuggestionLive): до RIVER_BUST_HOLD_MS после ривера и пока раздачу не закрыли, не
+// начали новую, а журнал не принял вылет любого игрока, сыгранную раздачу или смену уровня.
 import { canApplySequence } from '@domain/replay.ts';
 import {
   riverBustDrafts,
@@ -18,41 +19,43 @@ import {
 } from '@domain/riverBusts.ts';
 import type { PlayerId, ShowdownState } from '@domain/types.ts';
 import { useState } from 'react';
-import { safeSessionStorage } from '../../shared/lib';
 import { finishDueAfter, LAST_ONE_NOTE, rebuyDrafts } from './lib';
 import {
   keepChipOrder,
   killerKey,
   moveUp,
   pultRiverSuggestion,
-  readRiverDeclined,
-  riverBustQuestion,
   riverPlanDrafts,
+  riverStayToast,
   riverToast,
-  writeRiverDeclined,
   type RiverPlan,
 } from './riverBusts';
 import type { EveningActions, SendOptions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
 export interface RiverBusts {
-  /** Раздача после ривера, по которой пульт предлагает вылет (на табло или уже спрятанная). */
+  /** Раздача после ривера, по которой пульт спрашивает о вылете (на табло или уже спрятанная). */
   showdown: ShowdownState | null;
-  /** Предложение для пульта или null (нет, или банкир ответил «Не записывать»). */
+  /** Вопрос для пульта или null (раздачу закрыли, ушли дальше, срок вышел). */
   suggestion: RiverBustSuggestion | null;
   /**
-   * По умолчанию: вылетели все проигравшие — тогда лучшая рука покрывала каждого и выбила всех
-   * (домен). Ребаев нет.
+   * Вылетели все проигравшие — тогда лучшая рука покрывала каждого и выбила всех (домен). Ребаев нет.
+   * Для одного проигравшего это и есть ответ «Вылет».
    */
   defaultPlan: RiverPlan | null;
   /** Докупится ли игрок сразу после вылетов плана: ребаи открыты, лимит не кончился. */
-  canRebuyAfter: (plan: Pick<RiverPlan, 'byChips' | 'killers'>, playerId: PlayerId) => boolean;
+  canRebuyAfter: (
+    plan: Pick<RiverPlan, 'byChips' | 'killers'>,
+    playerId: PlayerId,
+    k?: number,
+  ) => boolean;
+  /** Записать вылеты (и ребаи) и закрыть раздачу. true — записано. */
+  record: (plan: RiverPlan) => Promise<boolean>;
   /**
-   * Записать вылеты (и ребаи) и закрыть раздачу. ask — с вопросом (кнопка на пульте, один вылет);
-   * в шторке олл-ина вопроса нет: отметки там и есть подтверждение, а окно поверх шторки «Материя»
-   * не допускает. true — записано.
+   * «Остаётся за столом» / «Все остаются за столом»: закрыть раздачу без вылетов — вопрос пропадает
+   * на всех устройствах, табло возвращается к таймеру. true — закрыта.
    */
-  record: (plan: RiverPlan, ask: boolean) => Promise<boolean>;
+  stay: (showdownId: string, victims: readonly PlayerId[]) => Promise<boolean>;
 }
 
 export interface RiverBustsHandlers {
@@ -69,20 +72,11 @@ export function useRiverBusts(
 ): RiverBusts {
   const { state, nowMs, nameOf, evening, events, applied } = model;
   const format = evening.format;
-  // Версия раздачи, по которой банкир ответил «Не записывать»: правка карт — новый вопрос. Помнит
-  // sessionStorage — переход на карточку игрока и перезагрузка WebView ответ не теряют.
-  const [declined, setDeclined] = useState<number | null>(() =>
-    readRiverDeclined(safeSessionStorage(), evening.id),
-  );
-  const decline = (eventId: number) => {
-    setDeclined(eventId);
-    writeRiverDeclined(safeSessionStorage(), evening.id, eventId);
-  };
   const isAlive = (id: PlayerId) => Boolean(state.players[id]?.alive);
   // Не visibleShowdown: раздача остаётся в состоянии и после того, как табло её спрятало, — но
-  // предложение по ней на пульте ограничено сроком и тем, что игра ушла дальше.
+  // вопрос по ней на пульте ограничен сроком и тем, что игра ушла дальше.
   const hand = state.showdown;
-  const suggestion = pultRiverSuggestion(hand, isAlive, applied, nowMs, declined);
+  const suggestion = pultRiverSuggestion(hand, isAlive, applied, nowMs);
   const showdown = suggestion ? hand : null;
 
   const defaultPlan: RiverPlan | null =
@@ -96,29 +90,22 @@ export function useRiverBusts(
             ),
           ),
           rebuys: [],
+          rebuyStacks: 1,
           paid: false,
         }
       : null;
 
-  const canRebuyAfter = (plan: Pick<RiverPlan, 'byChips' | 'killers'>, playerId: PlayerId) =>
+  const canRebuyAfter = (plan: Pick<RiverPlan, 'byChips' | 'killers'>, playerId: PlayerId, k = 1) =>
     canApplySequence(
       format,
       events,
-      [...riverBustDrafts(plan.byChips, plan.killers), ...rebuyDrafts(format, playerId, 1, false)],
+      [...riverBustDrafts(plan.byChips, plan.killers), ...rebuyDrafts(format, playerId, k, false)],
       nowMs,
     ) === null;
 
-  const record = async (plan: RiverPlan, ask: boolean) => {
+  const record = async (plan: RiverPlan) => {
     const [only] = plan.byChips;
     if (!only) return false;
-    if (ask) {
-      const question = riverBustQuestion(nameOf(only), (plan.killers[only] ?? []).map(nameOf));
-      const ok = await actions.confirm({ ...question, cancelText: 'Не записывать' });
-      if (!ok) {
-        if (hand?.showdownId === plan.showdownId) decline(hand.eventId);
-        return false;
-      }
-    }
     const drafts = riverPlanDrafts(format, plan);
     const { success, detail } = riverToast(plan, nameOf);
     // У тоста одна кнопка (одним глаголом): один вылет без ребая — «Ребай», пока можно докупиться;
@@ -156,13 +143,24 @@ export function useRiverBusts(
     return result !== null;
   };
 
-  return { showdown, suggestion, defaultPlan, canRebuyAfter, record };
+  const stay = async (showdownId: string, victims: readonly PlayerId[]) => {
+    const { success, detail } = riverStayToast(victims.map(nameOf));
+    const result = await actions.send(
+      'showdown_close',
+      { showdownId },
+      { success, detail, undo: true },
+    );
+    return result !== null;
+  };
+
+  return { showdown, suggestion, defaultPlan, canRebuyAfter, record, stay };
 }
 
 /**
- * Выбор в шторке олл-ина после ривера: кто вылетел (по умолчанию все проигравшие), кто кого выбил
- * (варианты — домен; снятая отметка «остался в игре» и открывает побочный банк), порядок по фишкам,
- * ребаи сразу (initialRebuys — «Вылет и ребай» с пульта) и «Оплачено сразу» для них.
+ * Выбор в шторке олл-ина после ривера: кто вылетел (отметок заранее нет — банкир отмечает, кому не
+ * хватило фишек; initialRebuys — «Вылет и ребай» с пульта: этот игрок уже отмечен и докупается), кто
+ * кого выбил (варианты — домен; неотмеченные «остались в игре» и открывают побочный банк), порядок
+ * по фишкам, ребаи сразу — кратность одна на всех, кто докупается, — и «Оплачено сразу» для них.
  */
 export function useRiverChoice(
   showdown: RiverHand | null,
@@ -170,15 +168,15 @@ export function useRiverChoice(
   isAlive: (id: PlayerId) => boolean,
   initialRebuys: readonly PlayerId[] = [],
 ) {
-  // null — банкир ещё не трогал отметки: отмечены все проигравшие (в том числе новые по Realtime).
-  const [picked, setPicked] = useState<PlayerId[] | null>(null);
+  const [picked, setPicked] = useState<PlayerId[]>(() => [...initialRebuys]);
   const [order, setOrder] = useState<PlayerId[]>([]);
   // Выбор «кто выбил» по вылетевшему — ключ варианта; пропал из вариантов — снова по умолчанию.
   const [killerPick, setKillerPick] = useState<Record<PlayerId, string>>({});
   const [rebuyPick, setRebuyPick] = useState<PlayerId[]>(() => [...initialRebuys]);
+  const [rebuyStacks, setRebuyStacks] = useState(1);
   const [paid, setPaid] = useState(false);
   const victims = suggestion?.victims ?? [];
-  const chosen = (picked ?? victims).filter((id) => victims.includes(id));
+  const chosen = picked.filter((id) => victims.includes(id));
   const byChips = keepChipOrder(order, chosen);
   const options =
     showdown && suggestion ? riverBustKillers(showdown, suggestion, chosen, isAlive) : {};
@@ -194,6 +192,7 @@ export function useRiverChoice(
     options,
     killers,
     rebuys: byChips.filter((id) => rebuyPick.includes(id)),
+    rebuyStacks,
     paid,
     pick: (ids: PlayerId[]) => setPicked(ids),
     raise: (id: PlayerId) => setOrder(moveUp(byChips, id)),
@@ -201,6 +200,7 @@ export function useRiverChoice(
       setKillerPick((prev) => ({ ...prev, [victim]: key })),
     toggleRebuy: (id: PlayerId, on: boolean) =>
       setRebuyPick((prev) => [...prev.filter((x) => x !== id), ...(on ? [id] : [])]),
+    setRebuyStacks,
     setPaid,
   };
 }

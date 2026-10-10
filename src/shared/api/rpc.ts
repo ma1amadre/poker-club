@@ -465,6 +465,35 @@ export async function setPayout(eveningId: string, payoutPct: number[]): Promise
   if (error) throw toError(error);
 }
 
+/** Ответ create_next_game (миграция 026). */
+export interface NextGame {
+  eveningId: string;
+  gameNo: number;
+  /** false — игра уже была создана (двойное нажатие, второй телефон): открываем её. */
+  created: boolean;
+}
+
+/**
+ * «Ещё игра сегодня» (миграция 026): банкир вечера или админ, после завершённого настоящего вечера —
+ * вечер на сейчас с тем же местом, форматом и банкиром, номер игры — следующий на сегодня; анонс и
+ * пост дня игры сервер отмечает отправленными. Повтор тем же вечером возвращает уже созданную игру.
+ */
+export async function createNextGame(eveningId: string): Promise<NextGame> {
+  const { data, error } = await writeRpc(
+    (signal) => supabase.rpc('create_next_game', { p_evening: eveningId }).abortSignal(signal),
+    RETRY_TIMEOUT_TEXT,
+  );
+  if (error) throw toError(error);
+  const row = (data ?? {}) as { evening?: unknown; gameNo?: unknown; created?: unknown };
+  if (typeof row.evening !== 'string')
+    throw new Error('Сервер не вернул новую игру — обнови экран');
+  return {
+    eveningId: row.evening,
+    gameNo: typeof row.gameNo === 'number' ? row.gameNo : 2,
+    created: row.created !== false,
+  };
+}
+
 export async function setMyName(name: string): Promise<void> {
   const { error } = await supabase.rpc('set_my_name', { p_name: name });
   if (error) throw toError(error);
@@ -716,6 +745,14 @@ export function useSetPayout(eveningId: string) {
   return useMutation({
     mutationFn: (payoutPct: number[]) => setPayout(eveningId, payoutPct),
     onSuccess: () => invalidateEvening(queryClient, eveningId),
+  });
+}
+
+export function useCreateNextGame(eveningId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => createNextGame(eveningId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.eveningsAll }),
   });
 }
 

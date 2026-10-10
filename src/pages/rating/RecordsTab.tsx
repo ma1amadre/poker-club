@@ -1,7 +1,8 @@
 import { RECORD_META, recordsTable, type ClubRecord, type RecordKind } from '@domain/records.ts';
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { formatDate, paths, recordValueParts } from '../../shared/lib';
+import { gameNosById } from '../../shared/api';
+import { formatDate, gameSuffix, paths, recordValueParts } from '../../shared/lib';
 import { Empty, Icon, List, type IconName } from '../../shared/ui';
 import { playerName, type RatingContext } from './context';
 import { recordEmptyText } from './records';
@@ -57,6 +58,8 @@ function RecordRow({ ctx, record }: { ctx: RatingContext; record: ClubRecord }) 
   const meta = RECORD_META[record.kind];
   const text = record.value === null ? null : recordValueParts(record.kind, record.value);
   const empty = record.value === null;
+  // «· игра 2» у второй игры дня: держатели из двух игр одной даты иначе неотличимы.
+  const gameNos = gameNosById(ctx.history.evenings);
 
   return (
     <li className="ui-list-row">
@@ -91,10 +94,17 @@ function RecordRow({ ctx, record }: { ctx: RatingContext; record: ClubRecord }) 
                       {holder.playerId ? (
                         <>
                           <span className="rt-rec__name">{playerName(ctx, holder.playerId)}</span>
-                          <span className="rt-rec__date"> · {formatDate(holder.date)}</span>
+                          <span className="rt-rec__date">
+                            {' · '}
+                            {formatDate(holder.date)}
+                            {gameSuffix(gameNos.get(holder.eveningId))}
+                          </span>
                         </>
                       ) : (
-                        <span className="rt-rec__name">Вечер {formatDate(holder.date)}</span>
+                        <span className="rt-rec__name">
+                          Вечер {formatDate(holder.date)}
+                          {gameSuffix(gameNos.get(holder.eveningId))}
+                        </span>
                       )}
                     </span>
                     <Icon name="chevron-right" size={16} className="rt-rec__chevron" />

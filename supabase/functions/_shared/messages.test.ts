@@ -15,7 +15,11 @@ import { simpleEvening } from './domain/test-utils.ts';
 import {
   announcePost,
   clubNewsLines,
+  eveningCancelledPost,
+  eveningRestoredPost,
+  formatEveningDate,
   formatPoints,
+  gameSuffix,
   resultsPost,
   turnoutText,
   votingPost,
@@ -66,6 +70,67 @@ describe('resultsPost', () => {
     const text = resultsPost({ ...base, corrected: true }).text;
     expect(firstLine(text)).toBe('♠️ <b>Исправленные итоги вечера 8 октября</b>');
     expect(text).toMatch(/Прошлый пост с итогами устарел/);
+  });
+
+  it('вторая игра дня — «· игра 2» после даты; игра 1 и без номера — как раньше', () => {
+    expect(firstLine(resultsPost({ ...base, gameNo: 2 }).text)).toBe(
+      '♠️ <b>Итоги вечера 8 октября · игра 2</b>',
+    );
+    expect(firstLine(resultsPost({ ...base, gameNo: 2, corrected: true }).text)).toBe(
+      '♠️ <b>Исправленные итоги вечера 8 октября · игра 2</b>',
+    );
+    expect(firstLine(resultsPost({ ...base, gameNo: 1 }).text)).toBe(
+      '♠️ <b>Итоги вечера 8 октября</b>',
+    );
+  });
+});
+
+describe('номер игры в дне (миграция 026)', () => {
+  it('gameSuffix и formatEveningDate', () => {
+    expect([undefined, null, 0, 1].map(gameSuffix)).toEqual(['', '', '', '']);
+    expect(gameSuffix(2).replace(/ /g, ' ')).toBe(' · игра 2');
+    expect(formatEveningDate('2026-10-09T19:30:00.000Z', 3).replace(/ /g, ' ')).toBe(
+      '9 октября · игра 3',
+    );
+  });
+
+  it('голосование, напоминание, отмена и возврат вечера — с номером игры', () => {
+    const sp = (t: string) => t.replace(/ /g, ' ');
+    const voting = votingPost({
+      eveningId: 'e2',
+      scheduledAt: '2026-10-09T19:30:00.000Z',
+      gameNo: 2,
+      names: { a: 'Женя', b: 'Саша', c: 'Дима' },
+      results: voteResults([
+        { voterId: 'b', category: 'hand', nomineeId: 'a' },
+        { voterId: 'c', category: 'hand', nomineeId: 'a' },
+      ]),
+      botUsername: null,
+    });
+    expect(sp(firstLine(voting?.text ?? ''))).toBe(
+      '🗳 <b>Итоги голосования · вечер 9 октября · игра 2</b>',
+    );
+    const reminder = votingReminderPost({
+      eveningId: 'e2',
+      scheduledAt: '2026-10-09T19:30:00.000Z',
+      gameNo: 2,
+      votingClosesAt: '2026-10-10T19:30:00.000Z',
+      voted: 1,
+      eligible: 4,
+      botUsername: null,
+    });
+    expect(sp(reminder.text)).toContain('бэд-бит вечера 9 октября · игра 2.');
+    const snap = { scheduledAt: '2026-10-09T19:30:00.000Z', location: null, cancelled: false };
+    const change = { eveningId: 'e2', before: snap, after: snap, reason: null, botUsername: null };
+    expect(sp(firstLine(eveningCancelledPost({ ...change, gameNo: 2 }).text))).toBe(
+      '♠️ <b>Вечер 9 октября · игра 2 отменён</b>',
+    );
+    expect(sp(firstLine(eveningRestoredPost({ ...change, gameNo: 2 }).text))).toBe(
+      '♠️ <b>Вечер 9 октября · игра 2 всё-таки состоится</b>',
+    );
+    expect(sp(firstLine(eveningCancelledPost(change).text))).toBe(
+      '♠️ <b>Вечер 9 октября отменён</b>',
+    );
   });
 });
 

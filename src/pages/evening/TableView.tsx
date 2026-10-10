@@ -3,7 +3,7 @@
 // уровень» (±1 мин, уровень вручную). Под ней — места за столом сеткой ячеек в порядке посадки:
 // живой — тап = вылет, вылетевший остаётся на своём месте приглушённым (сетка не прыгает), «+» —
 // посадить опоздавшего. Ряд вылетевших — тап = ребай, пока можно докупиться, иначе карточка
-// игрока. Ниже — олл-ин, «Записать вылет» и «Вылет и ребай» после ривера (RiverActions),
+// игрока. Ниже — олл-ин, вопрос «Фишек хватило?» и «Вылет и ребай» после ривера (RiverActions),
 // «Отменить последнее». Статы, расчёт и лента — под этим, их видно прокруткой (LiveView).
 import type { PlayerId, PlayerState } from '@domain/types.ts';
 import { useNavigate } from 'react-router-dom';
@@ -162,13 +162,7 @@ export function TableView({
             Завершить вечер
           </Button>
         )}
-        <RiverActions
-          model={model}
-          actions={actions}
-          river={river}
-          primary={!finishMain}
-          onSheet={onRiverSheet}
-        />
+        <RiverActions model={model} actions={actions} river={river} onSheet={onRiverSheet} />
         {progress?.label === 'Раздач на уровне' && (
           <Button
             block

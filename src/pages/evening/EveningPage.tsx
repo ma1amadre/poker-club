@@ -4,10 +4,12 @@
 // Тренировочный вечер (миграция 023) — «Тренировка 8 октября» в шапке и пометка под ней: в историю,
 // рейтинг и посты бота он не попадает. «Вывести на ТВ» — табло клуба (постоянная ссылка) или только
 // этого вечера; кнопка видна и 6 ч после финала — столько живёт ссылка вечера.
+// Вторая и следующие игры дня (миграция 026) — «Вечер 9 октября · игра 2» в шапке.
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { isTrainingEvening, useSettings } from '../../shared/api';
 import { formatDate, formatWeekdayDate, formatTime, paths } from '../../shared/lib';
+import { eveningTitle } from './nextGame';
 import {
   ButtonLink,
   Empty,
@@ -92,7 +94,7 @@ function EveningScreen({ model }: { model: EveningModel }) {
       back
       // Статус — метка «[ ИДЁТ ИГРА ]», как на холсте «Терминала» (слово то же, что у бейджа везде).
       eyebrow={<EveningStatusBadge status={evening.status} />}
-      title={`${training ? 'Тренировка' : 'Вечер'} ${formatDate(evening.scheduled_at, model.nowMs)}`}
+      title={eveningTitle(training, formatDate(evening.scheduled_at, model.nowMs), evening.game_no)}
       subtitle={tableMode ? undefined : subtitle}
       className={tableMode ? 'ev-page--table' : undefined}
       actions={
@@ -105,7 +107,8 @@ function EveningScreen({ model }: { model: EveningModel }) {
       {training && !tableMode && (
         <Notice tone="info" title="Тренировочный вечер">
           Его не будет в истории, рейтинге, сезоне, ачивках и постах бота. Когда прогон закончен,
-          админ удаляет его целиком: «Админ» → «Вечера».
+          админ удаляет его целиком: «Админ» → «Вечера». Сыграли всерьёз — админ засчитывает его как
+          настоящий вечер на экране итога.
         </Notice>
       )}
       {evening.note && !tableMode && <p className="m-body">{evening.note}</p>}

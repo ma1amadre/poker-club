@@ -35,6 +35,7 @@ import {
   formatNumber,
   formatRub,
   formatTime,
+  gameSuffix,
   joinNames,
   kosCount,
   moscowDateKey,
@@ -198,7 +199,8 @@ export function Board({
   useBoardPing(source, evening.id, voice.status === 'on');
 
   const training = isTrainingEvening(evening);
-  const when = `${formatDateNumeric(evening.scheduled_at).slice(0, 5)} · ${formatTime(evening.scheduled_at)}`;
+  // Вторая игра дня (миграция 026) — «09.10 · игра 2 · 22:30».
+  const when = `${formatDateNumeric(evening.scheduled_at).slice(0, 5)}${training ? '' : gameSuffix(evening.game_no)} · ${formatTime(evening.scheduled_at)}`;
   const place = evening.location ? ` · ${evening.location}` : '';
   const finished = state.finished || evening.status === 'finished' || evening.status === 'settled';
   // Олл-ин закрывает таймер и стол, пока банкир его не закроет (или табло не спрячет его само).

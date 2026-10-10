@@ -21,6 +21,7 @@ import {
 import { useAuth, useCurrentPlayer } from '../../shared/auth';
 import {
   formatDate,
+  gameSuffix,
   formatDateTime,
   participantIds,
   paths,
@@ -134,7 +135,7 @@ export default function VotePage() {
   return (
     <Page
       back={back}
-      eyebrow={`Вечер · ${formatDate(ev.scheduled_at, now)}`}
+      eyebrow={`Вечер · ${formatDate(ev.scheduled_at, now)}${gameSuffix(ev.game_no)}`}
       title="Голосование"
       subtitle={
         phase === 'closed' && closesAt ? `Закрыто ${formatDateTime(closesAt, now)}` : undefined

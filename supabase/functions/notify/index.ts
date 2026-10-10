@@ -18,7 +18,7 @@ import {
   UUID_RE,
 } from '../_shared/admin.ts';
 import { alertAdmin } from '../_shared/alerts.ts';
-import { formatClubDate } from '../_shared/messages.ts';
+import { formatEveningDate } from '../_shared/messages.ts';
 import { TelegramApiError, TelegramNetworkError } from '../_shared/telegram.ts';
 import { postAnnounceChange } from './changes.ts';
 import {
@@ -33,7 +33,9 @@ type Kind = 'evening_finished' | 'evening_corrected' | 'evening_changed';
 
 /** Что не ушло — для сообщения админу. Исправленные итоги cron-tick не повторяет — об этом прямо. */
 function failedPostDetail(kind: Kind | null, evening: EveningRow | null): string {
-  const when = evening ? `вечер ${formatClubDate(evening.scheduled_at)}` : 'вечер';
+  const when = evening
+    ? `вечер ${formatEveningDate(evening.scheduled_at, evening.game_no)}`
+    : 'вечер';
   switch (kind) {
     case 'evening_finished':
       return `итоги, ${when}. cron-tick повторит отправку сам через 15 минут`;

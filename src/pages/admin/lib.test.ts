@@ -151,6 +151,18 @@ describe('splitEvenings / takenDates', () => {
     expect(taken.has('2026-10-22')).toBe(true);
     expect(taken.has('2026-10-21')).toBe(false);
   });
+
+  it('по номеру игры (миграция 026): у игры 2 дата игры 1 свободна, игра 2 — занята', () => {
+    const game2 = { ...ev('h', 'announced', '2026-10-15T19:30:00Z'), game_no: 2 };
+    const all = [...list, game2];
+    // Новый вечер из формы — игра 1: 15.10 занят игрой 1 (b).
+    expect(takenDates(all).has('2026-10-15')).toBe(true);
+    // Правка игры 2: её дата не занята ни ей самой, ни игрой 1; занята только другой игрой 2.
+    expect(takenDates(all, 'h', 2).has('2026-10-15')).toBe(false);
+    expect(takenDates(all, 'b', 2).has('2026-10-15')).toBe(true);
+    // Без колонки (до миграции) — игра 1.
+    expect(takenDates(all, undefined, 1).has('2026-10-08')).toBe(true);
+  });
 });
 
 describe('adminErrorText', () => {
@@ -162,6 +174,12 @@ describe('adminErrorText', () => {
     const wrapped = Object.assign(new Error(pg.message), { cause: pg });
     expect(adminErrorText(wrapped)).toMatch(/На этот день уже есть вечер/);
     expect(adminErrorText(pg)).toMatch(/На этот день уже есть вечер/);
+    // Индекс миграции 026 — (дата, номер игры): та же подсказка и как создать вторую игру.
+    const pg026 = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "evenings_club_day_game_idx"',
+    };
+    expect(adminErrorText(pg026)).toMatch(/На этот день уже есть вечер.*«Ещё игра сегодня»/);
   });
 
   it('нарушение check — общая подсказка', () => {

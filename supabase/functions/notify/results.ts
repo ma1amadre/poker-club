@@ -88,11 +88,16 @@ export interface EveningRow {
    * шаги cron-tick, не застолбит claimPost, notify отвечает 'training'.
    */
   is_training: boolean;
+  /**
+   * Номер игры в московском дне (миграция 026): у второй и дальше посты, где вечер отличают по дате,
+   * пишут «· игра 2». До миграции колонки нет — undefined, как игра 1.
+   */
+  game_no?: number;
 }
 
 // Одной строкой-литералом: из конкатенации supabase-js не выводит тип строк select.
 export const EVENING_COLUMNS =
-  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, gameday_posted_at, results_posted_at, voting_posted_at, voting_reminder_posted_at, results_revision, announce_snapshot, cancel_reason, scoring, is_training';
+  'id, scheduled_at, location, note, status, banker_id, format, finished_at, voting_closes_at, announce_posted_at, gameday_posted_at, results_posted_at, voting_posted_at, voting_reminder_posted_at, results_revision, announce_snapshot, cancel_reason, scoring, is_training, game_no';
 
 interface PlayerRow {
   id: string;
@@ -430,6 +435,7 @@ export async function buildResultsPost(
   return resultsPost({
     eveningId: evening.id,
     scheduledAt: evening.scheduled_at,
+    gameNo: evening.game_no,
     location: evening.location,
     names,
     places: summary.places,

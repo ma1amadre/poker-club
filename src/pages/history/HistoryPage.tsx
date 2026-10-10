@@ -19,6 +19,7 @@ import {
   formatRub,
   formatRubSigned,
   formatSeason,
+  gameSuffix,
   NBSP,
   paths,
   playersCount,
@@ -274,7 +275,10 @@ function History({ evenings, history }: { evenings: Evening[]; history: ClubHist
 function EveningTitle({ evening }: { evening: Evening }) {
   return (
     <span className="hs-title">
-      <span className="hs-title__date">{formatDate(evening.scheduled_at)}</span>
+      <span className="hs-title__date">
+        {formatDate(evening.scheduled_at)}
+        {gameSuffix(evening.game_no)}
+      </span>
       <EveningStatusBadge status={evening.status} />
     </span>
   );

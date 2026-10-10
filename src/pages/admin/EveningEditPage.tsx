@@ -5,7 +5,10 @@
 // (notify evening_changed; не дошедший вызов добьёт cron-tick).
 // Тренировочный вечер (миграция 023, /admin/evening/new?training=1): сегодня через несколько минут,
 // банкир — админ; день клуба не занимает, в группу о нём ничего не уходит, отмены нет — только
-// «Удалить тренировку» целиком (delete_training_evening).
+// «Удалить тренировку» целиком (delete_training_evening). Завершённую тренировку можно засчитать как
+// настоящий вечер (promote_training_evening, миграция 026) — та же кнопка, что на экране итога.
+// Вторая и следующие игры дня (game_no, миграция 026) — «· игра 2» в шапке; занятые даты формы — по
+// номеру игры: у игры 2 дата игры 1 не «занята».
 import { useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -21,6 +24,7 @@ import {
   usePlayers,
   useSettings,
   useDeleteTrainingEvening,
+  useEveningEvents,
   useUpsertEvening,
   type Evening,
   type EveningInput,
@@ -33,6 +37,7 @@ import { useCurrentPlayer } from '../../shared/auth';
 import {
   capitalize,
   formatDate,
+  gameSuffix,
   formatTime,
   formatWeekdayDate,
   moscowToIso,
@@ -89,6 +94,7 @@ import {
 } from './lib';
 import { AdminGuard } from './parts';
 import { useFocusInvalid } from './useFocusInvalid';
+import { usePromoteTraining } from '../evening/usePromoteTraining';
 import { useLeave } from './useLeave';
 
 const EVENINGS_PATH = `${paths.admin}?tab=evenings`;
@@ -195,6 +201,10 @@ function EveningForm({
   const now = useNow(60_000);
   const save = useUpsertEvening();
   const removeTraining = useDeleteTrainingEvening();
+  // Зачёт завершённой тренировки (миграция 026): в вопросе — гости за её столом.
+  const promotable =
+    evening !== null && training && (evening.status === 'finished' || evening.status === 'settled');
+  const trainingEvents = useEveningEvents(promotable ? evening.id : undefined).data ?? [];
   const formRef = useRef<HTMLFormElement>(null);
   const focusInvalid = useFocusInvalid(formRef);
   const [checking, setChecking] = useState(false);
@@ -205,8 +215,8 @@ function EveningForm({
 
   // Тренировка день клуба не занимает — для неё занятых дат нет.
   const taken = useMemo(
-    () => (training ? new Set<string>() : takenDates(evenings, evening?.id)),
-    [training, evenings, evening?.id],
+    () => (training ? new Set<string>() : takenDates(evenings, evening?.id, evening?.game_no ?? 1)),
+    [training, evenings, evening?.id, evening?.game_no],
   );
   const [initial] = useState<EveningDraft>(() =>
     evening
@@ -222,6 +232,17 @@ function EveningForm({
 
   const { leave, confirmElement } = useLeave(EVENINGS_PATH, dirty, 'вечера');
   const { confirm, confirmElement: cancelConfirmElement } = useConfirm();
+  const promote = usePromoteTraining(confirm);
+  const promoteTraining = () => {
+    if (!evening) return;
+    const seated = new Set(
+      trainingEvents
+        .filter((e) => e.type === 'join' && !e.voided)
+        .map((e) => (e.payload as { playerId?: unknown }).playerId),
+    );
+    const guests = players.filter((p) => p.is_guest && seated.has(p.id)).map((p) => p.display_name);
+    void promote.run(evening.id, guests);
+  };
 
   const status = evening?.status ?? 'announced';
   const formatLocked = evening !== null && status !== 'announced';
@@ -464,7 +485,7 @@ function EveningForm({
   };
 
   const titleText = evening
-    ? capitalize(formatWeekdayDate(evening.scheduled_at))
+    ? `${capitalize(formatWeekdayDate(evening.scheduled_at))}${training ? '' : gameSuffix(evening.game_no)}`
     : training
       ? 'Тренировочный вечер'
       : 'Новый вечер';
@@ -495,7 +516,7 @@ function EveningForm({
           Прогон пульта, табло и голоса. Вечер не попадёт в историю, рейтинг, сезон, ачивки, ленту и
           посты бота, голосования у него нет, день клуба он не занимает.{' '}
           {evening
-            ? 'Когда прогон закончен, удали его целиком — кнопка внизу.'
+            ? 'Когда прогон закончен, удали его целиком — кнопка внизу. Сыграли всерьёз — завершённую тренировку можно засчитать как настоящий вечер.'
             : 'После прогона его удаляют целиком здесь же, в форме вечера.'}
         </Notice>
       )}
@@ -670,6 +691,23 @@ function EveningForm({
               />
             )}
           </List>
+        </Section>
+      )}
+
+      {promotable && (
+        <Section
+          title="Зачёт"
+          footer="Сыграли всерьёз — засчитай тренировку: места, очки, ачивки и деньги войдут в историю клуба, в группу уйдёт пост итогов, голосование откроется на 24 часа. Обратно в тренировку вечер не вернуть."
+        >
+          <Button
+            variant="danger"
+            icon="check"
+            block
+            loading={promote.pending}
+            onClick={promoteTraining}
+          >
+            Засчитать как настоящий вечер
+          </Button>
         </Section>
       )}
 

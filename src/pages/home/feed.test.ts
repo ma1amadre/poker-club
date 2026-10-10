@@ -269,6 +269,13 @@ describe('feedRows', () => {
     expect(sp(row?.subtitle)).toBe(
       '1 октября · 5 игроков · фонд 2 000 ₽ · победителя угадали: Саша (ты)',
     );
+    // Вторая игра того же дня (миграция 026) — «· игра 2» после дня; игра 1 — как раньше.
+    const [second] = feedRows([result], { ...ctx, eveningGames: new Map([['e1', 2]]) }, 8);
+    expect(sp(second?.subtitle)).toBe(
+      '1 октября · игра 2 · 5 игроков · фонд 2 000 ₽ · победителя угадали: Саша (ты)',
+    );
+    const [first] = feedRows([result], { ...ctx, eveningGames: new Map([['e1', 1]]) }, 8);
+    expect(first?.subtitle).toBe(row?.subtitle);
   });
 
   it('обрезает по limit после склейки', () => {

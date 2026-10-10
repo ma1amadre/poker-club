@@ -114,6 +114,19 @@ export function formatClubDate(iso: string): string {
   return `${p.day}${NBSP}${MONTHS_GENITIVE[p.month - 1] ?? ''}`;
 }
 
+/**
+ * «· игра 2» — вторая и следующие игры одного дня (evenings.game_no, миграция 026); у первой (и без
+ * номера) — пусто: обычный вечер по-прежнему отличают по дате.
+ */
+export function gameSuffix(gameNo: number | null | undefined): string {
+  return typeof gameNo === 'number' && gameNo > 1 ? ` · игра${NBSP}${gameNo}` : '';
+}
+
+/** «8 октября» или «8 октября · игра 2» — вечер в постах, где его отличают только по дате. */
+export function formatEveningDate(iso: string, gameNo?: number | null): string {
+  return `${formatClubDate(iso)}${gameSuffix(gameNo)}`;
+}
+
 /** «19:00». */
 export function formatClubTime(iso: string): string {
   const p = clubParts(Date.parse(iso));
@@ -280,6 +293,8 @@ export interface AnnounceChangePostInput {
   /** Причина отмены (evenings.cancel_reason, миграция 010); в других постах не нужна. */
   reason: string | null;
   botUsername: string | null;
+  /** Номер игры в дне (evenings.game_no, миграция 026): у второй и дальше — «· игра 2» после даты. */
+  gameNo?: number | null;
 }
 
 /** «19:00, 8 октября» → для «вместо …». */
@@ -357,7 +372,9 @@ export function eveningMovedPost(input: AnnounceChangePostInput): Post {
 
 /** «Вечер 8 октября отменён» и причина отмены, если админ её указал. */
 export function eveningCancelledPost(input: AnnounceChangePostInput): Post {
-  const lines = [`♠️ <b>Вечер ${formatClubDate(input.before.scheduledAt)} отменён</b>`];
+  const lines = [
+    `♠️ <b>Вечер ${formatEveningDate(input.before.scheduledAt, input.gameNo)} отменён</b>`,
+  ];
   const reason = input.reason?.trim();
   if (reason) lines.push(`Причина: ${escapeHtml(reason)}`);
   return { text: lines.join('\n'), buttons: [] };
@@ -367,7 +384,7 @@ export function eveningCancelledPost(input: AnnounceChangePostInput): Post {
 export function eveningRestoredPost(input: AnnounceChangePostInput): Post {
   const { after } = input;
   const lines = [
-    `♠️ <b>Вечер ${formatClubDate(after.scheduledAt)} всё-таки состоится</b>`,
+    `♠️ <b>Вечер ${formatEveningDate(after.scheduledAt, input.gameNo)} всё-таки состоится</b>`,
     `Приходите ${formatWhen(after.scheduledAt)}.`,
   ];
   if (after.location) lines.push(placeLine(after.location));
@@ -664,6 +681,8 @@ export function gamedayPost(input: GamedayPostInput): Post {
 export interface ResultsPostInput {
   eveningId: string;
   scheduledAt: string;
+  /** Номер игры в дне (миграция 026): у второй и дальше — «Итоги вечера 9 октября · игра 2». */
+  gameNo?: number | null;
   location: string | null;
   names: Record<PlayerId, string>; // display_name, неэкранированные
   places: PlayerId[]; // index 0 = 1-е место
@@ -995,8 +1014,8 @@ export function resultsPost(input: ResultsPostInput): Post {
   const name = (id: PlayerId): string => escapeHtml(input.names[id] ?? 'Игрок');
   const header = [
     input.corrected
-      ? `♠️ <b>Исправленные итоги вечера ${formatClubDate(input.scheduledAt)}</b>`
-      : `♠️ <b>Итоги вечера ${formatClubDate(input.scheduledAt)}</b>`,
+      ? `♠️ <b>Исправленные итоги вечера ${formatEveningDate(input.scheduledAt, input.gameNo)}</b>`
+      : `♠️ <b>Итоги вечера ${formatEveningDate(input.scheduledAt, input.gameNo)}</b>`,
   ];
   if (input.corrected) header.push('Прошлый пост с итогами устарел — верны эти.');
   if (input.location) header.push(`📍 ${escapeHtml(input.location)}`);
@@ -1211,6 +1230,8 @@ export function seasonResultsPost(input: SeasonResultsPostInput): Post | null {
 export interface VotingPostInput {
   eveningId: string;
   scheduledAt: string;
+  /** Номер игры в дне (миграция 026): у второй и дальше — «· игра 2» после даты. */
+  gameNo?: number | null;
   names: Record<PlayerId, string>;
   results: Record<VoteCategory, VoteResult>;
   botUsername: string | null;
@@ -1274,7 +1295,7 @@ export function votingPost(input: VotingPostInput): Post | null {
   if (lines.length === 0) return null;
   return {
     text: [
-      `🗳 <b>Итоги голосования · вечер ${formatClubDate(input.scheduledAt)}</b>`,
+      `🗳 <b>Итоги голосования · вечер ${formatEveningDate(input.scheduledAt, input.gameNo)}</b>`,
       '',
       ...lines,
       '',
@@ -1291,6 +1312,8 @@ export function votingPost(input: VotingPostInput): Post | null {
 export interface VotingReminderPostInput {
   eveningId: string;
   scheduledAt: string;
+  /** Номер игры в дне (миграция 026): у второй и дальше — «· игра 2» после даты. */
+  gameNo?: number | null;
   votingClosesAt: string;
   /** Сколько игроков вечера уже проголосовали хотя бы в одной номинации. */
   voted: number;
@@ -1315,7 +1338,7 @@ export function votingReminderPost(input: VotingReminderPostInput): Post {
     text: [
       `♠️ <b>Голосование закрывается в ${formatClubTime(input.votingClosesAt)} — ` +
         `${turnoutText(input.voted, input.eligible)}</b>`,
-      `Кто играл и ещё не голосовал — выберите руку, блеф и бэд-бит вечера ${formatClubDate(input.scheduledAt)}.`,
+      `Кто играл и ещё не голосовал — выберите руку, блеф и бэд-бит вечера ${formatEveningDate(input.scheduledAt, input.gameNo)}.`,
     ].join('\n'),
     buttons: appButton(input.botUsername, '♣️ Голосовать', `v_${input.eveningId}`),
   };
