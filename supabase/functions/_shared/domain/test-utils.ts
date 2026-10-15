@@ -51,6 +51,10 @@ export interface Journal {
   pauseFor(minutes: number): number;
   /** Поправка остатка уровня на seconds секунд (022), минус — убавить. */
   adjust(seconds: number): number;
+  /** Игрок на место seat (028). */
+  seat(id: PlayerId, seat: number): number;
+  /** Баттон на место seat (028). */
+  button(seat: number): number;
   voidEvent(eventId: number): void;
 }
 
@@ -98,6 +102,8 @@ export function journal(startIso = '2026-10-08T16:00:00.000Z'): Journal {
     amend: (eventId, value) => j.add('amend', { eventId, ...value }),
     pauseFor: (minutes) => j.add('timer_pause', { minutes }),
     adjust: (seconds) => j.add('time_adjust', { seconds }),
+    seat: (p, seat) => j.add('seat', { playerId: p, seat }),
+    button: (seat) => j.add('button', { seat }),
     voidEvent(eventId) {
       const ev = events.find((e) => e.id === eventId);
       if (!ev) throw new Error(`нет события ${eventId}`);

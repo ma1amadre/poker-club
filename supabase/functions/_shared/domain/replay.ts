@@ -15,6 +15,9 @@
 //   отмена поправки возвращает предыдущую или исходное значение.
 // - Деньги и фишки — по записям (миграция 027): у каждого входа и ребая своя сумма (readEntry), фонд —
 //   сумма взносов. Записи без суммы (все до 027) читаются как раньше: кратность × вход формата.
+// - Места и баттон (миграция 028, seats.ts): 'seat' сажает игрока на номер места, 'button' ставит
+//   баттон на место игрока в игре, 'hand' двигает баттон по часовой к следующему игроку в игре. На
+//   деньги, таймер, места в итоге и нокауты рассадка не влияет.
 import {
   AMENDABLE_EVENT_TYPES,
   MAX_ENTRY_RUB,
@@ -32,6 +35,14 @@ import {
   type TournamentFormat,
 } from './types.ts';
 import { readShowdown, readShowdownId } from './showdown.ts';
+import {
+  SEAT_ERROR,
+  isTableSeat,
+  nextButtonSeat,
+  readButtonSeat,
+  readSeat,
+  seatHolder,
+} from './seats.ts';
 
 const MINUTE_MS = 60_000;
 
@@ -237,6 +248,7 @@ function initialState(format: TournamentFormat): EveningState {
     places: [],
     firstBustPlayerId: null,
     showdown: null,
+    buttonSeat: null,
     errors: [],
   };
 }
@@ -408,6 +420,26 @@ function validate(
       if (id === null) return 'Олл-ин: нет id раздачи';
       return s.showdown?.showdownId === id ? null : 'Эта раздача олл-ина уже закрыта';
     }
+    case 'seat': {
+      // Рассадка — и до старта таймера. Место вылетевшего свободно для другого: вылетевший его теряет.
+      const id = readPlayerId(payload);
+      if (id === null) return 'Не указан игрок';
+      const seat = asRecord(payload).seat;
+      if (!isTableSeat(seat)) return SEAT_ERROR;
+      const p = s.players[id];
+      if (!p) return 'Игрок не входил в турнир';
+      if (p.seat === seat) return 'Игрок уже на этом месте';
+      if (seatHolder(s, seat)?.alive) return 'Место занято';
+      return null;
+    }
+    case 'button': {
+      const seat = readButtonSeat(payload);
+      if (seat === null) return SEAT_ERROR;
+      const holder = seatHolder(s, seat);
+      if (!holder) return 'Место пустое — баттон ставят на место игрока в игре';
+      if (!holder.alive) return 'Игрок на этом месте выбыл — баттон ставят на место игрока в игре';
+      return null;
+    }
     default:
       return 'Неизвестный тип события';
   }
@@ -438,6 +470,7 @@ function apply(
         kos: 0,
         koVictims: [],
         bustLevel: null,
+        seat: null,
       };
       s.joinOrder.push(id);
       return;
@@ -520,6 +553,9 @@ function apply(
       ) {
         enterLevel(s, t.levelIndex + 1, 0);
       }
+      // Следующая раздача — баттон к следующему игроку в игре по часовой (028). Правила уровня выше
+      // не меняются; баттон не задан — раздача только считается.
+      s.buttonSeat = nextButtonSeat(s);
       return;
     }
     case 'finish':
@@ -550,6 +586,17 @@ function apply(
     }
     case 'showdown_close':
       s.showdown = null;
+      return;
+    case 'seat': {
+      // Место держит один игрок: вылетевший на нём (validate пропустил только его) место теряет.
+      const read = readSeat(payload) as { playerId: PlayerId; seat: number };
+      const holder = seatHolder(s, read.seat);
+      if (holder && holder.playerId !== read.playerId) holder.seat = null;
+      (s.players[read.playerId] as PlayerState).seat = read.seat;
+      return;
+    }
+    case 'button':
+      s.buttonSeat = readButtonSeat(payload);
       return;
   }
 }

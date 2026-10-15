@@ -5,6 +5,8 @@
 // со всеми пунктами, раньше — строкой. Тренировка (миграция 023): без ответа, прогноза и «Кто идёт».
 // «На кону» (EveningStakes) — под прогнозом: кто в шаге от ачивки или рекорда, расклад сезона.
 // Игра 2 и дальше (миграция 026): в шторке посадки на старте отмечен состав прошлой игры дня.
+// Места и баттон (миграция 028): после посадки, если мест ещё нет, сразу открывается «Рассадка»; до
+// старта её же открывает кнопка «Рассадка» под столом.
 import { useState } from 'react';
 import {
   isTrainingEvening,
@@ -44,6 +46,8 @@ import { PayoutSheet } from './PayoutSheet';
 import { PredictionSection } from './PredictionSection';
 import { previousGameRoster } from './nextGame';
 import { PregameRow, PregameSection } from './PregameCheck';
+import { seatingStarted } from './seating';
+import { SeatingSheet } from './SeatingSheet';
 import { SeatSheet } from './SeatSheet';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -67,6 +71,7 @@ export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
   const rsvpsQuery = useRsvps(evening.id);
   const rsvps = rsvpsQuery.data ?? [];
   const [seatOpen, setSeatOpen] = useState(false);
+  const [seatingOpen, setSeatingOpen] = useState(false);
   const [starting, setStarting] = useState(false);
   const [payoutOpen, setPayoutOpen] = useState(false);
   const goingCount = rsvps.filter((r) => r.status === 'yes').length;
@@ -96,7 +101,9 @@ export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
     setStarting(false);
   };
 
-  // Отменить посадку за стол до старта — через ту же отмену записи журнала.
+  // Отменить посадку за стол до старта — через ту же отмену записи журнала. Место игрока и баттон на нём
+  // (миграция 028) отменяются вместе с входом (seatingVoidedWith): ленты до старта нет, и непринятые
+  // записи рассадки иначе было бы не отменить.
   const unseat = (playerId: string) => {
     const join = [...model.events]
       .reverse()
@@ -151,6 +158,9 @@ export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
                 </Button>
                 <Button block icon="user-plus" onClick={() => setSeatOpen(true)}>
                   Посадить ещё игроков
+                </Button>
+                <Button block icon="map-pin" onClick={() => setSeatingOpen(true)}>
+                  Рассадка
                 </Button>
               </>
             ) : (
@@ -296,7 +306,20 @@ export function AnnouncedView({ model, actions, onTv }: AnnouncedViewProps) {
         rsvps={rsvps}
         mode="start"
         roster={roster}
+        onSeated={() => {
+          // Сели первые игроки, а мест ещё нет — сразу рассадка по номерам сукна.
+          if (!seatingStarted(actions.freshState())) setSeatingOpen(true);
+        }}
       />
+
+      {canControl && (
+        <SeatingSheet
+          open={seatingOpen}
+          onClose={() => setSeatingOpen(false)}
+          model={model}
+          actions={actions}
+        />
+      )}
     </>
   );
 }

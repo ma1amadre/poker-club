@@ -113,6 +113,24 @@
   margin-top: 3px;
 }
 
+/*
+ * Позиции раздачи под блайндами (миграция 028): «Баттон — Петя · SB — Лёня · BB — Саша» и своя —
+ * «Ты на BB» accent (не только цветом: словами).
+ */
+.ev-clock__positions {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ev-clock__positions > p {
+  margin: 0;
+}
+
+.ev-clock__mine {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ---------- Пульт банкира ---------- */
 
 .ev-pult {

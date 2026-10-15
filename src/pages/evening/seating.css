@@ -1,0 +1,169 @@
+/*
+ * Шторка «Рассадка» (SeatingSheet, миграция 028): десять мест ячейками по номерам сукна. Регистр
+ * «Терминал» (DESIGN.md): радиус 0 и без теней (правило регистра), рамки 1px, номер места — моно
+ * двумя знаками, имя — Inter прописными, позиции (D, SB 25, BB 50) — моно accent, пустое место и
+ * вылетевший — пунктир. Фокус с клавиатуры — outline регистра (styles/terminal.css).
+ */
+
+.ev-seating {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ev-seating__status {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.ev-seating__status > p {
+  margin: 0;
+}
+
+/* Две ячейки в ряд на 320–430 px (имя прописными помещается), шире — сколько влезет. */
+.ev-cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ev-cells > li {
+  display: grid;
+  min-width: 0;
+}
+
+.ev-cell {
+  display: grid;
+  align-content: space-between;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: 64px;
+  padding: var(--space-2);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--m-dur) linear,
+    border-color var(--m-dur) linear;
+}
+
+.ev-cell:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+
+.ev-cell:active:not(:disabled) {
+  background: var(--fill-pressed);
+}
+
+.ev-cell:disabled {
+  cursor: default;
+  color: var(--ink-muted);
+}
+
+.ev-cell__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--space-2);
+  font-family: var(--m-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ev-cell__no {
+  color: var(--ink-muted);
+}
+
+.ev-cell__pos {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Баттон на месте, где позиции нет (место пустое или игрок вне игры) — до следующей раздачи. */
+.ev-cell__pos--idle {
+  color: var(--ink-muted);
+}
+
+.ev-cell__name {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ev-cell__note {
+  font-family: var(--m-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--critical);
+}
+
+/* Пустое место: пунктир, «свободно» приглушённо и строчными — не имя. */
+.ev-cell--empty {
+  border-style: dashed;
+}
+
+.ev-cell--empty .ev-cell__name {
+  color: var(--ink-muted);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Вылетевший на месте: пунктир, имя приглушено. */
+.ev-cell--out {
+  border-style: dashed;
+}
+
+.ev-cell--out .ev-cell__name {
+  color: var(--ink-muted);
+}
+
+/* Выбранное: баттон (вид «Баттон») или нынешнее место при пересадке. */
+.ev-cell--current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/*
+ * Недоступная ячейка (место игрока в игре при выборе места, пустое при выборе баттона) — тусклая
+ * рамка line и приглушённый текст: доступные (рамка line-strong) видно сразу.
+ */
+.ev-cell:disabled:not(.ev-cell--current) {
+  border-style: solid;
+  border-color: var(--line);
+}
+
+.ev-cell:disabled .ev-cell__name,
+.ev-cell:disabled .ev-cell__no {
+  color: var(--ink-muted);
+}
+
+.ev-cell:disabled .ev-cell__name {
+  font-weight: 400;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ev-cell {
+    transition: none;
+  }
+}

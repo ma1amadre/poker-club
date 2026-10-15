@@ -289,6 +289,59 @@
   text-align: right;
 }
 
+/*
+ * Порядок раздачи от баттона (миграция 028): во всю ширину экрана под часами и столом. Игрок —
+ * позиция (D, SB, BB) моно accent, номер места моно приглушённо, имя Inter прописными, блайнд моно
+ * accent; читается с дивана — кеглем строк табло (на ТВ 48 px макета).
+ */
+.bd-order {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line);
+}
+
+.bd-order__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--m-body-size);
+  line-height: 1.2;
+}
+
+.bd-order__seat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35em;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.bd-order__role,
+.bd-order__blind {
+  font-family: var(--m-font-mono);
+  font-weight: 800;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.bd-order__no {
+  font-family: var(--m-font-mono);
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+.bd-order__name {
+  min-width: 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 /* ---------- Ожидание и итог ---------- */
 
 .bd-wait {
@@ -568,7 +621,8 @@
  * поэтому фрагмент с тем же префиксом. Шкала ТВ — выше (.bd-screen, --bd-px; холст 1920×1080).
  */
 
-/* Имена за столом и последний нокаут — Inter прописными; выбитый — critical, как на холсте. */
+/* Имена за столом, в порядке раздачи и последний нокаут — Inter прописными; выбитый — critical. */
+[data-theme='terminal'] .bd-order__name,
 [data-theme='terminal'] .bd-names {
   font-weight: 700;
   letter-spacing: 0.02em;

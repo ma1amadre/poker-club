@@ -21,10 +21,12 @@ import {
   type EventDraft,
   type ReplayLog,
 } from '@domain/replay.ts';
+import { readButtonSeat, readSeat, type SeatedPlayer, type TablePositions } from '@domain/seats.ts';
 import { readShowdown, readShowdownId, streetOf } from '@domain/showdown.ts';
 import { spectatesEvening } from '@domain/spectators.ts';
 import {
   MAX_ENTRY_RUB,
+  SEATING_EVENT_TYPES,
   type BlindLevel,
   type EveningEvent,
   type EveningState,
@@ -69,7 +71,7 @@ function amountOf(ev: EveningEvent): number {
   return typeof a === 'number' ? a : 0;
 }
 
-export type EventKind = 'entry' | 'bust' | 'clock' | 'money' | 'finish' | 'showdown';
+export type EventKind = 'entry' | 'bust' | 'clock' | 'money' | 'finish' | 'showdown' | 'seat';
 
 export interface EventLine {
   kind: EventKind;
@@ -91,6 +93,37 @@ export interface FeedContext {
    * последняя принятая поправка той же записи раньше неё, иначе исходное (подпись «было»).
    */
   previous: ReadonlyMap<number, EveningEvent>;
+  /**
+   * id записи «Баттон» → кто сидел на этом месте в момент записи (миграция 028): «Баттон — место 3
+   * (Саша)». Место держит последний, кого журнал посадил на него принятой записью «место».
+   */
+  buttonHolders: ReadonlyMap<number, PlayerId>;
+}
+
+/**
+ * Кто сидел на месте баттона в момент каждой записи «Баттон»: принятые записи «место» по порядку
+ * журнала (пересадка освобождает прежнее место, место вылетевшего забирает новый). Живость не нужна:
+ * replay снимает игрока с места только записью «место» другого игрока.
+ */
+function buttonHoldersOf(
+  events: readonly EveningEvent[],
+  accepted: ReadonlySet<number>,
+): Map<number, PlayerId> {
+  const holders = new Map<number, PlayerId>();
+  const bySeat = new Map<number, PlayerId>();
+  for (const ev of [...events].sort((a, b) => a.id - b.id)) {
+    if (ev.type === 'seat' && accepted.has(ev.id)) {
+      const read = readSeat(ev.payload);
+      if (!read) continue;
+      for (const [seat, id] of bySeat) if (id === read.playerId) bySeat.delete(seat);
+      bySeat.set(read.seat, read.playerId);
+    } else if (ev.type === 'button') {
+      const seat = readButtonSeat(ev.payload);
+      const holder = seat === null ? undefined : bySeat.get(seat);
+      if (holder) holders.set(ev.id, holder);
+    }
+  }
+  return holders;
 }
 
 export function feedContext(
@@ -101,6 +134,7 @@ export function feedContext(
   for (const e of log.applied) if (log.amended.has(e.id)) effective.set(e.id, e);
   const byId = new Map(events.map((e) => [e.id, e]));
   const accepted = new Set(log.applied.filter((e) => e.type === 'amend').map((e) => e.id));
+  const buttonHolders = buttonHoldersOf(events, new Set(log.applied.map((e) => e.id)));
   const inForce = new Map<number, EveningEvent>();
   const previous = new Map<number, EveningEvent>();
   for (const ev of [...events].sort((a, b) => a.id - b.id)) {
@@ -113,7 +147,7 @@ export function feedContext(
       inForce.set(target.id, { ...target, payload: amendedPayload(target, patch) });
     }
   }
-  return { effective, byId, previous };
+  return { effective, byId, previous, buttonHolders };
 }
 
 /** «выбивает Саша», «выбивают Саша и Дима — нокаут каждому», «кто выбил — не указано». */
@@ -262,6 +296,28 @@ export function describeEvent(
     }
     case 'showdown_close':
       return { kind: 'showdown', title: 'Олл-ин закрыт', detail: null };
+    case 'seat': {
+      // «Саша — место 3»: пересадка — та же запись с новым номером (миграция 028).
+      const read = readSeat(ev.payload);
+      return {
+        kind: 'seat',
+        title: read ? `${nameOf(read.playerId)} — место ${read.seat}` : 'Место за столом',
+        detail: null,
+      };
+    }
+    case 'button': {
+      // «Баттон — место 3 (Саша)»: кто сидел на месте в момент записи — из контекста ленты.
+      const seat = readButtonSeat(ev.payload);
+      const holder = ctx?.buttonHolders.get(ev.id);
+      return {
+        kind: 'seat',
+        title:
+          seat === null
+            ? 'Баттон'
+            : `Баттон — место ${seat}${holder ? ` (${nameOf(holder)})` : ''}`,
+        detail: null,
+      };
+    }
     default:
       return { kind: 'clock', title: 'Событие', detail: null };
   }
@@ -315,6 +371,78 @@ export function voidImpact<T extends EveningEvent>(
     finishedBefore: before.state.finished,
     finishedAfter: after.state.finished,
   };
+}
+
+/**
+ * Рассадка, которая держится на отменяемых записях (миграция 028): неотменённые записи «место» и
+ * «баттон», которые после отмены eventIds журнал перестанет принимать (отменён вход — место пустеет,
+ * баттон на нём повисает), и записи «место» игрока, у которого после отмены не останется входа. Сами
+ * по себе они ничего не значат, а отменить их потом негде: до старта ленты нет, в ленте завершённого
+ * вечера рассадки не видно, — и запись «место» с id игрока держала бы его в журнале вечера (слияние
+ * профилей отказывает: «Оба есть в журнале вечера»). Поэтому отмена берёт их с собой. От старых к
+ * новым; без отменяемых.
+ */
+export function seatingVoidedWith<T extends EveningEvent>(
+  format: TournamentFormat,
+  events: readonly T[],
+  eventIds: readonly number[],
+  nowMs: number,
+): T[] {
+  const ids = new Set(eventIds);
+  const live = events.filter((e) => !e.voided && !ids.has(e.id));
+  const seating = live.filter((e) => SEATING_EVENT_TYPES.includes(e.type));
+  if (seating.length === 0) return [];
+  const stillJoined = new Set(live.filter((e) => e.type === 'join').map(playerOf));
+  const unjoined = new Set(
+    events
+      .filter((e) => ids.has(e.id) && !e.voided && e.type === 'join')
+      .map(playerOf)
+      .filter((id): id is PlayerId => id !== null && !stillJoined.has(id)),
+  );
+  const rejected = new Set(
+    voidImpact(format, events, eventIds, nowMs).rejected.map((r) => r.event.id),
+  );
+  return seating
+    .filter((e) => {
+      if (rejected.has(e.id)) return true;
+      const seat = e.type === 'seat' ? readSeat(e.payload) : null;
+      return seat !== null && unjoined.has(seat.playerId);
+    })
+    .sort((a, b) => a.id - b.id);
+}
+
+/**
+ * Что пересчитается после отмены записи — фраза вопроса «Отменить запись?» после подписи записи.
+ * finishedAfter — вечер останется завершённым и после отмены (для «Игра окончена»).
+ */
+export function voidConsequenceText(type: EventType, finishedAfter: boolean): string {
+  switch (type) {
+    case 'finish':
+      return finishedAfter
+        ? 'Вечер останется завершённым: в журнале есть ещё одна запись «Игра окончена».'
+        : 'Вечер вернётся в игру: итоги, голосование и расчёт снова откроются после завершения, таймер будет на паузе.';
+    case 'payment':
+      return 'Остаток игрока в расчёте пересчитается.';
+    case 'join':
+    case 'rebuy':
+    case 'bust':
+      return 'Места, нокауты и деньги пересчитаются.';
+    case 'amend':
+      return 'Исправленная запись вернётся к прежнему значению, нокауты и деньги пересчитаются.';
+    case 'showdown_close':
+      return 'Раздача снова появится на табло.';
+    case 'showdown':
+      return 'Табло покажет раздачу такой, какой она была до этой записи. На игру и деньги олл-ин не влияет.';
+    // Места и баттон (миграция 028): на деньги, очки и итоговые места турнира не влияют.
+    case 'seat':
+      return 'Рассадка вернётся к прежней. На деньги и очки это не влияет.';
+    case 'button':
+      return 'Баттон вернётся туда, где был до этой записи.';
+    case 'hand':
+      return 'Счёт раздач, уровень и баттон пересчитаются.';
+    default:
+      return 'Таймер и уровень пересчитаются.';
+  }
 }
 
 /** Первая буква строчная: причина из домена встаёт внутрь фразы. */
@@ -501,9 +629,50 @@ export function undoActionText(title: string, extraCount: number): string {
   return `«${title}»${more}`;
 }
 
-/** Лента: игровые события от новых к старым (платежи — на экране расчёта). */
-export function feedEvents<T extends EveningEvent>(events: readonly T[]): T[] {
-  return events.filter((e) => e.type !== 'payment').sort((a, b) => b.id - a.id);
+/**
+ * Лента: игровые события от новых к старым (платежи — на экране расчёта). Рассадка (места и баттон,
+ * миграция 028) — только в журнале пульта (seating): у игроков и в итогах это шум.
+ */
+export function feedEvents<T extends EveningEvent>(
+  events: readonly T[],
+  options: { seating?: boolean } = {},
+): T[] {
+  const seating = options.seating ?? false;
+  return events
+    .filter((e) => e.type !== 'payment' && (seating || !SEATING_EVENT_TYPES.includes(e.type)))
+    .sort((a, b) => b.id - a.id);
+}
+
+/** Строка ленты: запись и сколько раздач подряд она собирает (у остальных записей — 1). */
+export interface FeedRow<T> {
+  event: T;
+  /** Раздач подряд в строке: «Следующая раздача» пишет запись на каждую — лента их не множит. */
+  hands: number;
+}
+
+/**
+ * Строки ленты из feedEvents: принятые раздачи подряд (без других записей между ними) — одной
+ * строкой «7 раздач сыграно» по последней из них: её время, нажатие отменяет её. Отменённые и не
+ * принятые раздачи (rejected) — отдельными строками, как прежде.
+ */
+export function feedRows<T extends EveningEvent>(
+  feed: readonly T[],
+  rejected: ReadonlySet<number> | ReadonlyMap<number, unknown>,
+): FeedRow<T>[] {
+  const rows: FeedRow<T>[] = [];
+  const plainHand = (e: T) => e.type === 'hand' && !e.voided && !rejected.has(e.id);
+  for (const event of feed) {
+    const last = rows[rows.length - 1];
+    if (last && plainHand(event) && plainHand(last.event)) last.hands += 1;
+    else rows.push({ event, hands: event.type === 'hand' ? 1 : 0 });
+  }
+  return rows;
+}
+
+/** Строка раздач подряд: «Раздача сыграна», «3 раздачи сыграны», «7 раздач сыграно». */
+export function handsRowTitle(hands: number): string {
+  if (hands <= 1) return 'Раздача сыграна';
+  return pluralWithNumber(hands, ['раздача сыграна', 'раздачи сыграны', 'раздач сыграно']);
 }
 
 /**
@@ -611,6 +780,51 @@ export function triggerProgress(state: EveningState): TriggerProgress | null {
   if (trig.type === 'hands')
     return { label: 'Раздач на уровне', done: state.timer.handsInLevel, total: trig.count };
   return null;
+}
+
+// --- Места и баттон (миграция 028): метки позиций — общие для пульта, экранов и табло -------------
+
+/** Номер места двумя знаками, как на сукне и в «Терминале» (DESIGN.md, «Списки»): «03». */
+export function seatNo(seat: number): string {
+  return String(seat).padStart(2, '0');
+}
+
+/** Позиция раздачи на месте: баттон (дилер), малый и большой блайнд. */
+export type PositionRole = 'D' | 'SB' | 'BB';
+
+/**
+ * Метки позиций по номерам мест (tablePositions домена): D, SB, BB. В хедз-апе баттон и SB — одно
+ * место: ['D', 'SB'].
+ */
+export function positionRoles(positions: TablePositions): Map<number, PositionRole[]> {
+  const roles = new Map<number, PositionRole[]>();
+  const add = (p: SeatedPlayer | null, role: PositionRole) => {
+    if (p) roles.set(p.seat, [...(roles.get(p.seat) ?? []), role]);
+  };
+  add(positions.dealer, 'D');
+  add(positions.sb, 'SB');
+  add(positions.bb, 'BB');
+  return roles;
+}
+
+/** Блайнд позиции по текущему уровню: SB — малый, BB — большой; у баттона и остальных — null. */
+export function roleBlind(
+  roles: readonly PositionRole[],
+  level: Pick<BlindLevel, 'sb' | 'bb'>,
+): number | null {
+  if (roles.includes('BB')) return level.bb;
+  if (roles.includes('SB')) return level.sb;
+  return null;
+}
+
+/** Метка места: «D», «SB 25», «BB 50», в хедз-апе — «D SB 25»; null — место не позиция. */
+export function roleTag(
+  roles: readonly PositionRole[],
+  level: Pick<BlindLevel, 'sb' | 'bb'>,
+): string | null {
+  if (roles.length === 0) return null;
+  const blind = roleBlind(roles, level);
+  return blind === null ? roles.join(' ') : `${roles.join(' ')}${NBSP}${formatNumber(blind)}`;
 }
 
 /** Длительность уровня словами: «40 мин», «3 вылета», «10 раздач». */
@@ -1152,6 +1366,8 @@ const REJECTED_TITLE: Partial<Record<EventType, string>> = {
   level_next: 'Переход уровня не принят',
   level_prev: 'Переход уровня не принят',
   hand: 'Раздача не принята',
+  seat: 'Рассадка не принята',
+  button: 'Баттон не принят',
   finish: 'Завершение не принято',
   showdown: 'Олл-ин не принят',
   showdown_close: 'Закрытие олл-ина не принято',

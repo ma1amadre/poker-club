@@ -53,7 +53,9 @@ export type EventType =
   | 'showdown'
   | 'showdown_close'
   | 'amend'
-  | 'time_adjust';
+  | 'time_adjust'
+  | 'seat'
+  | 'button';
 
 export const EVENT_TYPES: readonly EventType[] = [
   'join',
@@ -71,6 +73,8 @@ export const EVENT_TYPES: readonly EventType[] = [
   'showdown_close',
   'amend',
   'time_adjust',
+  'seat',
+  'button',
 ];
 
 /**
@@ -78,6 +82,27 @@ export const EVENT_TYPES: readonly EventType[] = [
  * итоги не влияют — replay только держит текущую раздачу в state.showdown.
  */
 export const SHOWDOWN_EVENT_TYPES: readonly EventType[] = ['showdown', 'showdown_close'];
+
+/**
+ * Места и баттон (миграция 028): номера мест на сукне 1..TABLE_SEATS растут по часовой стрелке,
+ * раздача идёт по часовой — баттон переходит к следующему большему номеру, после последнего — к 1.
+ * На деньги, очки, места в итоге, ачивки, рекорды и сезоны рассадка не влияет: replay держит место
+ * игрока (PlayerState.seat) и номер места баттона (EveningState.buttonSeat) — для пульта и табло.
+ */
+export const TABLE_SEATS = 10;
+
+/** Записи рассадки (028): место игрока и баттон. В ленте клуба, истории вечера и итогах — не шум. */
+export const SEATING_EVENT_TYPES: readonly EventType[] = ['seat', 'button'];
+
+/**
+ * payload 'seat' (028): игрок (входил в турнир) садится на место seat — целое 1..TABLE_SEATS. Пересадка —
+ * та же запись с новым местом. Место держит другой игрок в игре — отказ; держит вылетевший — он место
+ * теряет.
+ */
+export type SeatPayload = { playerId: PlayerId; seat: number };
+
+/** payload 'button' (028): баттон на место seat (целое 1..TABLE_SEATS), где сидит игрок в игре. */
+export type ButtonPayload = { seat: number };
 
 /** Карта в нотации 'As', 'Td', '9h': ранг 2–9TJQKA, масть s ♠, h ♥, d ♦, c ♣. */
 export type CardCode = string;
@@ -169,6 +194,8 @@ export type EventPayload =
   | AmendPayload // amend (022)
   | PausePayload // timer_pause: { minutes? } (022)
   | TimeAdjustPayload // time_adjust (022)
+  | SeatPayload // seat (028)
+  | ButtonPayload // button (028)
   | Record<string, never>; // timer_start, timer_resume, level_*, hand, finish
 
 export interface EveningEvent {
@@ -193,6 +220,9 @@ export interface PlayerState {
   kos: number;
   koVictims: PlayerId[]; // по одному элементу на каждый нокаут, в порядке событий
   bustLevel: number | null; // номер уровня (с 1) окончательного вылета
+  // Место на сукне 1..TABLE_SEATS (028) или null — без места. Ребай и вылет место не снимают: вылетевший
+  // сидит на нём приглушённым, пока место не отдадут другому.
+  seat: number | null;
 }
 
 /** Пауза таймера (миграция 022): какая запись её поставила, когда и на сколько. */
@@ -230,5 +260,8 @@ export interface EveningState {
   firstBustPlayerId: PlayerId | null; // для прогноза «кто вылетит первым» = первый bust вечера
   // Открытый олл-ин (показ карт на табло) или null: закрыт showdown_close, новым олл-ином или finish.
   showdown: ShowdownState | null;
+  // Номер места баттона (028) или null — баттон не задан. Это номер, а не игрок: пересел или вылетел
+  // игрок на баттоне — метка остаётся на месте до следующей раздачи ('hand').
+  buttonSeat: number | null;
   errors: { eventId: number; message: string }[];
 }

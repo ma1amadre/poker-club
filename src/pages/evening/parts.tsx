@@ -30,6 +30,8 @@ import {
   describeTrigger,
   feeFactText,
   feedEvents,
+  feedRows,
+  handsRowTitle,
   orderedPlayers,
   playerLine,
   type FeedContext,
@@ -270,6 +272,8 @@ const EVENT_ICON: Record<EventType, IconName> = {
   showdown_close: 'eye',
   amend: 'pencil',
   time_adjust: 'clock',
+  seat: 'map-pin',
+  button: 'arrow-right',
 };
 
 export function EventIcon({ type }: { type: EventType }) {
@@ -296,6 +300,8 @@ export interface EventRowProps {
   editable?: boolean;
   /** Как журнал применил записи: исправленная запись — с правкой в силе (миграция 022). */
   feed?: FeedContext;
+  /** Раздач подряд в строке (feedRows): больше одной — «7 раздач сыграно» по последней. */
+  hands?: number;
 }
 
 /** Строка журнала: что случилось, кто, когда; отменённые — зачёркнуты и с пометкой. */
@@ -307,8 +313,10 @@ export function EventRow({
   onSelect,
   editable = false,
   feed,
+  hands = 0,
 }: EventRowProps) {
-  const line = describeEvent(event, nameOf, formatRub, format, feed);
+  const described = describeEvent(event, nameOf, formatRub, format, feed);
+  const line = hands > 1 ? { ...described, title: handsRowTitle(hands) } : described;
   const subtitle = [line.detail, error ? `не принято: ${error}` : null].filter(Boolean).join(' · ');
   return (
     <ListItem
@@ -348,6 +356,8 @@ export interface EventFeedProps {
   title?: string;
   /** Сколько строк показать до «Показать всю ленту». */
   limit?: number;
+  /** Места и баттон (миграция 028) — только в журнале пульта; у игроков и в итогах это шум. */
+  seating?: boolean;
 }
 
 /** Лента вечера от новых к старым, без платежей (они на экране расчёта). */
@@ -361,10 +371,13 @@ export function EventFeed({
   feed: context,
   title = 'Лента',
   limit = 12,
+  seating = false,
 }: EventFeedProps) {
   const [expanded, setExpanded] = useState(false);
-  const feed = feedEvents(events);
-  const shown = expanded ? feed : feed.slice(0, limit);
+  const feed = feedEvents(events, { seating });
+  // Раздачи подряд — одной строкой: «Следующая раздача» пишет запись на каждую раздачу.
+  const rows = feedRows(feed, errorsById);
+  const shown = expanded ? rows : rows.slice(0, limit);
   if (feed.length === 0) return null;
   return (
     <Section
@@ -379,7 +392,7 @@ export function EventFeed({
       }
     >
       <List aria-label={title}>
-        {shown.map((event) => (
+        {shown.map(({ event, hands }) => (
           <EventRow
             key={event.id}
             event={event}
@@ -389,10 +402,11 @@ export function EventFeed({
             onSelect={onSelect}
             editable={canEdit?.(event) ?? false}
             feed={context}
+            hands={hands}
           />
         ))}
       </List>
-      {feed.length > shown.length && (
+      {rows.length > shown.length && (
         <Button variant="ghost" icon="chevron-down" onClick={() => setExpanded(true)}>
           Показать всю ленту
         </Button>

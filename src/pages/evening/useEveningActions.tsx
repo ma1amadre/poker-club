@@ -11,11 +11,12 @@
 // ребаем, отменяется вместе с ним и при отмене из ленты (linkedPayment). Если журнал принял не всё
 // (ребай пришёл после закрытия), кнопка тоста отменяет только непринятое и оплату с ним
 // (rejectedPart), а принятый вылет остаётся.
+// Места и баттон (миграция 028), которые держатся на отменяемом (отменён вход — место игрока пустеет,
+// баттон на нём повисает), отменяются вместе с ним (seatingVoidedWith): вопрос перечисляет их.
 // then — запись следом отдельным запросом («Закрыть раздачу» после вылетов): не прошла — действие
 // остаётся записанным, тост говорит об этом; «Отменить» отменяет и её.
 import { canAmend } from '@domain/amend.ts';
 import { canApply, canApplySequence, replayLog, type EventDraft } from '@domain/replay.ts';
-import { isShowdownEvent } from '@domain/showdown.ts';
 import type { AmendPayload, EveningState, EventPayload, EventType } from '@domain/types.ts';
 import { useCallback, useLayoutEffect, useRef, type ReactElement } from 'react';
 import {
@@ -36,6 +37,8 @@ import {
   paidWithText,
   rejectedPart,
   rejectedToast,
+  seatingVoidedWith,
+  voidConsequenceText,
   voidImpact,
   voidImpactText,
 } from './lib';
@@ -218,24 +221,13 @@ export function useEveningActions(model: EveningModel): EveningActions {
             p.payment !== null && !group.some((g) => g.id === p.payment?.id),
         );
       const paid = paidWith.map((p) => p.payment);
-      const ids = [...group, ...paid].map((e) => e.id);
+      // Места и баттон, которые держатся на отменяемом (отменён вход — место пустеет), — вместе с
+      // ним: иначе они висели бы «не принято», а до старта и после завершения их не отменить.
+      const own = [...group, ...paid].map((e) => e.id);
+      const seating = seatingVoidedWith(format, current.events, own, serverNow());
+      const ids = [...own, ...seating.map((e) => e.id)];
       const impact = voidEffect(current, ids);
-      const consequence =
-        event.type === 'finish'
-          ? impact.finishedAfter
-            ? ' Вечер останется завершённым: в журнале есть ещё одна запись «Игра окончена».'
-            : ' Вечер вернётся в игру: итоги, голосование и расчёт снова откроются после завершения, таймер будет на паузе.'
-          : event.type === 'payment'
-            ? ' Остаток игрока в расчёте пересчитается.'
-            : event.type === 'join' || event.type === 'rebuy' || event.type === 'bust'
-              ? ' Места, нокауты и деньги пересчитаются.'
-              : event.type === 'amend'
-                ? ' Исправленная запись вернётся к прежнему значению, нокауты и деньги пересчитаются.'
-                : isShowdownEvent(event.type)
-                  ? event.type === 'showdown_close'
-                    ? ' Раздача снова появится на табло.'
-                    : ' Табло покажет раздачу такой, какой она была до этой записи. На игру и деньги олл-ин не влияет.'
-                  : ' Таймер и уровень пересчитаются.';
+      const consequence = ` ${voidConsequenceText(event.type, impact.finishedAfter)}`;
       const impactText = voidImpactText(impact, (e) => quoteEvent(current, e));
       const others = group.slice(1);
       const othersText =
@@ -247,6 +239,10 @@ export function useEveningActions(model: EveningModel): EveningActions {
           ? ` Оплата, записанная вместе ${paidWithText(paidWith.map((p) => p.with))}, тоже отменится: ${paid
               .map((e) => quoteEvent(current, e))
               .join('; ')} — банкир возвращает эти деньги игроку.`
+          : '';
+      const seatingText =
+        seating.length > 0
+          ? ` Заодно ${seating.length === 1 ? 'отменится запись' : 'отменятся записи'} ${seating.map((e) => quoteEvent(current, e)).join('; ')}.`
           : '';
       // Миграция 008: любая правка журнала снимает «Расчёт закрыт».
       const settledText =
@@ -261,6 +257,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
             `${line.title}${line.detail ? ` (${line.detail})` : ''}, ${formatTime(event.at)}. ${many ? 'Записи останутся в ленте зачёркнутыми' : 'Запись останется в ленте зачёркнутой'}.${consequence}`) +
           othersText +
           paidText +
+          seatingText +
           (impactText ? ` ${impactText}` : '') +
           settledText,
         confirmText: copy.confirmText ?? (many ? 'Отменить записи' : 'Отменить запись'),
@@ -290,20 +287,17 @@ export function useEveningActions(model: EveningModel): EveningActions {
         .filter((e): e is EveningEventRecord => e !== undefined && !e.voided);
       const [main, ...rest] = records;
       if (!main) return;
+      const ids = records.map((e) => e.id);
       if (
-        hasSideEffects(
-          voidEffect(
-            current,
-            records.map((e) => e.id),
-          ),
-        )
+        hasSideEffects(voidEffect(current, ids)) ||
+        seatingVoidedWith(current.evening.format, current.events, ids, serverNow()).length > 0
       ) {
         await voidGroupWithConfirm(main, rest);
         return;
       }
       haptic.impact('light');
       try {
-        await voidIds(records.map((e) => e.id));
+        await voidIds(ids);
         toast.show(records.length > 1 ? 'Записи отменены' : 'Запись отменена');
       } catch {
         // тост уже показал глобальный обработчик мутаций

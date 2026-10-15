@@ -2,7 +2,14 @@
 // функции без React (vitest — boardView.test.ts); деньги и места считает домен, здесь только
 // раскладка посчитанного. Время — серверное nowMs табло (useNow + сверка часов).
 import { payoutsFor } from '@domain/money.ts';
-import type { BlindLevel, EveningEvent, EveningState, TournamentFormat } from '@domain/types.ts';
+import { tablePositions } from '@domain/seats.ts';
+import type {
+  BlindLevel,
+  EveningEvent,
+  EveningState,
+  PlayerId,
+  TournamentFormat,
+} from '@domain/types.ts';
 import {
   formatBlinds,
   formatDuration,
@@ -18,10 +25,14 @@ import {
   averageStackBb,
   formatBb,
   lastBust,
+  positionRoles,
   rebuyText,
   rebuyWindow,
+  roleBlind,
+  seatNo,
   totalRebuys,
   type NameOf,
+  type PositionRole,
 } from '../evening/lib';
 
 const MINUTE_MS = 60_000;
@@ -160,6 +171,66 @@ export function tableLine(state: EveningState): string | null {
   parts.push(parts.length > 0 ? time : `Игра идёт ${formatGameTime(state.timer.totalElapsedMs)}`);
   // Неразрывный пробел перед точкой: строка переносится после «·», а не перед ней.
   return parts.join(`${NBSP}· `);
+}
+
+// --- Порядок от баттона (миграция 028) -----------------------------------------------------------
+
+/** Игрок в строке порядка: номер места, позиции и блайнд текущего уровня (у SB и BB). */
+export interface BoardSeat {
+  seat: number;
+  playerId: PlayerId;
+  roles: PositionRole[];
+  blind: number | null;
+}
+
+/** Строка порядка табло: игроки в игре на местах по часовой от баттона и кто в игре без места. */
+export interface BoardOrder {
+  seats: BoardSeat[];
+  unseated: PlayerId[];
+}
+
+/**
+ * Порядок раздачи для табло: «D Петя · SB Лёня 25 · BB Саша 50 · Ваня · …» — игроки в игре на
+ * местах по часовой, начиная с баттона (баттон у выбывшего или на пустом месте — с SB), с номерами
+ * мест; блайнды — текущего уровня. Только когда задан баттон и позиции определены (в игре на местах
+ * двое и больше); иначе null — табло показывает «За столом» как раньше.
+ */
+export function boardOrder(state: EveningState): BoardOrder | null {
+  const positions = tablePositions(state);
+  if (positions.buttonSeat === null || !positions.sb) return null;
+  const roles = positionRoles(positions);
+  return {
+    seats: positions.order.map((p) => {
+      const r = roles.get(p.seat) ?? [];
+      return {
+        seat: p.seat,
+        playerId: p.playerId,
+        roles: r,
+        blind: roleBlind(r, state.currentLevel),
+      };
+    }),
+    unseated: positions.unseatedAlive,
+  };
+}
+
+/** Игрок строки порядка текстом: «D 03 Петя», «SB 04 Лёня 25», «07 Ваня». */
+export function boardSeatText(seat: BoardSeat, nameOf: NameOf): string {
+  return [
+    seat.roles.length > 0 ? seat.roles.join(' ') : null,
+    seatNo(seat.seat),
+    nameOf(seat.playerId),
+    seat.blind === null ? null : formatNumber(seat.blind),
+  ]
+    .filter(Boolean)
+    .join(NBSP);
+}
+
+/** Строка порядка текстом (подпись для скринридера и тесты): «D 03 Петя · SB 04 Лёня 25 · …». */
+export function boardOrderText(order: BoardOrder, nameOf: NameOf): string {
+  const seats = order.seats.map((s) => boardSeatText(s, nameOf));
+  const unseated =
+    order.unseated.length > 0 ? [`без места: ${joinNames(order.unseated.map(nameOf))}`] : [];
+  return [...seats, ...unseated].join(`${NBSP}· `);
 }
 
 // --- Экран ожидания ------------------------------------------------------------------------------

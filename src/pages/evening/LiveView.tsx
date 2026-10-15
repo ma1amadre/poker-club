@@ -16,8 +16,14 @@
 // (таймер сам не продолжает). Пауза — шторка «Пауза» (без срока или 5–30 мин), ±1 мин — у часов.
 // Лента: нажатие на вход, ребай или вылет — «Изменить запись» (правка на месте, AmendSheet).
 // Под статами у банкира и админа — строка «Проверка перед игрой» (связь, табло, голос; PregameCheck).
+// Места и баттон (миграция 028): «Рассадка» — шторка мест и баттона (SeatingSheet) с пульта в обоих
+// видах; «Следующая раздача» вместо «Раздача сыграна» — двигает баттон и считает раздачи уровня
+// (пока висит вопрос после ривера — закрыта: вылет записывается до раздачи). У всех на часах —
+// строка позиций «Баттон — Петя · SB — Лёня · BB — Саша», своя — «Ты на BB».
+// В ленте записи мест и баттона — только у того, кто ведёт пульт.
 import { amendField } from '@domain/amend.ts';
 import { computeMoney, paymentsFromEvents } from '@domain/money.ts';
+import { tablePositions } from '@domain/seats.ts';
 import { visibleShowdown } from '@domain/showdown.ts';
 import type { PlayerId, PlayerState } from '@domain/types.ts';
 import { useState, type ReactNode } from 'react';
@@ -75,6 +81,8 @@ import './pult.css';
 import { PlayerSheet } from './PlayerSheet';
 import type { PultView } from './pultView';
 import { RiverActions } from './RiverActions';
+import { handButton, myPositionText, positionsText } from './seating';
+import { SeatingSheet } from './SeatingSheet';
 import { SeatSheet } from './SeatSheet';
 import { ShowdownSheet } from './ShowdownSheet';
 import { TableView } from './TableView';
@@ -110,6 +118,9 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
   const rsvps = useRsvps(canControl ? evening.id : undefined).data ?? [];
   const [selected, setSelected] = useState<PlayerState | null>(null);
   const [seatOpen, setSeatOpen] = useState(false);
+  // Шторка «Рассадка»: открыта (с игроком — выбор места для него из ряда «Без места») или null.
+  const [seating, setSeating] = useState<{ playerId: PlayerId | null } | null>(null);
+  const openSeating = (playerId?: PlayerId) => setSeating({ playerId: playerId ?? null });
   // Шторка олл-ина: river — открыта ради вылета после ривера (на этой раздаче, даже спрятанной
   // табло), rebuy — у кого «Сразу ребай» уже отмечен («Вылет и ребай» с пульта).
   const [showdownSheet, setShowdownSheet] = useState<{
@@ -229,6 +240,7 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
       feed={model.feed}
       onSelect={canControl ? selectEvent : undefined}
       canEdit={canControl ? canEdit : undefined}
+      seating={canControl}
     />
   );
 
@@ -263,6 +275,7 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
             showdownOpen={Boolean(showdown)}
             onPlayer={setSelected}
             onSeat={() => setSeatOpen(true)}
+            onSeating={openSeating}
             onShowdown={openShowdown}
             onRiverSheet={openRiverSheet}
             onPause={() => setPauseOpen(true)}
@@ -282,11 +295,13 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
           payments={payments}
           showdownPanel={showdownPanel}
           riverActions={showdownPanel ? null : riverActions}
+          riverPending={Boolean(river.suggestion)}
           statsBlock={statsBlock}
           feed={feed}
           wakeHint={wakeHint}
           onPlayer={setSelected}
           onSeat={() => setSeatOpen(true)}
+          onSeating={() => openSeating()}
           onShowdown={openShowdown}
           onPause={() => setPauseOpen(true)}
         />
@@ -309,6 +324,13 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
             actions={actions}
             rsvps={rsvps}
             mode="late"
+          />
+          <SeatingSheet
+            open={seating !== null}
+            onClose={() => setSeating(null)}
+            model={model}
+            actions={actions}
+            playerId={seating?.playerId}
           />
           <ShowdownSheet
             open={showdownSheet !== null}
@@ -348,11 +370,13 @@ function DetailsView({
   payments,
   showdownPanel,
   riverActions,
+  riverPending,
   statsBlock,
   feed,
   wakeHint,
   onPlayer,
   onSeat,
+  onSeating,
   onShowdown,
   onPause,
 }: {
@@ -364,11 +388,14 @@ function DetailsView({
   showdownPanel: ReactNode;
   /** Вылет после ривера, когда панели олл-ина нет (табло её спрятало): первым в пульте. */
   riverActions: ReactNode;
+  /** На пульте вопрос после ривера: «Следующая раздача» закрыта до ответа (handButton, hold). */
+  riverPending: boolean;
   statsBlock: ReactNode;
   feed: ReactNode;
   wakeHint: string | null;
   onPlayer: (p: PlayerState) => void;
   onSeat: () => void;
+  onSeating: () => void;
   onShowdown: () => void;
   onPause: () => void;
 }) {
@@ -381,8 +408,14 @@ function DetailsView({
   const win = rebuyWindow(format, state);
   const clock = clockView(state);
   const { lastAlive, rebuysStillOpen, undoTarget } = pult;
+  // «Следующая раздача»: пока на пульте вопрос после ривера — закрыта до ответа (hold).
+  const hand = handButton(state, riverPending);
   // «Ты за столом» — тому, кто играет и не ведёт пульт (у банкира и админа наверху пульт).
   const seat = !canControl && me ? mySeat(format, state, model.applied, payments, me) : null;
+  // Позиции раздачи (миграция 028) — у всех на часах; своя позиция — «Ты на BB».
+  const positions = tablePositions(state);
+  const positionsLine = positionsText(positions, nameOf);
+  const myPosition = myPositionText(positions, me);
 
   return (
     <>
@@ -480,6 +513,12 @@ function DetailsView({
               </span>
             </div>
           </div>
+          {positionsLine && (
+            <div className="ev-clock__positions">
+              {myPosition && <p className="m-body ev-clock__mine">{myPosition}</p>}
+              <p className="m-small">{positionsLine}</p>
+            </div>
+          )}
           <p className="m-small ev-clock__rebuy">
             <Icon name={win.kind === 'closed' ? 'x' : 'refresh-cw'} size={16} />
             <span>{rebuyText(win)}</span>
@@ -534,18 +573,22 @@ function DetailsView({
                   Запустить таймер
                 </Button>
               )}
-              {progress?.label === 'Раздач на уровне' && (
+              {hand.show && (
                 <Button
-                  icon="plus"
-                  disabled={actions.busy || Boolean(actions.check('hand'))}
-                  onClick={() =>
-                    void actions.send('hand', {}, { success: 'Раздача записана', undo: true })
+                  variant={
+                    timer.status === 'running' && !lastAlive && !hand.hold ? 'primary' : 'secondary'
                   }
+                  icon="arrow-right"
+                  disabled={actions.busy || Boolean(hand.hold) || Boolean(actions.check('hand'))}
+                  onClick={pult.nextHand}
                 >
-                  Раздача сыграна
+                  {hand.label}
                 </Button>
               )}
             </div>
+            {hand.show && (hand.hold ?? pult.unseatedHint) && (
+              <p className="m-small">{hand.hold ?? pult.unseatedHint}</p>
+            )}
             <div className="ev-pult__levels">
               <IconButton
                 variant="secondary"
@@ -575,6 +618,9 @@ function DetailsView({
               </Button>
               <Button icon="user-plus" disabled={win.kind === 'closed'} onClick={onSeat}>
                 Посадить опоздавшего
+              </Button>
+              <Button icon="map-pin" onClick={onSeating}>
+                Рассадка
               </Button>
               <Button
                 variant="ghost"

@@ -22,7 +22,13 @@ describe('seatTiles: места за столом не прыгают', () => {
     j.wait(5).bust('b', ['a']);
     const s1 = replay(F, j.events, j.now());
     expect(order(s1)).toEqual(['a', 'b', 'c', 'd']);
-    expect(seatTiles(s1)[1]).toEqual({ playerId: 'b', alive: false, note: 'вне игры' });
+    expect(seatTiles(s1)[1]).toEqual({
+      playerId: 'b',
+      alive: false,
+      note: 'вне игры',
+      seat: null,
+      roles: [],
+    });
 
     j.wait(1).rebuy('b');
     j.add('join', { playerId: 'e' });

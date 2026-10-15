@@ -57,6 +57,8 @@ export interface SeatSheetProps {
   mode: 'start' | 'late';
   /** Состав прошлой игры того же дня (previousGameRoster) — у игры 2 и дальше. */
   roster?: { gameNo: number; playerIds: readonly string[] } | null;
+  /** Отмеченные сели (шторка закрывается): на старте дальше — «Рассадка», если мест ещё нет. */
+  onSeated?: () => void;
 }
 
 export function SeatSheet(props: SeatSheetProps) {
@@ -67,7 +69,15 @@ export function SeatSheet(props: SeatSheetProps) {
 /** Сумма и оплата строки, пока банкир их не менял. */
 type RowSetting = Pick<SeatRow, 'rub' | 'paid'>;
 
-function SeatSheetInner({ onClose, model, actions, rsvps, mode, roster }: SeatSheetProps) {
+function SeatSheetInner({
+  onClose,
+  model,
+  actions,
+  rsvps,
+  mode,
+  roster,
+  onSeated,
+}: SeatSheetProps) {
   const { data: players = [] } = usePlayers();
   const toast = useToast();
   const addGuest = useAddGuest(model.evening.id);
@@ -147,6 +157,7 @@ function SeatSheetInner({ onClose, model, actions, rsvps, mode, roster }: SeatSh
     if (!records) return;
     if (!late) toast.show(success, { tone: 'positive', detail });
     onClose();
+    onSeated?.();
   };
 
   /** Форма гостя после посадки — с чистого листа: вход формата, без оплаты. */

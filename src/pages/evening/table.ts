@@ -4,31 +4,48 @@
 // Места не прыгают: сетка — все, кто сел за стол, в порядке посадки (joinOrder). Вылетевший
 // остаётся на своём месте приглушённым, после ребая плитка снова живая там же; опоздавший садится в
 // конец. Раньше список уводил вылетевшего вниз, и строки сдвигались под пальцем.
+// С рассадкой (миграция 028) плитки — по номерам мест на сукне: номер на плитке, метки D / SB / BB;
+// вылетевший приглушён на своём месте, пока его место не отдадут. В игре без места — ряд «Без места»
+// (seating.ts, unseatedPlayers): касание — выбор места.
 import { canApply } from '@domain/replay.ts';
+import { tablePositions } from '@domain/seats.ts';
 import type { EveningState, PlayerId, TournamentFormat } from '@domain/types.ts';
 import { formatDuration, NBSP } from '../../shared/lib/format';
-import { breakLine, breakView, type RebuyWindow } from './lib';
+import { breakLine, breakView, positionRoles, type PositionRole, type RebuyWindow } from './lib';
+import { seatingStarted } from './seating';
 
 export interface SeatTile {
   playerId: PlayerId;
   alive: boolean;
   /** Подпись под именем у вылетевшего: «6-е место» или «вне игры»; у живого — null. */
   note: string | null;
+  /** Номер места на сукне (миграция 028); null — рассадки ещё нет. */
+  seat: number | null;
+  /** Позиции раздачи на этом месте: D, SB, BB (баттон задан, в игре на местах двое и больше). */
+  roles: PositionRole[];
 }
 
-/** Места за столом в порядке посадки: живые и вылетевшие — каждый на своём месте. */
+/**
+ * Места за столом. Рассадки нет — все в порядке посадки, живые и вылетевшие каждый на своём месте.
+ * Рассадка есть — те, кто держит место, по номерам мест (без места — ряд «Без места»).
+ */
 export function seatTiles(state: EveningState): SeatTile[] {
-  return state.joinOrder.flatMap((playerId) => {
+  const seated = seatingStarted(state);
+  const roles = seated ? positionRoles(tablePositions(state)) : new Map<number, PositionRole[]>();
+  const tiles = state.joinOrder.flatMap((playerId) => {
     const p = state.players[playerId];
-    if (!p) return [];
+    if (!p || (seated && p.seat === null)) return [];
     return [
       {
         playerId,
         alive: p.alive,
         note: p.alive ? null : p.place !== null ? `${p.place}-е${NBSP}место` : 'вне игры',
+        seat: seated ? p.seat : null,
+        roles: p.seat !== null ? (roles.get(p.seat) ?? []) : [],
       },
     ];
   });
+  return seated ? tiles.sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0)) : tiles;
 }
 
 export interface BustedChip {

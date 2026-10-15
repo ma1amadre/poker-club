@@ -8,6 +8,9 @@
 // Голос (useBoardVoice) объявляет события вечера клипами Silero — включается кнопкой.
 // На ТВ (от 1024 px в горизонтали) — своя шкала шрифтов от размера экрана (board.css, --bd-px):
 // всё, что читают с дивана, крупно; что не влезло — уменьшает useFitToScreen (--bd-fit).
+// Места и баттон (миграция 028): когда баттон задан, под часами и столом — строка порядка от баттона
+// по часовой «D 03 ПЕТЯ · SB 04 ЛЁНЯ 25 · BB 06 САША 50 · 07 ВАНЯ» (boardOrder) вместо «За столом».
+// Во время олл-ина её нет: панель раздачи занимает экран целиком.
 import { eveningAllIns } from '@domain/allins.ts';
 import { computeMoney, payoutsFor } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
@@ -57,6 +60,7 @@ import {
   levelLabel,
   orderedPlayers,
   ordinalPlace,
+  seatNo,
   type NameOf,
 } from '../evening/lib';
 import './board.css';
@@ -64,6 +68,8 @@ import {
   bigBlinds,
   blindsParts,
   boardClock,
+  boardOrder,
+  boardOrderText,
   entriesText,
   formatGameTime,
   lastKnockout,
@@ -341,11 +347,22 @@ function LiveBoard({
   const bottom = tableLine(state);
   const blinds = formatBlinds(state.currentLevel);
   const big = bigBlinds(state.currentLevel);
+  // Порядок от баттона (028): вместо «За столом», пока баттон задан и позиции определены.
+  const order = boardOrder(state);
+  const orderText = order ? boardOrderText(order, nameOf) : '';
 
   const screenRef = useRef<HTMLDivElement>(null);
   useFitToScreen(
     screenRef,
-    [alive.length, prizes.length, ko?.by, signal.paused, signal.lastLevel, brk?.due].join('|'),
+    [
+      alive.length,
+      prizes.length,
+      ko?.by,
+      signal.paused,
+      signal.lastLevel,
+      brk?.due,
+      order ? `${order.seats.length}:${order.unseated.length}` : '',
+    ].join('|'),
     BOARD_FIT_VAR,
   );
 
@@ -480,7 +497,7 @@ function LiveBoard({
           </div>
         )}
 
-        {alive.length > 0 && (
+        {!order && alive.length > 0 && (
           <div className="bd-block">
             <p className="m-eyebrow">За столом</p>
             <p className="m-body bd-names">
@@ -489,6 +506,32 @@ function LiveBoard({
           </div>
         )}
       </section>
+
+      {order && (
+        <section className="bd-order" aria-label={`Порядок раздачи: ${orderText}`}>
+          <p className="m-eyebrow">Порядок раздачи · по часовой от баттона</p>
+          <ol className="bd-order__row" aria-hidden="true">
+            {order.seats.map((s) => (
+              <li
+                key={s.seat}
+                className={cn('bd-order__seat', s.roles.length > 0 && 'bd-order__seat--pos')}
+              >
+                {s.roles.length > 0 && <span className="bd-order__role">{s.roles.join(' ')}</span>}
+                <span className="bd-order__no">{seatNo(s.seat)}</span>
+                <span className="bd-order__name">{nameOf(s.playerId)}</span>
+                {s.blind !== null && (
+                  <span className="bd-order__blind">{formatNumber(s.blind)}</span>
+                )}
+              </li>
+            ))}
+          </ol>
+          {order.unseated.length > 0 && (
+            <p className="m-body bd-muted">
+              Без места: {order.unseated.map(nameOf).join(NAMES_SEP)}
+            </p>
+          )}
+        </section>
+      )}
     </div>
   );
 }

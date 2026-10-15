@@ -7,6 +7,8 @@ import {
   bigBlinds,
   blindsParts,
   boardClock,
+  boardOrder,
+  boardOrderText,
   clubIdleView,
   entriesText,
   formatGameTime,
@@ -370,5 +372,83 @@ describe('clubIdleView — табло клуба между вечерами', (
     const view = clubIdleView({ next_at: null, schedule: { weekday: 9, time: 'утром' } }, NOW_MS);
     expect(view.when).toBeNull();
     expect(view.note).toBe('Вечер появится здесь сам, как только его объявят.');
+  });
+});
+
+describe('табло: порядок раздачи от баттона (миграция 028)', () => {
+  const NAMES: Record<string, string> = { a: 'Петя', b: 'Лёня', c: 'Саша', d: 'Ваня', e: 'Женя' };
+  const nameOf = (id: string) => NAMES[id] ?? id;
+
+  /** Петя 3, Лёня 5, Саша 8, Ваня 1; таймер идёт (уровень 1 — 5/10). */
+  function seated(): Journal {
+    const j = journal().join('a', 'b', 'c', 'd');
+    j.seat('a', 3);
+    j.seat('b', 5);
+    j.seat('c', 8);
+    j.seat('d', 1);
+    j.start();
+    return j;
+  }
+
+  it('баттона нет — строки нет (табло показывает «За столом»)', () => {
+    expect(boardOrder(at(seated()).state)).toBeNull();
+  });
+
+  it('от баттона по часовой: позиции, номера мест, блайнды SB и BB', () => {
+    const j = seated();
+    j.button(5);
+    const order = boardOrder(at(j).state);
+    expect(order?.seats).toEqual([
+      { seat: 5, playerId: 'b', roles: ['D'], blind: null },
+      { seat: 8, playerId: 'c', roles: ['SB'], blind: 5 },
+      { seat: 1, playerId: 'd', roles: ['BB'], blind: 10 },
+      { seat: 3, playerId: 'a', roles: [], blind: null },
+    ]);
+    expect(sp(boardOrderText(order!, nameOf))).toBe(
+      'D 05 Лёня · SB 08 Саша 5 · BB 01 Ваня 10 · 03 Петя',
+    );
+  });
+
+  it('раздача двигает баттон, вылетевший пропадает, без места — в конце строки', () => {
+    const j = seated();
+    j.button(5);
+    j.add('join', { playerId: 'e' });
+    j.wait(1).bust('c', ['a']);
+    j.hand();
+    const order = boardOrder(at(j).state);
+    expect(sp(boardOrderText(order!, nameOf))).toBe(
+      'D 01 Ваня · SB 03 Петя 5 · BB 05 Лёня 10 · без места: Женя',
+    );
+  });
+
+  it('баттон у выбывшего — строка с SB; хедз-ап — «D SB»', () => {
+    const j = seated();
+    j.button(5);
+    j.wait(1).bust('b', ['a']);
+    expect(sp(boardOrderText(boardOrder(at(j).state)!, nameOf))).toBe(
+      'SB 08 Саша 5 · BB 01 Ваня 10 · 03 Петя',
+    );
+    j.wait(1).bust('d', ['a']);
+    j.hand();
+    // Хедз-ап: раздача увела баттон с места 5 к Саше — он же SB.
+    expect(sp(boardOrderText(boardOrder(at(j).state)!, nameOf))).toBe(
+      'D SB 08 Саша 5 · BB 03 Петя 10',
+    );
+  });
+
+  it('на местах меньше двоих в игре — строки нет', () => {
+    const j = journal().join('a', 'b');
+    j.seat('a', 1);
+    j.button(1);
+    j.start();
+    expect(boardOrder(at(j).state)).toBeNull();
+  });
+
+  it('уровень сменился — блайнды нового уровня', () => {
+    const j = seated();
+    j.button(5);
+    j.wait(10);
+    const order = boardOrder(at(j).state);
+    expect(order?.seats.map((s) => s.blind)).toEqual([null, 10, 20, null]);
   });
 });

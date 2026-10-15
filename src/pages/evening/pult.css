@@ -139,6 +139,20 @@
   gap: var(--space-2);
 }
 
+/* Над плитками: «За столом» / «Места по часовой» и «Рассадка» (шторка мест и баттона). */
+.ev-seats__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ev-seats__head > .m-eyebrow {
+  margin: 0;
+  min-width: 0;
+}
+
 /* Три плитки в ряд на 320–359 px, четыре — на 360–430; шире — сколько влезет. */
 .ev-seats__grid {
   display: grid;
@@ -203,6 +217,39 @@
 .ev-seat--out .ev-seat__name {
   color: var(--ink-muted);
   font-weight: 400;
+}
+
+/*
+ * Номер места и позиция (миграция 028) — моно над именем: «03» приглушённо, «D» / «SB 25» / «BB 50»
+ * accent. Узкая плитка — позиция переносится под номер, а не обрезается.
+ */
+.ev-seat__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 var(--space-1);
+  width: 100%;
+  font-family: var(--m-font-mono);
+  font-size: var(--m-small-size);
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ev-seat__no {
+  color: var(--ink-muted);
+}
+
+.ev-seat__pos {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.ev-seat--out .ev-seat__pos,
+.ev-seat__pos--idle {
+  color: var(--ink-muted);
 }
 
 /* «Посадить» — свободное место: пунктир и плюс вместо имени. */
@@ -298,6 +345,17 @@
 }
 
 .ev-out__chip--rebuy .ev-out__note {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* В игре без места: «место?» accent — касание открывает выбор места. */
+.ev-out__chip--seat {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+.ev-out__chip--seat .ev-out__note {
   color: var(--accent);
   font-weight: 500;
 }

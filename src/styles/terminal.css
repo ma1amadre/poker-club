@@ -575,3 +575,31 @@
 [data-theme='terminal'] .m-notice-action {
   margin-left: auto;
 }
+
+/*
+ * Тост с действием: на 320 px рядом с «Отменить» и крестиком тексту оставалось ~70 px, и слово шире
+ * (имя, «BB Святослав 10» в тосте «Следующей раздачи») раздвигало тост за край экрана — крестик, а
+ * с длинным именем и кнопка обрезались. Тост не шире области тостов, слово шире строки переносится, а
+ * на узком экране кнопка уходит под текст (крестик остаётся справа вверху), как у Notice.
+ */
+[data-theme='terminal'] .m-toast {
+  min-width: 0;
+}
+[data-theme='terminal'] .m-toast-body {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 359px) {
+  [data-theme='terminal'] .m-toast {
+    flex-wrap: wrap;
+  }
+  [data-theme='terminal'] .m-toast-body {
+    flex: 1 1 8rem;
+  }
+  [data-theme='terminal'] .m-toast-close {
+    order: 1;
+  }
+  [data-theme='terminal'] .m-toast-action {
+    order: 2;
+    margin-left: calc(18px + var(--space-3));
+  }
+}

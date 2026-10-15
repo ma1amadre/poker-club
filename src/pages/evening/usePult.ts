@@ -5,6 +5,9 @@
 // говорит прямо, notify не вызывается.
 // «Завершить вечер» зовут и из тоста последнего вылета — тост живёт дольше рендера, поэтому вопрос
 // строится по свежему журналу (actions.freshState), а не по замыканию.
+// «Следующая раздача» (миграция 028) — запись 'hand' одним касанием: двигает баттон и считает раздачи
+// уровня; тост называет позиции новой раздачи с блайндами и даёт «Отменить». Видна ли она и закрыта ли
+// (вопрос после ривера) — handButton у видов пульта: вопрос считает useRiverBusts.
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,7 +15,7 @@ import {
   notifyEveningFinished,
   type EveningEventRecord,
 } from '../../shared/api';
-import { joinNames, paths } from '../../shared/lib';
+import { joinNames, paths, serverNow } from '../../shared/lib';
 import { useToast } from '../../shared/ui';
 import {
   lastUndoAction,
@@ -23,6 +26,7 @@ import {
   rebuyText,
   rebuyWindow,
 } from './lib';
+import { handToast, stateAfter, unseatedHint } from './seating';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 
@@ -45,6 +49,10 @@ export interface Pult {
   /** Остальные записи того же действия: ребаи и «Раздача закрыта», ушедшая следом за вылетом. */
   undoExtra: EveningEventRecord[];
   undoLast: () => void;
+  /** Кто в игре без места — подсказка у «Следующей раздачи»; null — все на местах. */
+  unseatedHint: string | null;
+  /** Записать раздачу: баттон к следующему игроку в игре, тост с позициями и «Отменить». */
+  nextHand: () => void;
 }
 
 export function usePult(model: EveningModel, actions: EveningActions): Pult {
@@ -161,6 +169,22 @@ export function usePult(model: EveningModel, actions: EveningActions): Pult {
     else void actions.voidWithConfirm(undoTarget);
   };
 
+  // Тост — позиции новой раздачи по журналу с этой раздачей (как её применит replay): «Баттон — Петя ·
+  // SB Лёня 25 · BB Саша 50». Баттона нет (только уровень по раздачам) — «Раздача записана».
+  const nextHand = () => {
+    const now = serverNow();
+    const text = handToast(
+      actions.freshState(),
+      stateAfter(format, events, [{ type: 'hand', payload: {} }], now),
+      nameOf,
+    );
+    void actions.send(
+      'hand',
+      {},
+      { success: text.title, detail: text.detail ?? undefined, undo: true },
+    );
+  };
+
   return {
     lastAlive,
     rebuysStillOpen,
@@ -170,5 +194,7 @@ export function usePult(model: EveningModel, actions: EveningActions): Pult {
     undoTarget,
     undoExtra,
     undoLast,
+    unseatedHint: unseatedHint(state, nameOf),
+    nextHand,
   };
 }

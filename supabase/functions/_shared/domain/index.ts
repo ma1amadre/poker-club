@@ -4,6 +4,7 @@ export * from './format.ts';
 export * from './replay.ts';
 export * from './amend.ts';
 export * from './showdown.ts';
+export * from './seats.ts';
 export * from './allins.ts';
 export * from './riverBusts.ts';
 export * from './money.ts';
