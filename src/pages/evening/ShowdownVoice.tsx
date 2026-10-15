@@ -4,8 +4,10 @@
 // именно эти карты. На табло карты уходят только главной кнопкой шторки — банкир их видит и
 // подтверждает. Кнопки нет, если распознавания речи в окне нет (на Android в Telegram — скорее всего).
 // Разбор — voiceCards.ts, распознавание — useVoiceCards.ts.
+// В том же блоке — «Снять борд» (ShowdownPhoto.tsx, проп `photo`): его кнопка в ряд с «Сказать карты»,
+// его итог — на месте итога фразы; без распознавания речи блок остаётся ради фото.
 import type { CardCode, PlayerId } from '@domain/types.ts';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { cardName, rankLabel, suitOfCode } from '../../shared/lib/poker';
 import { haptic } from '../../shared/telegram';
 import { Badge, Button, SuitPip } from '../../shared/ui';
@@ -60,10 +62,15 @@ export interface ShowdownVoiceProps {
    * время отправки и остаться неотправленным. Должна быть стабильной (сеттер состояния).
    */
   onListening: (listening: boolean) => void;
+  /**
+   * «Снять борд»: кнопка — в ряд с «Сказать карты», итог (panel) — вместо итога фразы, hint — под
+   * блоком, пока итога нет; busy — идёт распознавание (блок не прячется).
+   */
+  photo?: { button: ReactNode; panel: ReactNode | null; hint: string | null; busy: boolean };
 }
 
 export function ShowdownVoice(props: ShowdownVoiceProps) {
-  const { draft, active, nameOf, disabled, result, onResult, onListening } = props;
+  const { draft, active, nameOf, disabled, result, onResult, onListening, photo } = props;
   const capture = useVoiceCapture();
   // Распознавание отвечает позже: кладём карты в черновик, каким он стал к этому моменту
   // (банкир мог коснуться карты, пока говорил).
@@ -77,10 +84,25 @@ export function ShowdownVoice(props: ShowdownVoiceProps) {
     return () => onListening(false);
   }, [capture.listening, onListening]);
 
-  if (!capture.supported) return null;
   const queue = voiceQueue(draft, active, nameOf);
+  const photoShown = Boolean(photo?.panel);
   // Свободных мест нет и показывать нечего — блок не нужен (после ривера, до правки).
-  if (!queue && !result && !capture.listening) return null;
+  if (!queue && !result && !capture.listening && !photoShown && !photo?.busy) return null;
+  if (!capture.supported) {
+    // Распознавания речи нет (Android в Telegram — скорее всего) — блок только ради фото.
+    if (!photo) return null;
+    return (
+      <section className="ev-voice" aria-label="Ввод карт с фото">
+        <div className="ev-voice__bar">{photo.button}</div>
+        {photo.panel && (
+          <div className="ev-voice__out" aria-live="polite">
+            {photo.panel}
+          </div>
+        )}
+        {photo.hint && !photoShown && <p className="m-small ev-voice__hint">{photo.hint}</p>}
+      </section>
+    );
+  }
 
   const onEnd = (end: VoiceEnd) => {
     const now = latest.current;
@@ -150,6 +172,7 @@ export function ShowdownVoice(props: ShowdownVoiceProps) {
         >
           {capture.listening ? 'Остановить' : 'Сказать карты'}
         </Button>
+        {photo?.button}
       </div>
 
       <div className="ev-voice__out" aria-live="polite">
@@ -171,12 +194,14 @@ export function ShowdownVoice(props: ShowdownVoiceProps) {
               </p>
             )}
           </>
+        ) : photoShown ? (
+          photo?.panel
         ) : result ? (
           <VoiceResultView result={result} nameOf={nameOf} />
         ) : null}
       </div>
 
-      {placedCards.length > 0 && !capture.listening && (
+      {placedCards.length > 0 && !capture.listening && !photoShown && (
         <Button
           variant="ghost"
           icon="rotate-ccw"
@@ -189,17 +214,20 @@ export function ShowdownVoice(props: ShowdownVoiceProps) {
         </Button>
       )}
 
-      {!capture.listening && !result && (
+      {!capture.listening && !result && !photoShown && (
         <p className="m-small ev-voice__hint">Скажи, например: «{VOICE_EXAMPLE}».</p>
       )}
-      {queue && (
+      {queue && !photoShown && (
         <p className="m-small ev-voice__hint">
           {result?.kind === 'placed' && result.placed.length > 0 ? 'Дальше' : 'Куда лягут'}:{' '}
           <span className="ev-voice__queue">{queue}</span>
         </p>
       )}
-      {!capture.ready && !capture.listening && (
+      {!capture.ready && !capture.listening && !photoShown && (
         <p className="m-small ev-voice__hint">{VOICE_PERMISSION_TEXT}</p>
+      )}
+      {photo?.hint && !photoShown && !capture.listening && (
+        <p className="m-small ev-voice__hint">{photo.hint}</p>
       )}
     </section>
   );
@@ -281,7 +309,7 @@ function VoiceResultView({
 }
 
 /** Карты строкой: моно-ранг и значок масти в две краски (как значки мастей вне карты). */
-function CardList({ cards }: { cards: readonly CardCode[] }) {
+export function CardList({ cards }: { cards: readonly CardCode[] }) {
   return (
     <span className="ev-voice__cards">
       {cards.map((code) => {

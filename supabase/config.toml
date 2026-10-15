@@ -396,6 +396,10 @@ verify_jwt = true
 [functions.bot-setup]
 verify_jwt = true
 
+# «Снять борд»: фото стола → карты (Claude). Только с JWT игрока; банкир/админ — проверка в функции.
+[functions.card-vision]
+verify_jwt = true
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

@@ -7,7 +7,13 @@ export * from './clubTime';
 export * from './voting';
 export { useNow } from './useNow';
 export { useElementWidth } from './useElementWidth';
-export { compressImage, MAX_UPLOAD_BYTES, type CompressOptions } from './image';
+export {
+  blobToBase64,
+  bytesToBase64,
+  compressImage,
+  MAX_UPLOAD_BYTES,
+  type CompressOptions,
+} from './image';
 export {
   boardUrl,
   CLUB_BOARD_CODE_RE,

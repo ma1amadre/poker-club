@@ -293,6 +293,12 @@
   gap: var(--space-2);
 }
 
+/* «Сказать карты» и «Снять борд»: в ряд, пока помещаются (от ~400 px), иначе — столбиком во всю ширину,
+   а не лесенкой разной длины. */
+.ev-voice__bar > .m-btn {
+  flex: 1 1 auto;
+}
+
 .ev-voice__undo {
   justify-self: start;
 }
@@ -407,4 +413,74 @@
   .ev-voice__cursor {
     animation: none;
   }
+}
+
+/*
+ * «Снять борд» (ShowdownPhoto.tsx, DESIGN.md «Терминал»): кнопка с камерой — в ряд с «Сказать карты»
+ * (тот же secondary; на 320 px ряд переносится). Итог — в том же блоке: метка [ РАСПОЗНАНО ] и время
+ * моно ink-muted, [ ЛЕГЛО ] с картами стола, руки с фото — строками списка (черта 1px line сверху и под
+ * каждой): карты, «→» и чья (имя Inter прописными accent или «кому?» caution), под ними ряд кнопок
+ * игроков раздачи — выбранный primary, остальные secondary, переносятся.
+ */
+.ev-photo__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ev-photo__time {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-muted);
+}
+
+.ev-photo__hands {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.ev-photo__hand {
+  display: grid;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.ev-photo__pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.ev-photo__to {
+  font-family: var(--m-font-mono);
+  color: var(--ink-muted);
+}
+
+.ev-photo__owner {
+  color: var(--accent);
+}
+
+.ev-photo__ask {
+  font-size: var(--m-small-size);
+  color: var(--caution);
+}
+
+.ev-photo__who {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* Имя из Telegram бывает длинным: подпись переносится, кнопка не раздвигает шторку. */
+.ev-photo__player {
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

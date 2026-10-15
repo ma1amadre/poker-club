@@ -8,6 +8,7 @@ export { clubFeedInput, momentsNowMs } from './historyFeed';
 export * from './rpc';
 export * from './admin';
 export * from './photos';
+export * from './boardPhoto';
 export * from './board';
 export { pingServer, syncServerClock, useServerClockSync } from './serverClock';
 export { useRealtimeStatus, type RealtimeStatus } from './realtime';

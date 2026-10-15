@@ -12,10 +12,12 @@
 // В игре ровно двое (хедз-ап вечера) — новый олл-ин начинается с обоими отмеченными.
 // Карты можно и сказать голосом («Сказать карты», ShowdownVoice.tsx): они ложатся в те же места по
 // очереди, на табло уходят той же главной кнопкой; пока телефон слушает, кнопки внизу недоступны.
+// Или снять стол камерой («Снять борд», ShowdownPhoto.tsx, useBoardPhoto.ts): стол ложится сам, руки
+// банкир раздаёт касанием имени; пока идёт распознавание, кнопки внизу тоже недоступны.
 import { riverBustSuggestion } from '@domain/riverBusts.ts';
 import { CARD_RANKS, CARD_SUITS, streetOf, visibleShowdown } from '@domain/showdown.ts';
 import type { PlayerId } from '@domain/types.ts';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { newClientId } from '../../shared/api';
 import { cardLabel, cardName, rankLabel, type SuitCode } from '../../shared/lib/poker';
 import { STREET_LABEL } from '../../shared/lib/poker/display';
@@ -46,6 +48,9 @@ import './showdown-sheet.css';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 import { ShowdownVoice, type VoiceResult } from './ShowdownVoice';
+import { BoardPhotoButton, BoardPhotoPanel } from './ShowdownPhoto';
+import { PHOTO_PRIVACY_TEXT, assignHand, syncBoardPhoto, undoBoardPhoto } from './boardPhoto';
+import { useBoardPhoto } from './useBoardPhoto';
 
 export interface ShowdownSheetProps {
   open: boolean;
@@ -102,6 +107,24 @@ function ShowdownSheetInner({
   // Телефон слушает фразу: её итог ляжет в черновик позже — пока не отправляем (иначе он лёг бы во
   // время отправки и остался неотправленным, а подсветка встала бы по отправленному черновику).
   const [listening, setListening] = useState(false);
+  // «Снять борд»: распознавание фото и его итог (руки с фото назначаются касанием имени).
+  const photo = useBoardPhoto({
+    eveningId: model.evening.id,
+    latest: () => ({ draft, nameOf }),
+    onDraft: (next) => {
+      setDraft(next);
+      setActive(nextEmptySlot(next, null));
+    },
+  });
+  const setPhoto = photo.set;
+  // Телефон начал слушать — итог фото уступает место фразе (иначе он закрыл бы её итог).
+  const onListening = useCallback(
+    (on: boolean) => {
+      setListening(on);
+      if (on) setPhoto(null);
+    },
+    [setPhoto],
+  );
 
   // Раздача этого черновика (после первой отправки — она же), пока она в состоянии вечера: на табло
   // или уже спрятанная им. Шторка, открытая на раздаче, её не теряет — ни когда табло вернулось к
@@ -115,8 +138,8 @@ function ShowdownSheetInner({
   const used = usedCards(draft);
   const current = active ? cardIn(draft, active) : null;
   const busy = sending || actions.busy;
-  // Кнопки внизу шторки: ещё и пока телефон слушает.
-  const footerBusy = busy || listening;
+  // Кнопки внизу шторки: ещё и пока телефон слушает или идёт распознавание фото.
+  const footerBusy = busy || listening || photo.busy;
   // После ривера: кто проиграл раздачу и ещё в игре — предложение записать вылет (здесь — и после
   // «Не записывать» на пульте: шторка открыта нарочно).
   const suggestion =
@@ -141,6 +164,33 @@ function ShowdownSheetInner({
     // убранного больше нет.
     setActive(nextEmptySlot(next, null));
     setVoice(null);
+    // Итог фото остаётся: руку убранного игрока можно отдать новому.
+    if (photo.state?.kind === 'done')
+      setPhoto({ kind: 'done', result: syncBoardPhoto(next, photo.state.result) });
+  };
+
+  const takePhoto = (file: File) => {
+    setVoice(null);
+    photo.start(file);
+  };
+
+  const assignPhotoHand = (index: number, playerId: PlayerId) => {
+    if (photo.state?.kind !== 'done') return;
+    const next = assignHand(draft, photo.state.result, index, playerId);
+    if (!next) return;
+    haptic.selection();
+    setDraft(next.draft);
+    setActive(nextEmptySlot(next.draft, null));
+    setPhoto({ kind: 'done', result: next.result });
+  };
+
+  const undoPhoto = () => {
+    if (photo.state?.kind !== 'done') return;
+    const next = undoBoardPhoto(draft, photo.state.result);
+    haptic.selection();
+    setDraft(next);
+    setActive(nextEmptySlot(next, null));
+    setPhoto(null);
   };
 
   const pick = (code: string) => {
@@ -169,6 +219,7 @@ function ShowdownSheetInner({
       setActive(nextEmptySlot(draft, null));
       // Карты на табло — снимать их голосовым «Отменить» поздно (отмена — в тосте).
       setVoice(null);
+      setPhoto(null);
     }
   };
 
@@ -214,21 +265,23 @@ function ShowdownSheetInner({
 
   const hint = listening
     ? 'Телефон слушает — дождись конца фразы или нажми «Остановить».'
-    : !check.ok
-      ? draft.players.length === 0 && editPlayers
-        ? 'Отметь, кто вскрылся, — потом их карты.'
-        : check.reason
-      : domainProblem
-        ? domainProblem
-        : riverDone && suggestion
-          ? suggestion.victims.length === 1
-            ? `Не хватило фишек — отметь игрока: запись закроет раздачу. Хватило — «${RIVER_ANSWER.stay}».`
-            : `Отметь, кому не хватило фишек: запись закроет раздачу. Хватило всем — «${RIVER_ANSWER.stayAll}».`
-          : riverDone
-            ? published === visible
-              ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
-              : 'Закрой раздачу — она больше не нужна. Поправить карту: нажми на неё выше.'
-            : null;
+    : photo.busy
+      ? 'Распознаю фото — дождись ответа или нажми «Отменить».'
+      : !check.ok
+        ? draft.players.length === 0 && editPlayers
+          ? 'Отметь, кто вскрылся, — потом их карты.'
+          : check.reason
+        : domainProblem
+          ? domainProblem
+          : riverDone && suggestion
+            ? suggestion.victims.length === 1
+              ? `Не хватило фишек — отметь игрока: запись закроет раздачу. Хватило — «${RIVER_ANSWER.stay}».`
+              : `Отметь, кому не хватило фишек: запись закроет раздачу. Хватило всем — «${RIVER_ANSWER.stayAll}».`
+            : riverDone
+              ? published === visible
+                ? 'Закрой раздачу — табло вернётся к таймеру (само — через 2 минуты после ривера). Поправить карту: нажми на неё выше.'
+                : 'Закрой раздачу — она больше не нужна. Поправить карту: нажми на неё выше.'
+              : null;
 
   const description = published
     ? published === visible
@@ -398,14 +451,35 @@ function ShowdownSheetInner({
             draft={draft}
             active={active}
             nameOf={nameOf}
-            disabled={busy}
+            disabled={busy || photo.busy}
             result={voice}
             onResult={setVoice}
             onDraft={(next, slot) => {
               setDraft(next);
               setActive(slot);
             }}
-            onListening={setListening}
+            onListening={onListening}
+            photo={{
+              button: (
+                <BoardPhotoButton
+                  disabled={busy || listening || photo.busy || !nextEmptySlot(draft, null)}
+                  onFile={takePhoto}
+                />
+              ),
+              panel: photo.state ? (
+                <BoardPhotoPanel
+                  state={photo.state}
+                  draft={draft}
+                  nameOf={nameOf}
+                  disabled={busy || listening}
+                  onCancel={photo.cancel}
+                  onAssign={assignPhotoHand}
+                  onUndo={undoPhoto}
+                />
+              ) : null,
+              hint: photo.used ? null : PHOTO_PRIVACY_TEXT,
+              busy: photo.busy,
+            }}
           />
         )}
 

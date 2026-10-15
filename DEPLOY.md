@@ -54,6 +54,7 @@ Settings → Secrets and variables → Actions → **Secrets → New repository 
 | `SUPABASE_ACCESS_TOKEN` | https://supabase.com/dashboard/account/tokens — **scoped-токен**, см. ниже | CLI (`link`, `functions deploy`, `secrets set`) и Management API (`project_url` в Vault, проверка после деплоя) |
 | `SUPABASE_DB_PASSWORD` | пароль базы, заданный при создании проекта; забыт — Project Settings → Database → Reset database password | `supabase link` и `db push` |
 | `TELEGRAM_BOT_TOKEN` | @BotFather → `/mybots` → бот → API Token | секрет функций: вход (подпись initData), посты, `bot-setup` |
+| `ANTHROPIC_API_KEY` | консоль Anthropic (platform.claude.com) → API Keys → новый ключ (начинается с `sk-ant-`; названия пунктов меню не сверял) | секрет функции `card-vision`: «Снять борд» — распознавание карт на фото стола (Claude Sonnet 5.5) |
 
 **Токен Supabase — только scoped.** Classic-токен (в дашборде помечен **Legacy**; его же создаёт
 `supabase login` в браузере) получает все права на все организации и проекты аккаунта, в том числе
@@ -86,6 +87,24 @@ Settings → Secrets and variables → Actions → **Secrets → New repository 
 |---|---|
 | `SUPABASE_DB_URL` | Supabase → проект → кнопка **Connect** → **Session pooler** → строка подключения, `[YOUR-PASSWORD]` заменить паролем БД (спецсимволы в пароле — percent-encoding, подробнее в README ops) |
 
+**Ключ Anthropic (`ANTHROPIC_API_KEY`)** — для кнопки «Снять борд» в шторке олл-ина. Без него всё остальное
+работает, а «Снять борд» отвечает «Распознавание не настроено — нужен ключ ANTHROPIC_API_KEY в секретах.». Шаги:
+
+1. Ключ — в консоли Anthropic (platform.claude.com) в организации, где оплачен API, раздел API Keys (названия
+   пунктов меню не сверял). Лучше отдельный ключ только для клуба: его можно отозвать, не трогая остальные.
+   Цена по тесту 15.10.2026 — около 0,5 цента за снимок (Sonnet 5.5, $2 / $10 за 1 млн токенов); вечер с десятком
+   олл-инов — несколько центов. Лимит расходов — по желанию, в той же консоли (есть ли он на отдельный ключ — не
+   проверял).
+2. `ma1amadre/poker-club` → Settings → Secrets and variables → Actions → **New repository secret**:
+   `ANTHROPIC_API_KEY` = ключ. Никуда больше его не записывать.
+3. Actions → deploy → **Run workflow** (или ближайший push в `main`): шаг «Секреты функций» положит ключ в секреты
+   функций облака. Нет секрета в GitHub — шаг его пропускает (notice «Нет ключа Anthropic»), уже заданный в облаке
+   ключ при этом остаётся.
+4. Проверка — в идущем вечере банкиром: «Отметить олл-ин» → «Снять борд» → карты легли в шторку. Логи —
+   Edge Functions → `card-vision` → Logs: строка «card-vision: рук N, на столе N, …» (фото в логи не пишется).
+
+Фото стола уходит в Anthropic по API и у клуба не хранится нигде (ни в Storage, ни в базе, ни в логах).
+
 Session pooler — потому что раннеры GitHub ходят только по IPv4, а прямой адрес базы на Free — только IPv6.
 `supabase link` в деплое по умолчанию тоже идёт через пулер.
 
@@ -114,10 +133,11 @@ Workflow `deploy` (все actions закреплены SHA коммита; об�
    - `supabase link --project-ref $SUPABASE_PROJECT_REF` (пароль из env, без вопросов);
    - `supabase db push --linked --skip-vault --yes` — миграции 001–011, **без seed**; миграция,
      вставленная перед уже применёнными, — ошибка (флага `--include-all` нет намеренно);
-   - `supabase functions deploy` — все функции (`tg-auth`, `notify`, `cron-tick`, `bot-setup`; `_shared`
-     не функция), `verify_jwt` — из `supabase/config.toml`;
-   - `supabase secrets set` — `ADMIN_TG_ID`, `APP_URL` и `TELEGRAM_BOT_TOKEN` (если задан; через файл
-     с правами 600, не аргументом). `TELEGRAM_DRY_RUN` в облаке не задаётся;
+   - `supabase functions deploy` — все функции (`tg-auth`, `notify`, `cron-tick`, `bot-setup`, `card-vision`;
+     `_shared` не функция), `verify_jwt` — из `supabase/config.toml`;
+   - `supabase secrets set` — `ADMIN_TG_ID`, `APP_URL`, `TELEGRAM_BOT_TOKEN` и `ANTHROPIC_API_KEY` (каждый токен —
+     если задан; через файл с правами 600, не аргументом). `TELEGRAM_DRY_RUN` и `CARD_VISION_MOCK` в облаке не
+     задаются;
    - `project_url` в Vault — `POST https://api.supabase.com/v1/projects/{ref}/database/query`
      (создать или обновить, идемпотентно). С этого момента pg_cron раз в 15 минут дёргает `cron-tick`;
    - проверка после деплоя, три ступени: `cron-tick` с неверным `x-cron-secret` → 401; SQL через
@@ -382,6 +402,9 @@ where status in ('finished', 'settled')
   восстановление из резервной копии (`poker-club-ops`, README → «Восстановление»).
 - **Утёк токен бота:** @BotFather → `/mybots` → бот → API Token → Revoke current token; новый — в секрет
   `TELEGRAM_BOT_TOKEN`; Run workflow `deploy`.
+- **Утёк ключ Anthropic:** консоль Anthropic → API Keys → отключить или удалить ключ клуба; новый — в
+  секрет `ANTHROPIC_API_KEY` (шаг 2) и Run workflow `deploy`. До деплоя «Снять борд» отвечает «ключ не принят»,
+  остальное работает.
 - **Сменить секрет cron:** в SQL Editor
   `select vault.update_secret(id, encode(extensions.gen_random_bytes(32), 'hex')) from vault.secrets where name = 'cron_secret';`
   — pg_cron и `cron-tick` читают его из Vault, больше ничего менять не нужно.

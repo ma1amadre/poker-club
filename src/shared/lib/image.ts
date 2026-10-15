@@ -63,20 +63,51 @@ function toJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   });
 }
 
+/** Масштаб, при котором длинная сторона не больше maxSide (увеличивать не будем — не больше 1). */
+export function fitScale(width: number, height: number, maxSide: number): number {
+  return Math.min(1, maxSide / Math.max(width, height, 1));
+}
+
+/** Размер холста при масштабе: целые пиксели, не меньше 1. */
+export function scaledSize(
+  width: number,
+  height: number,
+  scale: number,
+): { width: number; height: number } {
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+/**
+ * Следующая попытка, если JPEG вышел больше предела: сначала качество вниз шагами по 0.1 (до 0.55),
+ * потом размер — на 20 % за шаг.
+ */
+export function nextCompressStep(step: { scale: number; quality: number }): {
+  scale: number;
+  quality: number;
+} {
+  return step.quality > 0.55
+    ? { scale: step.scale, quality: Math.round((step.quality - 0.1) * 100) / 100 }
+    : { scale: step.scale * 0.8, quality: step.quality };
+}
+
 /**
  * Масштабирует так, чтобы длинная сторона ≤ maxSide (по умолчанию 1600), и кодирует в JPEG
  * (качество 0.8). Если результат всё ещё больше maxBytes (2 МБ) — снижает качество, затем размер.
+ * Поворот по EXIF учитывается при чтении (decode), поэтому JPEG на выходе уже «стоит» как на экране.
  */
 export async function compressImage(file: Blob, options: CompressOptions = {}): Promise<Blob> {
   const { maxSide = 1600, quality = 0.8, maxBytes = MAX_UPLOAD_BYTES } = options;
   const image = await decode(file);
   const canvas = document.createElement('canvas');
   try {
-    let scale = Math.min(1, maxSide / Math.max(image.width, image.height));
-    let q = quality;
+    let step = { scale: fitScale(image.width, image.height, maxSide), quality };
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const size = scaledSize(image.width, image.height, step.scale);
+      canvas.width = size.width;
+      canvas.height = size.height;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('Браузер не дал canvas для сжатия фото');
       // Белая подложка: прозрачные PNG в JPEG иначе становятся чёрными.
@@ -84,10 +115,9 @@ export async function compressImage(file: Blob, options: CompressOptions = {}): 
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(image.source, 0, 0, canvas.width, canvas.height);
-      const blob = await toJpeg(canvas, q);
+      const blob = await toJpeg(canvas, step.quality);
       if (blob.size <= maxBytes) return blob;
-      if (q > 0.55) q = Math.round((q - 0.1) * 100) / 100;
-      else scale *= 0.8;
+      step = nextCompressStep(step);
     }
     throw new Error('Фото слишком большое даже после сжатия');
   } finally {
@@ -96,4 +126,22 @@ export async function compressImage(file: Blob, options: CompressOptions = {}): 
     canvas.width = 0;
     canvas.height = 0;
   }
+}
+
+/**
+ * Байты → base64 (без префикса data:). Кусками по 32 КБ: `String.fromCharCode(...bytes)` целиком на
+ * мегабайтном фото переполнил бы стек аргументов.
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/** Сжатое фото (Blob) → base64 для тела запроса. */
+export async function blobToBase64(blob: Blob): Promise<string> {
+  return bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
 }

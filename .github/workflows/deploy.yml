@@ -247,11 +247,15 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF"
 
+      # ANTHROPIC_API_KEY — ключ «Снять борд» (card-vision). Нет секрета в GitHub — шаг его пропускает:
+      # `secrets set` не трогает то, чего нет в файле, поэтому уже заданный в облаке ключ остаётся, а без
+      # ключа функция отвечает «Распознавание не настроено…» (остальное работает).
       - name: Секреты функций
         if: steps.gate.outputs.ready == 'true'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           env_file="$RUNNER_TEMP/functions.env"
           umask 077
@@ -261,9 +265,15 @@ jobs:
             if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
               printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TELEGRAM_BOT_TOKEN"
             fi
+            if [ -n "$ANTHROPIC_API_KEY" ]; then
+              printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_API_KEY"
+            fi
           } > "$env_file"
           if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
             echo "::warning title=Нет токена бота::Секрет TELEGRAM_BOT_TOKEN не задан — вход в Mini App и посты не заработают. Добавь его и запусти deploy снова."
+          fi
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::notice title=Нет ключа Anthropic::Секрет ANTHROPIC_API_KEY в GitHub не задан — шаг его пропустил. «Снять борд» работает, только если ключ уже стоит в секретах функций облака (DEPLOY.md, шаг 2)."
           fi
           supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" --env-file "$env_file"
           rm -f "$env_file"
