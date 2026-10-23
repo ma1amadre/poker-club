@@ -57,6 +57,7 @@ function published(board: string[], hands: [string, string, string][]): Showdown
     eventId: 1,
     openedAt: '2026-10-08T17:00:00.000Z',
     updatedAt: '2026-10-08T17:00:00.000Z',
+    seating: { seats: {}, buttonSeat: null },
   };
 }
 

@@ -120,12 +120,23 @@ export type ShowdownPayload = {
   board: CardCode[]; // 0, 3, 4 или 5 карт
 };
 
+/**
+ * Места и баттон раздачи — для нечётных фишек при дележе банка (sidePots.ts, TDA 21-A). Снимок в
+ * момент открытия олл-ина: «Следующая раздача» ('hand') двигает баттон, а пересадка — место, но
+ * раздача остаётся на экране и после них, и пересчёт банков должен брать места той раздачи.
+ */
+export type HandSeating = {
+  seats: Record<PlayerId, number | null>; // PlayerState.seat каждого игрока вечера
+  buttonSeat: number | null; // EveningState.buttonSeat
+};
+
 /** Открытая раздача олл-ина: последняя принятая версия и когда её открыли и правили. */
 export type ShowdownState = ShowdownPayload & {
   openedEventId: number; // первое принятое событие этой раздачи
   eventId: number; // последнее принятое — текущая версия
   openedAt: string;
   updatedAt: string; // `at` последней правки: от него табло считает, когда спрятать раздачу
+  seating: HandSeating; // места и баттон при открытии (первая версия); правки его не меняют
 };
 
 /** Наибольшая кратность входа или ребая (stacks в payload join/rebuy, записи до миграции 027). */

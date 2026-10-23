@@ -210,6 +210,35 @@ describe('replay: раздача олл-ина', () => {
     expect(s.errors).toEqual([]);
   });
 
+  it('места и баттон — снимок при открытии: «Следующая раздача», пересадка и правки его не меняют', () => {
+    const j = table();
+    j.seat('A', 2);
+    j.seat('B', 5);
+    j.seat('C', 8);
+    j.button(5);
+    const hands: [string, string, string][] = [
+      ['A', 'As', 'Kd'],
+      ['B', 'Qh', 'Qc'],
+    ];
+    j.showdown(SD1, hands, ['2c', '7d', '9h']);
+    const opened = { seats: { A: 2, B: 5, C: 8, D: null }, buttonSeat: 5 };
+    expect(replay(F, j.events, j.now()).showdown?.seating).toEqual(opened);
+    // Раздача закончилась, олл-ин ещё на экране: баттон ушёл к C, A пересел, банкир дописал ривер.
+    j.hand();
+    j.seat('A', 10);
+    j.showdown(SD1, hands, ['2c', '7d', '9h', 'Jd', 'Ah']);
+    const s = replay(F, j.events, j.now());
+    expect(s.buttonSeat).toBe(8);
+    expect(s.players.A?.seat).toBe(10);
+    expect(s.showdown?.seating).toEqual(opened);
+    // Новая раздача — новый снимок.
+    j.showdown(SD2, hands);
+    expect(replay(F, j.events, j.now()).showdown?.seating).toEqual({
+      seats: { A: 10, B: 5, C: 8, D: null },
+      buttonSeat: 8,
+    });
+  });
+
   it('отмена последней правки возвращает предыдущую версию, отмена закрытия — раздачу', () => {
     const j = table();
     const hands: [string, string, string][] = [
@@ -237,6 +266,10 @@ describe('replay: раздача олл-ина', () => {
     ]);
     const s = replay(F, j.events, j.now());
     expect(s.showdown).toMatchObject({ showdownId: SD2, openedEventId: second });
+    expect(s.showdown?.seating).toEqual({
+      seats: { A: null, B: null, C: null, D: null },
+      buttonSeat: null,
+    });
     // Старую раздачу закрыть уже нельзя — её нет на экране.
     expect(canApply(F, s, 'showdown_close', { showdownId: SD1 }, j.now())).toBe(
       'Эта раздача олл-ина уже закрыта',
@@ -465,6 +498,7 @@ describe('visibleShowdown — когда раздачу больше не пок
     eventId: 1,
     openedAt: at,
     updatedAt: at,
+    seating: { seats: {}, buttonSeat: null },
   };
   const t0 = Date.parse(at);
 

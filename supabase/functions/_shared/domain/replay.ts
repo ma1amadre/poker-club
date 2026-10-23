@@ -37,6 +37,7 @@ import {
 import { readShowdown, readShowdownId } from './showdown.ts';
 import {
   SEAT_ERROR,
+  handSeating,
   isTableSeat,
   nextButtonSeat,
   readButtonSeat,
@@ -581,6 +582,9 @@ function apply(
         openedAt: prev?.openedAt ?? ev.at,
         eventId: ev.id,
         updatedAt: ev.at,
+        // Места и баттон той раздачи: «Следующая раздача» двигает баттон, а олл-ин ещё на экране —
+        // пересчёт банков (нечётные фишки) берёт снимок первой версии, а не текущий баттон.
+        seating: prev?.seating ?? handSeating(s),
       };
       return;
     }

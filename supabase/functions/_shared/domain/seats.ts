@@ -14,7 +14,13 @@
 // - Случай (рассадка, розыгрыш баттона) — на клиенте: функции берут генератор random параметром, в
 //   журнал ложатся обычные записи 'seat' и 'button'. Домен без Math.random и Date.now.
 import type { EventDraft } from './replay.ts';
-import { TABLE_SEATS, type EveningState, type PlayerId, type PlayerState } from './types.ts';
+import {
+  TABLE_SEATS,
+  type EveningState,
+  type HandSeating,
+  type PlayerId,
+  type PlayerState,
+} from './types.ts';
 
 function asRecord(payload: unknown): Record<string, unknown> {
   return typeof payload === 'object' && payload !== null && !Array.isArray(payload)
@@ -72,6 +78,16 @@ export function tableSeats(state: EveningState): TableSeat[] {
     const holder = seatHolder(state, i + 1);
     return { seat: i + 1, playerId: holder?.playerId ?? null, alive: holder?.alive ?? false };
   });
+}
+
+/**
+ * Места игроков и баттон сейчас: снимок раздачи олл-ина (ShowdownState.seating, его делает replay при
+ * открытии) — для нечётных фишек калькулятора банков (sidePots.ts).
+ */
+export function handSeating(state: Pick<EveningState, 'players' | 'buttonSeat'>): HandSeating {
+  const seats: Record<PlayerId, number | null> = {};
+  for (const [id, p] of Object.entries(state.players)) seats[id] = p.seat;
+  return { seats, buttonSeat: state.buttonSeat };
 }
 
 /** Игрок на месте: номер места и кто. */

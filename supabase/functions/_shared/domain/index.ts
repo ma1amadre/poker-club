@@ -7,6 +7,7 @@ export * from './showdown.ts';
 export * from './seats.ts';
 export * from './allins.ts';
 export * from './riverBusts.ts';
+export * from './sidePots.ts';
 export * from './money.ts';
 export * from './scoring.ts';
 export * from './summary.ts';
