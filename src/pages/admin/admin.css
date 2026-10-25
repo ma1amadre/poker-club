@@ -267,6 +267,75 @@
   border-top: 1px solid var(--line);
 }
 
+/* ---------- Приглашения (InviteSection, миграция 029) ---------- */
+
+.adm-invites {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.adm-invites__group {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.adm-invites__head {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.adm-invites__more {
+  justify-self: start;
+}
+
+.adm-invites__loading {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.adm-invite {
+  position: relative;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/*
+ * Ссылка крупно: моно 16 (как поле на тач-экране), на утопленной подложке с рамкой line. Выделяется
+ * целиком одним касанием — запасной путь, если буфер обмена недоступен.
+ */
+.adm-invite-link {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: var(--m-font-mono);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+/* Скрытое поле для копирования через execCommand: 16 px — иначе iOS приближает страницу. */
+.adm-invite-clip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+  pointer-events: none;
+}
+
 /* ---------- Привязка к Telegram ---------- */
 
 .adm-merge-summary {

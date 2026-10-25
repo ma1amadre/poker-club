@@ -18,6 +18,7 @@ export {
   boardUrl,
   CLUB_BOARD_CODE_RE,
   clubBoardUrl,
+  inviteLink,
   miniAppLink,
   paths,
   SEASON_KEY_RE,

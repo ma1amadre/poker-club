@@ -1,4 +1,5 @@
 // Маршруты приложения (HashRouter) — строим ссылки отсюда, а не склейкой строк по страницам.
+import { inviteStartParam, isInviteParam } from '@domain/invite.ts';
 
 export const paths = {
   home: '/',
@@ -51,6 +52,14 @@ export function miniAppLink(botUsername: string, startParam?: string): string {
   return startParam ? `${base}?startapp=${encodeURIComponent(startParam)}` : base;
 }
 
+/**
+ * Ссылка-приглашение в клуб (миграция 029): t.me/<бот>?startapp=i_<код>. По ней Telegram открывает
+ * Main Mini App бота, код в start_param читает tg-auth.
+ */
+export function inviteLink(botUsername: string, code: string): string {
+  return miniAppLink(botUsername, inviteStartParam(code));
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Ключ сезона в ссылке: '2026-Q4', как seasonKey домена. */
@@ -59,10 +68,11 @@ export const SEASON_KEY_RE = /^\d{4}-Q[1-4]$/;
 /**
  * Параметр запуска → маршрут: `e_<id>` → вечер, `v_<id>` → голосование, `r` → рейтинг,
  * `s_2026-Q4` → итоги сезона (кнопка поста «Итоги сезона»). id проверяется как uuid, сезон — как ключ:
- * параметр приходит из ссылки и не должен складываться в произвольный путь.
+ * параметр приходит из ссылки и не должен складываться в произвольный путь. `i_<код>` — ссылка-
+ * приглашение: её разбирает tg-auth при входе, маршрута у неё нет — главная.
  */
 export function startParamRoute(param: string | null | undefined): string | null {
-  if (!param) return null;
+  if (!param || isInviteParam(param)) return null;
   if (param === 'r') return paths.rating;
   const season = /^s_(.+)$/.exec(param)?.[1];
   if (season !== undefined) return SEASON_KEY_RE.test(season) ? paths.season(season) : null;

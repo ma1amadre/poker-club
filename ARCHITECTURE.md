@@ -28,6 +28,8 @@ supabase/
     _shared/votingReminder.ts    # напоминание о голосовании: писать ли сейчас, кто может голосовать (чистое, vitest)
     _shared/botChats.ts          # группы бота из getUpdates для bot-setup (чистое, vitest)
     _shared/seasonPost.ts        # финал сезона в анонсе/посте дня игры и окно поста «Итоги сезона» (чистое, vitest)
+    _shared/access.ts            # право войти в tg-auth: порядок проверок, тексты отказов (чистое, vitest)
+    _shared/invites.ts           # вход по ссылке-приглашению: ответ redeem_player_invite, тексты отказов (чистое, vitest)
     tg-auth/index.ts
     notify/index.ts              # + results.ts (итоги), changes.ts (перенос/отмена/возврат вечера),
                                  #   season.ts (пост «Итоги сезона», его зовёт cron-tick)
@@ -681,13 +683,19 @@ export interface EveningState {
   по всем итогам против неё же без последнего по хронологии вечера: `{eveningId, moves: {[id]: {from, to}}}`, `from =
   null` — до вечера игрока в таблице не было; null — итогов меньше двух. `placeDelta(move)` — на сколько мест вверх
   (> 0) / вниз (< 0). Тесты: сдвиги, новичок, гости, делёж, деньги / всё время / «Оракул», сгенерированные истории.
+- `invite.ts` (ссылка-приглашение, миграция 029): `INVITE_PARAM_PREFIX` = `'i_'`, `INVITE_CODE_RE` (32 знака
+  base64url — как код `create_player_invite`), `INVITE_TTL_DAYS` = 7 (как interval миграции — сверяет
+  `_shared/invites.test.ts`), `inviteStartParam(code)` (код не по форме — ошибка), `isInviteParam`, `inviteCodeOf(param)`
+  → undefined (не приглашение) | null (`i_…` не по форме) | код. Один формат на клиент (ссылка в админке, разбор
+  `start_param`) и `tg-auth`.
 - `index.ts` — реэкспорт всего.
 
 ## База данных (public)
 
 | Таблица | Колонки |
 |---|---|
-| `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at`, `spoken_name text` (имя для озвучки на табло: 1–50 символов, русские буквы, пробел, дефис, апостроф и «+» только перед гласной, хотя бы одна буква, без пробелов по краям и двойных — constraint `players_spoken_name_shape`; null — голос берёт `display_name`, если оно кириллическое; миграция 016), `is_spectator bool` (болельщик, миграция 024: true — «слежу, не играю»: не в «Без ответа», без упоминания в посте дня игры, не кандидат прогноза и не «может прийти» у «На кону», но видит всё и делает прогнозы; на вечер с «иду»/«под вопросом» или входом за стол — игрок, `spectatesEvening` домена; false — играет; null — ещё не выбирал, считается игроком, главная задаёт вопрос «Играешь или следишь?». Свой меняет `set_my_spectator`, чужой — админ формой «Игроки». Backfill 024: сыгравшим настоящий вечер — false; seed.sql повторяет это после заливки) |
+| `players` | `id uuid pk`, `auth_user_id uuid unique → auth.users on delete set null`, `tg_id bigint unique null`, `display_name text not null`, `username text`, `photo_url text`, `is_guest bool default false`, `is_admin bool default false`, `is_active bool default true`, `created_at`, `spoken_name text` (имя для озвучки на табло: 1–50 символов, русские буквы, пробел, дефис, апостроф и «+» только перед гласной, хотя бы одна буква, без пробелов по краям и двойных — constraint `players_spoken_name_shape`; null — голос берёт `display_name`, если оно кириллическое; миграция 016), `is_spectator bool` (болельщик, миграция 024: true — «слежу, не играю»: не в «Без ответа», без упоминания в посте дня игры, не кандидат прогноза и не «может прийти» у «На кону», но видит всё и делает прогнозы; на вечер с «иду»/«под вопросом» или входом за стол — игрок, `spectatesEvening` домена; false — играет; null — ещё не выбирал, считается игроком, главная задаёт вопрос «Играешь или следишь?». Свой меняет `set_my_spectator`, чужой — админ формой «Игроки». Backfill 024: сыгравшим настоящий вечер — false; seed.sql повторяет это после заливки), `joined_by_invite bool not null default false` (вошёл по ссылке-приглашению, миграция 029: tg-auth пускает его без группы клуба, пока `is_active`; ставит только `redeem_player_invite`, вместе с `is_guest = false`; закрыть вход — «Активен» в «Игроки») |
+| `player_invites` | `id uuid pk`, `code_hash text not null unique` (SHA-256 кода, 64 hex — check `player_invites_code_hash_shape`; сам код — 24 случайных байта `extensions.gen_random_bytes` в base64url без «=», 32 знака, 192 бита — в базе не хранится, админ видит его один раз в ответе `create_player_invite`), `created_by uuid → players on delete set null`, `created_at`, `expires_at timestamptz not null` (создание + 7 дней, `INVITE_TTL_DAYS` домена — сверяет `_shared/invites.test.ts`; check `expires_at > created_at`), `used_at`, `used_by uuid → players on delete set null` (кто вошёл; только вместе с `used_at` — `player_invites_used_by_when_used`), `revoked_at` (отзыв; использованное не отзывается и отозванное не сжигается — `player_invites_used_or_revoked`) — ссылки-приглашения в клуб `https://t.me/<bot_username>?startapp=i_<код>` (раздел Edge Functions, `tg-auth`). Пишут только RPC `create/revoke/redeem_player_invite`; RLS без политик, у `anon`/`authenticated` прав нет (хеши и список — только через RPC админа), `service_role` — select/insert/update/delete. Ссылки на игроков видит `private.player_references` (слияние профилей откажет, а не потеряет запись). Миграция 029 |
 | `settings` | singleton `id int pk check (id = 1)`; `group_chat_id bigint`, `bot_username text`, `game_weekday int` (1=пн…7=вс), `game_time time`, `announce_hours_before int default 48`, `gameday_hours_before int default 5` (1–48: за сколько часов до начала пост в день игры; миграция 014), `default_location text`, `default_format_id uuid → formats`, `season_best_n int default 10`, `ko_points numeric default 0.5`, `win_bonus numeric default 1`, `updated_at`, `club_board_token text not null` (код постоянной ссылки «табло клуба» `/tv/<код>`: 12 hex — 48 случайных бит, `substr(replace(gen_random_uuid()::text, '-', ''), 1, 12)`, check `settings_club_board_token_shape`; читают все участники — его показывают «Вывести на ТВ» и админка; меняет только `rotate_club_board_token`, миграция 023) |
 | `formats` | `id uuid pk`, `name text`, `config jsonb` (TournamentFormat), `is_archived bool default false`, `created_at` |
 | `evenings` | `id uuid pk`, `scheduled_at timestamptz not null`, `location text`, `note text`, `status text` (`announced`→`live`→`finished`→`settled`, или `cancelled`), `banker_id uuid → players`, `format jsonb not null` (снимок формата на момент создания; `payoutPct` до старта меняет `set_payout`), `board_token uuid unique default gen_random_uuid()`, `started_at`, `finished_at`, `settled_at`, `voting_closes_at`, `announce_posted_at`, `gameday_posted_at` (пост в день игры ушёл или не понадобился; пишет только cron-tick; перенос на другой московский день снимает отметку — триггер `evenings_reset_gameday_post`, before update of `scheduled_at`, любой путь записи, включая upsert формы админки; перенос в пределах дня не трогает; миграция 014), `results_posted_at`, `voting_posted_at`, `voting_reminder_posted_at` (напоминание о голосовании ушло или не понадобилось; пишет только cron-tick; смена `voting_closes_at` — отмена finish, новое завершение, правка админом — снимает отметку триггером `evenings_reset_voting_reminder`, before update of `voting_closes_at`, то же значение не трогает; миграция 021), `results_revision int default 0` (сколько раз опубликованный итог устарел; > 0 — пост «Исправленные итоги», миграция 007), `settle_reopened_at timestamptz` (закрытый расчёт открылся сам из-за правки журнала; снимают `mark_settled`/`unmark_settled`, миграция 008), `announce_snapshot jsonb` (что группа знает о вечере из постов бота: `{scheduledAt: ISO UTC, location: text|null, cancelled: bool}`; пишут только функции, миграция 008), `slot_date date` (московский день, за которым вечер закреплён в расписании: ставит триггер `evenings_set_slot_date` при вставке по `scheduled_at`, перенос его не меняет; миграция 010), `cancel_reason text` (1–200 символов; причина отмены для поста в группу — пишет админ вместе с отменой, возврат снимает; заметку `note` отмена не трогает; миграция 010), `is_training bool not null default false` (тренировочный вечер, миграция 023: ставится при создании — триггер `evenings_training_guard` отказывает 22023 на смену пометки в любую сторону, кроме одной: завершённую тренировку админ засчитывает настоящим вечером RPC `promote_training_evening` (026, только тренировка → настоящий, по флагу сессии); у тренировки `voting_closes_at` всегда null — тот же триггер снимает его при finish; день клуба она не занимает — см. индекс ниже; удаляется целиком `delete_training_evening`), `game_no int not null default 1` (≥ 1 — `evenings_game_no_positive`; номер игры в московском дне, миграция 026: 1 — вечер по расписанию (cron-tick) и из формы админки (поле не передаётся), 2… — «Ещё игра сегодня» (`create_next_game`) и зачёт тренировки (`promote_training_evening`) — следующий свободный на дату; в постах бота и на экранах, где вечер отличают по дате, — «· игра 2»), `promoted_at timestamptz` (когда тренировку засчитали настоящим вечером — ставит только `promote_training_evening`, у остальных null; от него, как и от `finished_at`, cron-tick отсчитывает 3 суток допосылки итогов; миграция 026), `scoring jsonb` (снимок правил очков `{koPoints, winBonus}` из settings в момент завершения; есть ровно у `finished`/`settled` — constraint `evenings_scoring_when_closed`, форма — `evenings_scoring_shape`; ставит и снимает триггер `evenings_scoring_snapshot`, снаружи не пишется; миграция 013), `created_by`, `created_at` |
@@ -1038,6 +1046,34 @@ game_no)` `where status <> 'cancelled' and not is_training`: на московс
   нет): `{players: [{id, display_name, spoken_name, is_guest, is_active, last_played_at}], formats: [TournamentFormat]}`
   — активные игроки (с гостями), `last_played_at` — `scheduled_at` последнего вечера с их неотменённым `join`;
   форматы — `config` неархивных `formats` и снимки `evenings.format` вечеров `announced`/`live`. Миграция 016.
+- **Ссылки-приглашения в клуб** (миграция 029; решение пользователя 25.10.2026: человека не получается добавить в
+  группу — он входит по личной ссылке на Mini App бота). Правила по умолчанию: одна ссылка — один вход, 7 дней,
+  отзывает админ (только неиспользованную), создаёт только админ. Хеш кода — `private.invite_code_hash(text)`
+  (`encode(sha256(convert_to(код, 'UTF8')), 'hex')`, immutable; revoke у public/anon/authenticated).
+  - `create_player_invite() → {id, code, expiresAt}` — админ (иначе 42501 «Приглашать в клуб может только админ»):
+    код — 24 байта `extensions.gen_random_bytes` в base64 с `+/` → `-_` (32 знака, `INVITE_CODE_RE` домена), в
+    таблицу — только хеш, `created_by` — админ, `expires_at` = now() + 7 дней. Код в ответе — единственный раз, когда
+    он виден; повторно его не получить.
+  - `list_player_invites() → setof {id, status, created_at, expires_at, used_at, used_by, used_by_name, revoked_at}` —
+    админ (иначе 42501): последние 200, свежие сверху; `status` на момент запроса — `used` (есть `used_at`),
+    `revoked`, `expired` (`expires_at <= now()`), иначе `active`; `used_by_name` — `display_name` вошедшего. Ни кода,
+    ни хеша.
+  - `revoke_player_invite(p_id uuid) → {id, revokedAt}` — админ (иначе 42501); нет такого — 22023 «Такого
+    приглашения нет — обнови список»; использованное — P0001 «По этой ссылке уже вошли — отозвать её нельзя. Закрыть
+    вход можно переключателем «Активен» во вкладке «Игроки»»; повторный отзыв — тот же ответ без изменений.
+  - `redeem_player_invite(p_code text, p_tg_id bigint, p_display_name text, p_username text default null,
+    p_photo_url text default null) → {outcome, playerId?}` — **только `service_role`** (зовёт `tg-auth`), одна
+    транзакция: tg id ≤ 0 или null — 22023; код не по форме `^[A-Za-z0-9_-]{32}$` — `unknown`; профиль с этим tg id
+    отключён — `inactive` (код не тратится); дальше атомарно сжечь: `update … set used_at = now() where code_hash = …
+    and used_at is null and revoked_at is null and expires_at > now() returning` (параллельный вход тем же кодом ждёт
+    блокировку строки и разбирает отказ после неё). Не сжёгся — `unknown` (нет такого хеша), `used` (вошёл другой;
+    тот же человек параллельным входом — `ok` с его профилем), `revoked`, `expired`. Сжёгся — существующему профилю
+    `joined_by_invite = true`, `is_guest = false` (имя клуба не трогается), иначе новый игрок (имя из Telegram без
+    пробелов по краям, username, фото; `on conflict (tg_id)` — профиль только что создал параллельный вход через
+    группу, помечаем его) → `used_by` → `{outcome: 'ok', playerId}`. Разбор ответа и тексты — `_shared/invites.ts`.
+  Гранты: create/list/revoke — authenticated, service_role; redeem — только service_role (revoke у public, anon,
+  authenticated). Тест — `supabase/tests/029_player_invites.sql` (права, хеш вместо кода, срок, отзыв, повтор,
+  существующий и отключённый профиль, `player_references`).
 - Служебные функции — в схеме `private` (не выставлена в API). Коды ошибок RPC: 42501 нет прав,
   22023 неверные данные (лишний ключ в payload — тоже), P0001 недопустимо в текущем состоянии.
 
@@ -1048,6 +1084,7 @@ game_no)` `where status <> 'cancelled' and not is_training`: на московс
   `admin_alerts` — RLS включён без политик: клиенту не видна вовсе (только `service_role`, миграция 012);
   `voice_clips` — так же (016): табло читает клипы только через `board_voice_clips`.
   `board_presence` (023) — select участнику клуба, запись только через `board_ping`.
+  `player_invites` (029) — RLS без политик, прав у клиента нет: список, создание и отзыв — только RPC админа.
 - `evening_events`, `rsvps`, `predictions`, `votes` — запись только через RPC.
 - `players`, `settings`, `formats`, `evenings` — insert/update только `is_admin()`; игрок может менять
   у себя только `display_name` (через RPC `set_my_name(p_name text)`), `spoken_name` (`set_my_spoken_name`, 016) и
@@ -1069,8 +1106,8 @@ and GraphQL API automatically»); локально так же — `[api] auto_e
   `anon` — только RPC `board_state`, `server_now`,
   `board_voice_clips` (016), `cron_last_tick` (021), `club_board_state`, `club_board_voice_clips`, `board_ping` (023);
   `board_presence` (023) — `authenticated` только select, `anon` — ничего. Исключения — `admin_alerts` (012), `voice_clips` (016),
-  `cron_heartbeat` (021) и `season_posts` (025): у `anon`/`authenticated` прав нет вовсе (`revoke all`), только
-  `service_role`.
+  `cron_heartbeat` (021), `season_posts` (025) и `player_invites` (029): у `anon`/`authenticated` прав нет вовсе
+  (`revoke all`), только `service_role`.
 - `service_role` (Edge Functions через `adminClient`) — select/insert/update/delete на все таблицы и
   usage/select на sequences `public`, миграция 011; execute на RPC — поимённо в миграциях.
 - **Правило:** новая таблица (sequence) в миграции — сразу с явным `grant` для `service_role` и, если нужна
@@ -1093,7 +1130,8 @@ and GraphQL API automatically»); локально так же — `[api] auto_e
 
 Окружение: `TELEGRAM_BOT_TOKEN`, `ADMIN_TG_ID` (tg id админа клуба), `APP_URL`
 (адрес Mini App; сейчас ни одна функция его не читает), `TELEGRAM_DRY_RUN=1` (локально: не слать в Telegram,
-а логировать), `ANTHROPIC_API_KEY` (ключ «Снять борд», только `card-vision`; нет — функция отвечает 503
+а логировать), `TELEGRAM_DRY_RUN_OUTSIDERS` (только при dry-run: tg id через запятую, которых `tg-auth` считает «не в
+группе клуба», — чтобы локально проверить вход по ссылке-приглашению; без dry-run не читается), `ANTHROPIC_API_KEY` (ключ «Снять борд», только `card-vision`; нет — функция отвечает 503
 `not_configured`), `CARD_VISION_MOCK` (только локально: подмена ответа модели, см. «Снять борд»), встроенные
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (или `SUPABASE_SECRET_KEY`, если задан).
 Секрета cron в окружении нет (миграция 011, см. «Cron»). Локально — `supabase/functions/.env` (в git только
@@ -1138,16 +1176,32 @@ notify, bot-setup, card-vision). supabase-js в функциях — `npm:@supab
 
 - `tg-auth` (`verify_jwt = false`): POST `{initData}` → проверка подписи по алгоритму Telegram
   (`secret = HMAC_SHA256(key="WebAppData", msg=bot_token)`, `hash = hex(HMAC_SHA256(secret, data_check_string))`,
-  сравнение за постоянное время), `auth_date` не старше 24 ч → доступ: если `settings.group_chat_id`
-  задан — `getChatMember` (member/administrator/creator или restricted с `is_member`), иначе пускаем
-  только `ADMIN_TG_ID` → upsert `players` по `tg_id` (имя, username, фото; `ADMIN_TG_ID` → `is_admin`) →
+  сравнение за постоянное время), `auth_date` не старше 24 ч → доступ (`decideAccess` в `_shared/access.ts`, чистый,
+  vitest; по порядку):
+  1) `ADMIN_TG_ID` — всегда; 2) игрок с этим `tg_id` и `joined_by_invite` (вошёл по приглашению, миграция 029) —
+  без группы и без запроса в Telegram, пока `is_active` (иначе 403 `inactive`); 3) участник группы: если
+  `settings.group_chat_id` задан — `getChatMember` (member/administrator/creator или restricted с `is_member`; 400 —
+  не участник); код приглашения в ссылке при этом **не тратится**; 4) не участник или группа не задана — ссылка-
+  приглашение: `start_param` = `i_<код>` (`inviteCodeOf` домена; `i_…` не по форме — 403 `invite_unknown`) →
+  RPC `redeem_player_invite` (сжечь код и создать или пометить игрока одной транзакцией) → отказы 403 `invite_used`,
+  `invite_expired`, `invite_revoked`, `invite_unknown`, `inactive`; без приглашения — 403 `not_member` / `no_group`.
+  Telegram не ответил на проверку группы (ошибка не 400, сеть, таймаут) — 502 `telegram` «попробуй ещё раз» и со
+  ссылкой-приглашением: состоит ли человек в группе, неизвестно, а код, сожжённый на участнике группы, и пометка
+  `joined_by_invite` у него — навсегда; код цел, повтор входа пройдёт обычной проверкой. Код приглашения не
+  пишется ни в лог, ни в ответ (в лог — tg id и id игрока). → upsert `players` по `tg_id` (имя, username, фото;
+  `ADMIN_TG_ID` → `is_admin`) →
   auth-пользователь `tg<id>@users.poker-club.invalid` (`admin.createUser` с `email_confirm` и
   `app_metadata.tg_id`, если нет) → `admin.generateLink({type:'magiclink'})`; чужой (без метки `tg_id`)
   пользователь с этим адресом к игроку не привязывается — 409 `auth_conflict` → ответ `{tokenHash, player}`. Клиент делает
   `auth.verifyOtp({type:'email', token_hash})`. Ошибки — тело `{error: текст, code}`: 401 (подпись:
-  `bad_hash`, `expired`, …), 403 (`not_member`, `no_group`, `inactive`). Имя из Telegram берётся только
-  при создании игрока (дальше его меняют админ и `set_my_name`). При `TELEGRAM_DRY_RUN=1` и пустой
-  `group_chat_id` пускает всех — для dev-входа за игроков seed.
+  `bad_hash`, `expired`, …), 403 (`not_member`, `no_group`, `inactive`, `invite_used`, `invite_expired`,
+  `invite_revoked`, `invite_unknown`) — тексты 403 на «ты» без рода и говорят, что делать (приглашение — «Попроси у
+  админа новую ссылку.»; `_shared/access.ts`, `_shared/invites.ts`), клиент показывает их как есть под заголовком
+  экрана (`DENIED_TITLES`, `shared/auth/denied.ts`) — поэтому текст заголовок не повторяет (сверяет
+  `denied.test.ts`). Имя из Telegram берётся только при создании игрока (дальше его меняют админ и `set_my_name`).
+  При `TELEGRAM_DRY_RUN=1` и пустой
+  `group_chat_id` пускает всех (кроме `TELEGRAM_DRY_RUN_OUTSIDERS`) — для dev-входа за игроков seed; `getChatMember` в
+  dry-run отвечает `member`, а для `TELEGRAM_DRY_RUN_OUTSIDERS` — `left`.
 - `notify` (JWT обязателен): POST `{kind: 'evening_finished', eveningId}` — только банкир вечера или
   админ; сервер сам собирает текст (итог, места, деньги, новые ачивки, «Жизнь клуба», итоги прошедшего сезона,
   приглашение голосовать) из БД доменными функциями и шлёт в `settings.group_chat_id`. **«Новые ачивки»** (уровни,
@@ -1325,7 +1379,10 @@ notify, bot-setup, card-vision). supabase-js в функциях — `npm:@supab
 - Кнопки в постах группы — URL-кнопки на прямую ссылку Mini App
   `https://t.me/<bot_username>?startapp=<param>` (web_app-кнопки в группах недоступны).
   `startapp`: `e_<eveningId>` → вечер, `v_<eveningId>` → голосование, `r` → рейтинг, `s_<сезон>` (`s_2026-Q4`) →
-  итоги сезона (`startParamRoute`: ключ — только вида `SEASON_KEY_RE`).
+  итоги сезона (`startParamRoute`: ключ — только вида `SEASON_KEY_RE`), `i_<код>` — ссылка-приглашение (миграция 029,
+  `inviteLink` в `shared/lib/paths.ts`, формат — `domain/invite.ts`): её читает `tg-auth` при входе, маршрута у неё нет
+  (`startParamRoute` → null, `useStartParamRedirect` её пропускает и отметку в sessionStorage не пишет — код не
+  копируется в хранилище приложения).
 
 ## Фронт
 
@@ -1337,7 +1394,13 @@ notify, bot-setup, card-vision). supabase-js в функциях — `npm:@supab
   попытку (`forgetSignIn`), а состояние ставит только последняя (номер попытки в `AuthProvider`). **Сессия только в памяти** (`persistSession: false`, своё in-memory storage):
   домен `ma1amadre.github.io` общий с mrgn-board. В dev-режиме вне Telegram — экран выбора тестового
   игрока: initData подписывается в браузере ключом `VITE_DEV_BOT_TOKEN` (тот же фейковый токен, что
-  в `supabase/functions/.env` локально); код dev-входа существует только под `import.meta.env.DEV`.
+  в `supabase/functions/.env` локально); код dev-входа существует только под `import.meta.env.DEV`. Параметр
+  запуска dev-входу задаётся адресом `?tgWebAppStartParam=…` (так проверяется и вход по `i_<код>`).
+- Отказ входа (403 `tg-auth`) — `DeniedScreen` (`app/screens.tsx`): вид по коду — `deniedOf` в `shared/auth/denied.ts`
+  (`inactive`, `no_group`, `invite_*` → `invite` «Ссылка-приглашение не сработала», остальное — `not_member`), текст
+  под заголовком (`DENIED_TITLES` там же) — сообщение функции как есть; свой запасной текст — только если ответ без
+  кода (не от `tg-auth`). Текст говорит, что делать, и заголовок не повторяет (`denied.test.ts` сверяет тексты
+  функции и запасные).
 - Дизайн-система приложения и табло — **«Терминал»** (`DESIGN.md` — спека и источник истины для UI):
   регистр `terminal` поверх компонентов «Материи». Токены — `src/styles/terminal-theme.css`, правила
   компонентов кита — `src/styles/terminal.css` (оба сразу после `materia.css` в `main.tsx`), правила экранов —
@@ -1428,6 +1491,26 @@ notify, bot-setup, card-vision). supabase-js в функциях — `npm:@supab
   в открытый черновик формы; «Отправить проверочное сообщение» — в сохранённую группу. Подсказка «Если
   группа не находится»: бот — админ группы, поиск сразу после добавления (Telegram хранит обновление сутки),
   иначе удалить бота и добавить снова. ID группы и имя бота по-прежнему можно вписать руками.
+- Админка «Клуб» → «Приглашения» (`pages/admin/InviteSection.tsx`, подписи и группировка — `pages/admin/invites.ts`,
+  запросы — `shared/api/invites.ts`, их опции без Supabase — `shared/api/inviteQueries.ts`; миграция 029), между
+  формой и «Табло клуба»: «Пригласить игрока» (`create_player_invite`) → шторка «Ссылка-приглашение». Созданный код
+  мутация сама кладёт в кеш запросов (`queryKeys.createdPlayerInvite`, `gcTime: Infinity`), а не раздел в своё
+  состояние: Tabs монтирует только открытую вкладку, и колбэк `mutate(…, {onSuccess})` после ухода с «Клуба» или
+  «Назад» до ответа не сработал бы — код, который виден один раз, пропал бы; шторка откроется, когда раздел снова на
+  экране, «Закрыть» забывает код. Ошибки «создать» и «отозвать» — общим тостом мутаций (`app/queryClient.ts`), без
+  своего `onError` (иначе два одинаковых тоста). В шторке ссылка `inviteLink(settings.bot_username, код)` крупно
+  (моно 16, выделяется целиком касанием), «Одному человеку, действует 7 дней — до …» (`inviteTermNote`), «Ссылку
+  видно только сейчас»; «Поделиться в Telegram» — `openTelegramLink` на `https://t.me/share/url?url=<ссылка>&text=<текст>`
+  (`inviteShareUrl`, оба параметра urlencoded; core.telegram.org/api/links, «Share links»; вне Telegram — новая
+  вкладка), «Скопировать ссылку» — `copyText`, не вышло — `execCommand('copy')` через скрытое поле внутри шторки
+  (вне шторки фокус не встанет — ловушка фокуса), не вышло и так — ссылка выделяется, тост «скопируй её жестом
+  телефона». Без сохранённого `bot_username` кнопка недоступна, над ней плашка «Сначала подключи бота». Ниже — список
+  (`list_player_invites`; пока раздел на экране, перечитывается раз в минуту — `refetchInterval`, в свёрнутом Mini
+  App — нет; «истекло» между перечитываниями досчитывает клиент — `inviteStatusAt`): «Действуют» (ближе к
+  концу срока выше, «Отозвать» через подтверждение → `revoke_player_invite`), «Вошли по ссылке» (кто и когда) и
+  «Истекли и отозваны»; у двух последних видно 5 и 3 строки, остальное — «Показать все». RPC ещё нет (фронт раньше
+  миграции, `PGRST202`) — раздела нет. «Игроки»: в строке и в шторке игрока — «по приглашению», у «Активен» —
+  пояснение, что такой профиль входит без группы, пока включён.
 - Админка «Игроки»: у игрока без `tg_id` — «Привязать к Telegram» (`pages/admin/MergeSheet.tsx`): выбор профиля
   с Telegram, предпросмотр `merge_players_preview` (что перенесётся, что мешает), подтверждение с перечнем,
   результат тостом. Там же «Объединить с другим профилем» (миграция 024; есть, если в клубе есть другой профиль без

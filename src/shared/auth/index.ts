@@ -8,3 +8,4 @@ export {
   type AuthStatus,
 } from './context';
 export { AuthError, type AuthErrorKind } from './signIn';
+export { DENIED_TITLES, type DeniedKind } from './denied';

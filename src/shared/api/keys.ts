@@ -3,6 +3,13 @@ import type { EveningStatus } from './types';
 // Ключи запросов в одном месте: мутации и Realtime инвалидируют ровно то, что читают хуки.
 export const queryKeys = {
   players: ['players'] as const,
+  /** Ссылки-приглашения (миграция 029, только админ). */
+  playerInvites: ['player-invites'] as const,
+  /**
+   * Только что созданная ссылка-приглашение — её код виден один раз (inviteQueries.ts). Свой корень,
+   * а не под playerInvites: инвалидация списка её не трогает.
+   */
+  createdPlayerInvite: ['created-player-invite'] as const,
   settings: ['settings'] as const,
   formats: ['formats'] as const,
   /** Префикс всех списков вечеров — инвалидируется целиком при любой правке вечера. */

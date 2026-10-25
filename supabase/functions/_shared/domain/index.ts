@@ -28,3 +28,4 @@ export * from './story.ts';
 export * from './stakes.ts';
 export * from './spectators.ts';
 export * from './voice.ts';
+export * from './invite.ts';

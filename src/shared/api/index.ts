@@ -7,6 +7,7 @@ export { fetchClubHistory, useClubHistory, type ClubHistory } from './history';
 export { clubFeedInput, momentsNowMs } from './historyFeed';
 export * from './rpc';
 export * from './admin';
+export * from './invites';
 export * from './photos';
 export * from './boardPhoto';
 export * from './board';

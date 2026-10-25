@@ -284,6 +284,54 @@ export type Database = {
         };
         Relationships: [];
       };
+      player_invites: {
+        Row: {
+          code_hash: string;
+          created_at: string;
+          created_by: string | null;
+          expires_at: string;
+          id: string;
+          revoked_at: string | null;
+          used_at: string | null;
+          used_by: string | null;
+        };
+        Insert: {
+          code_hash: string;
+          created_at?: string;
+          created_by?: string | null;
+          expires_at: string;
+          id?: string;
+          revoked_at?: string | null;
+          used_at?: string | null;
+          used_by?: string | null;
+        };
+        Update: {
+          code_hash?: string;
+          created_at?: string;
+          created_by?: string | null;
+          expires_at?: string;
+          id?: string;
+          revoked_at?: string | null;
+          used_at?: string | null;
+          used_by?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'player_invites_created_by_fkey';
+            columns: ['created_by'];
+            isOneToOne: false;
+            referencedRelation: 'players';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'player_invites_used_by_fkey';
+            columns: ['used_by'];
+            isOneToOne: false;
+            referencedRelation: 'players';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       players: {
         Row: {
           auth_user_id: string | null;
@@ -294,6 +342,7 @@ export type Database = {
           is_admin: boolean;
           is_guest: boolean;
           is_spectator: boolean | null;
+          joined_by_invite: boolean;
           photo_url: string | null;
           spoken_name: string | null;
           tg_id: number | null;
@@ -308,6 +357,7 @@ export type Database = {
           is_admin?: boolean;
           is_guest?: boolean;
           is_spectator?: boolean | null;
+          joined_by_invite?: boolean;
           photo_url?: string | null;
           spoken_name?: string | null;
           tg_id?: number | null;
@@ -322,6 +372,7 @@ export type Database = {
           is_admin?: boolean;
           is_guest?: boolean;
           is_spectator?: boolean | null;
+          joined_by_invite?: boolean;
           photo_url?: string | null;
           spoken_name?: string | null;
           tg_id?: number | null;
@@ -417,6 +468,21 @@ export type Database = {
             referencedColumns: ['id'];
           },
         ];
+      };
+      season_posts: {
+        Row: {
+          posted_at: string;
+          season_key: string;
+        };
+        Insert: {
+          posted_at?: string;
+          season_key: string;
+        };
+        Update: {
+          posted_at?: string;
+          season_key?: string;
+        };
+        Relationships: [];
       };
       season_rules: {
         Row: {
@@ -656,6 +722,7 @@ export type Database = {
         Returns: Json;
       };
       create_next_game: { Args: { p_evening: string }; Returns: Json };
+      create_player_invite: { Args: Record<PropertyKey, never>; Returns: Json };
       cron_last_tick: { Args: Record<PropertyKey, never>; Returns: Json };
       current_player_id: { Args: Record<PropertyKey, never>; Returns: string };
       delete_training_evening: { Args: { p_evening: string }; Returns: Json };
@@ -666,6 +733,19 @@ export type Database = {
       is_admin: { Args: Record<PropertyKey, never>; Returns: boolean };
       is_banker: { Args: { evening: string }; Returns: boolean };
       is_participant: { Args: { evening: string; player: string }; Returns: boolean };
+      list_player_invites: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          created_at: string;
+          expires_at: string;
+          id: string;
+          revoked_at: string;
+          status: string;
+          used_at: string;
+          used_by: string;
+          used_by_name: string;
+        }[];
+      };
       mark_cron_tick: { Args: { p_ok: boolean }; Returns: undefined };
       mark_settled: {
         Args: { p_evening: string; p_last_event_id: number; p_voided_count: number };
@@ -676,6 +756,17 @@ export type Database = {
       merge_players: { Args: { p_guest: string; p_target: string }; Returns: Json };
       merge_players_preview: { Args: { p_guest: string; p_target: string }; Returns: Json };
       promote_training_evening: { Args: { p_evening: string }; Returns: Json };
+      redeem_player_invite: {
+        Args: {
+          p_code: string;
+          p_display_name: string;
+          p_photo_url?: string;
+          p_tg_id: number;
+          p_username?: string;
+        };
+        Returns: Json;
+      };
+      revoke_player_invite: { Args: { p_id: string }; Returns: Json };
       rotate_club_board_token: { Args: Record<PropertyKey, never>; Returns: string };
       server_now: { Args: Record<PropertyKey, never>; Returns: string };
       set_my_name: { Args: { p_name: string }; Returns: undefined };

@@ -24,6 +24,20 @@ export function isDryRun(): boolean {
   return readEnv('TELEGRAM_DRY_RUN') === '1';
 }
 
+/**
+ * Только локально, в dry-run: tg id через запятую из TELEGRAM_DRY_RUN_OUTSIDERS — «не в группе клуба».
+ * В dry-run любой иначе считается участником группы (getChatMember, вход без группы в tg-auth), и вход
+ * по ссылке-приглашению локально не проверить. Без dry-run переменная не читается вовсе.
+ */
+export function isDryRunOutsider(userId: number): boolean {
+  if (!isDryRun()) return false;
+  const list = readEnv('TELEGRAM_DRY_RUN_OUTSIDERS') ?? '';
+  return list
+    .split(',')
+    .map((s) => s.trim())
+    .includes(String(userId));
+}
+
 // ---------------------------------------------------------------------------
 // initData
 // ---------------------------------------------------------------------------
@@ -406,13 +420,15 @@ export interface ChatMember {
 
 /**
  * Статус пользователя в чате. Бот должен быть участником группы (для супергрупп — админом
- * не обязательно). В dry-run Telegram не спрашиваем и считаем пользователя участником:
- * локально подпись делается фейковым токеном, настоящей группы нет. В проде dry-run не включать.
+ * не обязательно). В dry-run Telegram не спрашиваем и считаем пользователя участником (кроме
+ * TELEGRAM_DRY_RUN_OUTSIDERS — те «вышли»): локально подпись делается фейковым токеном, настоящей
+ * группы нет. В проде dry-run не включать.
  */
 export async function getChatMember(chatId: number | string, userId: number): Promise<ChatMember> {
   if (isDryRun()) {
-    console.log(`[telegram dry-run] getChatMember ${chatId} / ${userId} → member`);
-    return { status: 'member' };
+    const status = isDryRunOutsider(userId) ? 'left' : 'member';
+    console.log(`[telegram dry-run] getChatMember ${chatId} / ${userId} → ${status}`);
+    return { status };
   }
   return callBotApi<ChatMember>('getChatMember', { chat_id: chatId, user_id: userId });
 }

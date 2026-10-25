@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import type { AuthError, AuthErrorKind } from '../shared/auth';
+import { DENIED_TITLES, type AuthError, type AuthErrorKind, type DeniedKind } from '../shared/auth';
 import { cn, paths, SIGN_IN_SLOW_MS } from '../shared/lib';
 import { closeApp, isInTelegram } from '../shared/telegram';
 import { Button, ButtonLink, Empty, Icon, Page, Spinner, type IconName } from '../shared/ui';
@@ -81,26 +81,25 @@ export function SplashScreen({ onRetry }: { onRetry?: () => void }) {
   );
 }
 
-const DENIED: Record<
-  Extract<AuthErrorKind, 'no_telegram' | 'signature' | 'not_member' | 'no_group' | 'inactive'>,
-  { icon: IconName; title: string; text?: string }
-> = {
+// Заголовок — DENIED_TITLES, текст под ним — сообщение tg-auth (что делать, shared/auth/denied.ts);
+// свой текст — только у «не из Telegram», где функции не было.
+const DENIED: Record<DeniedKind, { icon: IconName; title: string; text?: string }> = {
   no_telegram: {
     icon: 'send',
-    title: 'Открой приложение в Telegram',
-    text: 'Вход работает только через Telegram: открой приложение кнопкой в группе клуба.',
+    title: DENIED_TITLES.no_telegram,
+    text: 'Вход работает только через Telegram: открой приложение кнопкой в группе клуба или по ссылке-приглашению.',
   },
-  signature: { icon: 'shield', title: 'Telegram не подтвердил вход' },
-  not_member: { icon: 'user', title: 'Вход только для участников клуба' },
-  no_group: {
-    icon: 'bell',
-    title: 'Клуб ещё не подключил группу',
-    text: 'Пока группа не подключена, войти может только админ. Когда он подключит её, вход откроется всем участникам.',
-  },
-  inactive: { icon: 'user', title: 'Профиль отключён' },
+  signature: { icon: 'shield', title: DENIED_TITLES.signature },
+  not_member: { icon: 'user', title: DENIED_TITLES.not_member },
+  no_group: { icon: 'bell', title: DENIED_TITLES.no_group },
+  invite: { icon: 'user-x', title: DENIED_TITLES.invite },
+  inactive: { icon: 'user', title: DENIED_TITLES.inactive },
 };
 
-/** Нет доступа: не из Telegram, подпись не сошлась, не участник группы, группа не подключена, профиль отключён. */
+/**
+ * Нет доступа: не из Telegram, подпись не сошлась, не участник группы, группа не подключена,
+ * приглашение не сработало, профиль отключён.
+ */
 export function DeniedScreen({ error, onRetry }: { error: AuthError | null; onRetry: () => void }) {
   const kind = error?.kind ?? 'not_member';
   const screen = DENIED[kind as keyof typeof DENIED] ?? DENIED.not_member;

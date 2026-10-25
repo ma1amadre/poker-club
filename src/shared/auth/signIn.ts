@@ -9,6 +9,7 @@ import {
 import { SIGN_IN_TIMEOUT_MS, withTimeout } from '../lib/timeout';
 import { envProblems, supabase } from '../supabase';
 import type { Player } from '../api/types';
+import { deniedOf, SIGNATURE_TEXT } from './denied';
 
 export type AuthErrorKind =
   /** Открыто не из Telegram — initData нет. */
@@ -17,8 +18,10 @@ export type AuthErrorKind =
   | 'signature'
   /** tg-auth: 403, не участник группы клуба. */
   | 'not_member'
-  /** tg-auth: 403 no_group — клуб ещё не подключил группу, войти может только админ. */
+  /** tg-auth: 403 no_group — клуб ещё не подключил группу: войти могут админ и приглашённые. */
   | 'no_group'
+  /** tg-auth: 403 invite_* — ссылка-приглашение не сработала (использована, истекла, отозвана, не та). */
+  | 'invite'
   /** Вход прошёл, но RLS не видит игрока: он отключён админом (is_active = false). */
   | 'inactive'
   /** Не заданы VITE_SUPABASE_URL / ключ. */
@@ -34,6 +37,7 @@ export const DENIED_KINDS: ReadonlySet<AuthErrorKind> = new Set([
   'signature',
   'not_member',
   'no_group',
+  'invite',
   'inactive',
 ]);
 
@@ -86,34 +90,15 @@ async function callTgAuth(initData: string, signal: AbortSignal): Promise<string
       const response = error.context as Response | undefined;
       const status = response?.status;
       const { message: details, code } = await readFunctionError(response);
-      if (status === 401) {
-        throw new AuthError(
-          'signature',
-          'Telegram не подтвердил вход. Закрой приложение и открой его снова.',
-          details,
-        );
-      }
-      // 403 inactive — профиль отключён админом; no_group / not_member — нет доступа к группе.
-      if (status === 403 && code === 'inactive') {
-        throw new AuthError(
-          'inactive',
-          'Твой профиль в клубе отключён. Обратись к админу клуба.',
-          details,
-        );
-      }
-      if (status === 403 && code === 'no_group') {
-        throw new AuthError(
-          'no_group',
-          'Клуб ещё не подключил группу — вход пока только у админа.',
-          details,
-        );
-      }
+      // Текст — под заголовком «Telegram не подтвердил вход» (denied.ts), поэтому без него.
+      if (status === 401) throw new AuthError('signature', SIGNATURE_TEXT, details);
+      // 403 — отказ: экран показывает текст функции (что случилось и что делать); свой текст —
+      // только если ответ не от tg-auth (нет кода: шлюз, обрезанное тело). inactive — профиль
+      // отключён админом; invite_* — ссылка-приглашение не сработала; no_group / not_member — нет
+      // доступа к группе (denied.ts).
       if (status === 403) {
-        throw new AuthError(
-          'not_member',
-          'Приложение только для участников группы клуба. Попроси админа добавить тебя в группу.',
-          details,
-        );
+        const [kind, fallback] = deniedOf(code);
+        throw new AuthError(kind, code && details ? details : fallback, details);
       }
       throw new AuthError(
         'server',

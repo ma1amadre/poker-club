@@ -70,6 +70,9 @@ export function PlayersTab() {
     const parts = [
       p.id === me?.id ? 'это ты' : null,
       p.username ? `@${p.username}` : p.tg_id === null ? 'без Telegram' : null,
+      // Вошёл по ссылке-приглашению (миграция 029): входит без группы, пока активен. До миграции
+      // колонки нет — undefined, пометки нет.
+      p.joined_by_invite === true ? 'по приглашению' : null,
       // Болельщик (миграция 024): не в «Без ответа» и без упоминаний в посте дня игры.
       p.is_spectator === true && !p.is_guest ? 'болельщик' : null,
       // Табло (голос, миграция 016) не прочитает латиницу — админ видит, кому задать имя.
@@ -278,11 +281,14 @@ function PlayerSheet({
     });
   };
 
-  const telegram = player.username
-    ? `Telegram: @${player.username}`
-    : player.tg_id !== null
-      ? 'Telegram без имени пользователя'
-      : 'Без Telegram: войти по этому профилю нельзя';
+  const invited = player.joined_by_invite === true;
+  const telegram = `${
+    player.username
+      ? `Telegram: @${player.username}`
+      : player.tg_id !== null
+        ? 'Telegram без имени пользователя'
+        : 'Без Telegram: войти по этому профилю нельзя'
+  }${invited ? ' · по приглашению' : ''}`;
 
   const adminShown = pendingFlag('is_admin') ?? player.is_admin;
   const activeShown = pendingFlag('is_active') ?? player.is_active;
@@ -364,7 +370,9 @@ function PlayerSheet({
           description={
             isMe
               ? 'Себя отключить нельзя.'
-              : 'Выключенный игрок не может войти в приложение. Его вечера остаются в истории.'
+              : invited
+                ? 'Профиль из ссылки-приглашения: входит без группы клуба, пока включён. Выключенный игрок не может войти в приложение. Его вечера остаются в истории.'
+                : 'Выключенный игрок не может войти в приложение. Его вечера остаются в истории.'
           }
           checked={activeShown}
           disabled={isMe || update.isPending}

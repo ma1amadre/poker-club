@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLUB_BOARD_CODE_RE, miniAppLink, paths, startParamRoute } from './paths';
+import { CLUB_BOARD_CODE_RE, inviteLink, miniAppLink, paths, startParamRoute } from './paths';
 
 const ID = '0f0e0d0c-0000-4000-8000-000000000001';
 
@@ -24,6 +24,22 @@ describe('startParamRoute', () => {
     expect(startParamRoute('s_2026-Q5')).toBeNull();
     expect(startParamRoute('s_2026-Q4/../admin')).toBeNull();
     expect(startParamRoute('s_')).toBeNull();
+  });
+});
+
+describe('ссылка-приглашение', () => {
+  const CODE = 'AbCdEfGhIjKlMnOpQrStUvWxYz01-_9Z';
+
+  it('i_<код> маршрута не даёт — приложение остаётся на главной', () => {
+    expect(startParamRoute(`i_${CODE}`)).toBeNull();
+    expect(startParamRoute('i_')).toBeNull();
+    expect(startParamRoute('i_../../admin')).toBeNull();
+  });
+
+  it('ссылка — прямая на Main Mini App бота с startapp=i_<код>', () => {
+    expect(inviteLink('club_bot', CODE)).toBe(`https://t.me/club_bot?startapp=i_${CODE}`);
+    expect(inviteLink('@club_bot', CODE)).toBe(`https://t.me/club_bot?startapp=i_${CODE}`);
+    expect(() => inviteLink('club_bot', 'короткий')).toThrow();
   });
 });
 

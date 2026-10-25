@@ -32,6 +32,7 @@ import {
 import { useClosingConfirmation } from '../../shared/telegram';
 import { BotUsernameAction, GroupActions, GroupHelp } from './BotSetup';
 import { ClubBoardSection } from './ClubBoardSection';
+import { InviteSection } from './InviteSection';
 import { adminErrorText } from './lib';
 import { ListSkeleton } from './parts';
 import { useFocusInvalid } from './useFocusInvalid';
@@ -55,7 +56,8 @@ export interface ClubTabProps {
 
 /**
  * Вкладка «Клуб»: группа и бот, расписание, очки рейтинга — одна форма с «Сохранить настройки»;
- * под ней — «Табло клуба» (ссылка для ТВ, перевыпуск).
+ * под ней — «Приглашения» (ссылка-приглашение в клуб, миграция 029) и «Табло клуба» (ссылка для ТВ,
+ * перевыпуск).
  */
 export function ClubTab({ draft, onDraftChange }: ClubTabProps) {
   const settings = useSettings();
@@ -96,7 +98,8 @@ export function ClubTab({ draft, onDraftChange }: ClubTabProps) {
         draft={draft}
         onDraftChange={onDraftChange}
       />
-      {/* Вне формы: ссылка табло меняется своей кнопкой, а не «Сохранить настройки». */}
+      {/* Вне формы: приглашения и ссылка табло меняются своими кнопками, а не «Сохранить настройки». */}
+      <InviteSection settings={settings.data} />
       <ClubBoardSection settings={settings.data} />
       <Section
         title="Проверка устройства"
@@ -184,8 +187,8 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
       <Section title="Группа и бот">
         {settings.group_chat_id === null && (
           <Notice tone="caution" title="Группа клуба не подключена">
-            Пока ID группы пуст, войти в приложение может только админ, а посты бота никуда не
-            уходят.
+            Пока ID группы пуст, войти в приложение могут только админ и приглашённые по ссылке, а
+            посты бота никуда не уходят.
           </Notice>
         )}
         <Field
@@ -206,7 +209,7 @@ function ClubForm({ settings, formats, draft: lifted, onDraftChange }: ClubFormP
           autoComplete="off"
           spellCheck={false}
           placeholder="-1001234567890"
-          hint="Найди группу кнопкой ниже — ID подставится сам. Без группы в клуб пускают только админа."
+          hint="Найди группу кнопкой ниже — ID подставится сам. Без группы в клуб пускают только админа и приглашённых по ссылке."
           {...bind('groupChatId')}
         />
         <GroupActions settings={settings} draft={lifted} onDraftChange={onDraftChange} />

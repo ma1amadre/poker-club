@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isInviteParam } from '@domain/invite.ts';
 import { startParamRoute } from '../shared/lib';
 import { getInitDataUnsafe, getStartParam } from '../shared/telegram';
 
@@ -34,13 +35,15 @@ function alreadyHandled(param: string): boolean {
 
 /**
  * Переход по параметру прямой ссылки (`e_<id>` → вечер, `v_<id>` → голосование, `r` → рейтинг)
- * один раз при старте. Вызывать внутри AuthGate: экраны вечера требуют входа.
+ * один раз при старте. Вызывать внутри AuthGate: экраны вечера требуют входа. Ссылка-приглашение
+ * (`i_<код>`) маршрута не даёт: код уже прочитал tg-auth при входе, приложение остаётся на главной;
+ * отметку для неё не пишем — код приглашения не попадает в sessionStorage приложения.
  */
 export function useStartParamRedirect(): void {
   const navigate = useNavigate();
   useEffect(() => {
     const param = getStartParam();
-    if (!param || alreadyHandled(param)) return;
+    if (!param || isInviteParam(param) || alreadyHandled(param)) return;
     const target = startParamRoute(param);
     // push, а не replace: «Назад» с экрана вечера ведёт на главную, а не закрывает приложение.
     if (target) navigate(target);

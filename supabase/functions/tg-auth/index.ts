@@ -1,6 +1,7 @@
 // tg-auth — вход в Mini App без паролей.
-// POST {initData} → подпись Telegram → право доступа (участник группы клуба / админ) →
-// игрок по tg_id → auth-пользователь tg<id>@users.poker-club.invalid → одноразовый tokenHash.
+// POST {initData} → подпись Telegram → право доступа (админ / вошедший по приглашению / участник группы
+// клуба / ссылка-приглашение i_<код>) → игрок по tg_id → auth-пользователь tg<id>@users.poker-club.invalid
+// → одноразовый tokenHash.
 // Клиент обменивает tokenHash на сессию через auth.verifyOtp({type: 'email', token_hash}).
 // verify_jwt = false (config.toml): до входа у клиента нет JWT; доступ решает подпись initData.
 import {
@@ -13,12 +14,16 @@ import {
   readEnv,
   requireEnv,
 } from '../_shared/admin.ts';
+import { ACCESS_DENIALS, decideAccess, type Membership } from '../_shared/access.ts';
+import { INVITE_DENIALS, parseRedeemResult } from '../_shared/invites.ts';
 import {
   getChatMember,
   isChatMember,
   isDryRun,
+  isDryRunOutsider,
   telegramDisplayName,
   TelegramApiError,
+  TelegramNetworkError,
   validateInitData,
   type InitDataError,
   type TelegramUser,
@@ -46,11 +51,15 @@ interface PlayerRow {
   is_guest: boolean;
   is_admin: boolean;
   is_active: boolean;
+  /** Вошёл по ссылке-приглашению (миграция 029): дальше входит без группы, пока is_active. */
+  joined_by_invite: boolean;
   created_at: string;
 }
 
 const PLAYER_COLUMNS =
-  'id, auth_user_id, tg_id, display_name, username, photo_url, is_guest, is_admin, is_active, created_at';
+  'id, auth_user_id, tg_id, display_name, username, photo_url, is_guest, is_admin, is_active, joined_by_invite, created_at';
+
+const INACTIVE_TEXT = ACCESS_DENIALS.inactive;
 
 class HttpError extends Error {
   readonly status: number;
@@ -68,59 +77,108 @@ const db = () => adminClient();
 /** Адрес auth-пользователя. Домен .invalid зарезервирован (RFC 2606) — письма туда не уйдут. */
 const authEmail = (tgId: number): string => `tg${tgId}@users.poker-club.invalid`;
 
+async function findPlayer(tgId: number): Promise<PlayerRow | null> {
+  const { data, error } = await db()
+    .from('players')
+    .select(PLAYER_COLUMNS)
+    .eq('tg_id', tgId)
+    .maybeSingle<PlayerRow>();
+  if (error) throw new Error(`players: ${describeError(error)}`);
+  return data;
+}
+
 /**
- * Право войти. Админ клуба (ADMIN_TG_ID) входит всегда — чтобы не запереть себя, если бот
- * выпал из группы. Остальные — только участники группы; пока группа не задана, вход только у админа
- * (кроме локального dry-run).
+ * Членство в группе клуба. Группа не задана — no_group, кроме локального dry-run: там в seed группы
+ * нет, а dev-вход фронта должен пускать всех тестовых игроков (кроме TELEGRAM_DRY_RUN_OUTSIDERS).
+ * Сбой Telegram (не 400) — исключение: состоит человек в группе или нет, неизвестно.
  */
-async function checkAccess(user: TelegramUser, isAdminTg: boolean): Promise<void> {
-  if (isAdminTg) return;
+async function groupMembership(user: TelegramUser): Promise<Membership> {
   const { data, error } = await db().from('settings').select('group_chat_id').eq('id', 1).single();
   if (error) throw new Error(`settings: ${describeError(error)}`);
   const groupChatId = (data as { group_chat_id: number | string | null }).group_chat_id;
   if (groupChatId === null || groupChatId === '') {
-    // Локальный стек (TELEGRAM_DRY_RUN=1, в облаке не задаётся): в seed группы нет, а dev-вход
-    // фронта должен пускать всех тестовых игроков — в dry-run считаем участником любого.
-    if (isDryRun()) return;
-    throw new HttpError(
-      403,
-      'no_group',
-      'Клуб ещё не подключил группу — вход пока только у админа',
-    );
+    return isDryRun() && !isDryRunOutsider(user.id) ? 'member' : 'no_group';
   }
-  let member;
   try {
-    member = await getChatMember(groupChatId, user.id);
+    return isChatMember(await getChatMember(groupChatId, user.id)) ? 'member' : 'not_member';
   } catch (error) {
     // 400 «user not found» / «member list is inaccessible» — пользователя в группе нет.
-    if (error instanceof TelegramApiError && error.status === 400) {
-      throw new HttpError(403, 'not_member', 'Вход только для участников группы клуба');
-    }
+    if (error instanceof TelegramApiError && error.status === 400) return 'not_member';
     throw error;
-  }
-  if (!isChatMember(member)) {
-    throw new HttpError(403, 'not_member', 'Вход только для участников группы клуба');
   }
 }
 
 /**
- * Игрок по tg_id: найденного обновляем, нового создаём.
+ * Вход по ссылке-приглашению (миграция 029): RPC в одной транзакции сжигает код и создаёт игрока или
+ * ставит пометку существующему. code — null, если параметр i_… не по форме. Код в лог не пишем.
+ */
+async function redeemInvite(user: TelegramUser, code: string | null): Promise<void> {
+  if (code === null) {
+    const { code: errCode, message } = INVITE_DENIALS.unknown;
+    throw new HttpError(403, errCode, message);
+  }
+  const { data, error } = await db().rpc('redeem_player_invite', {
+    p_code: code,
+    p_tg_id: user.id,
+    p_display_name: telegramDisplayName(user),
+    p_username: user.username ?? null,
+    p_photo_url: user.photo_url ?? null,
+  });
+  if (error) throw new Error(`redeem_player_invite: ${describeError(error)}`);
+  const result = parseRedeemResult(data);
+  if (result.outcome === 'ok') {
+    console.log(`tg-auth: вход по приглашению, tg ${user.id}, игрок ${result.playerId}`);
+    return;
+  }
+  if (result.outcome === 'inactive') throw new HttpError(403, 'inactive', INACTIVE_TEXT);
+  const { code: errCode, message } = INVITE_DENIALS[result.outcome];
+  throw new HttpError(403, errCode, message);
+}
+
+/**
+ * Право войти — порядок проверок в _shared/access.ts (decideAccess): админ, вошедший по приглашению,
+ * участник группы (код из ссылки не тратится), иначе код i_<код> из start_param или отказ. Сбой
+ * Telegram на проверке группы — исключение (502 «попробуй ещё раз»), код при этом цел.
+ * Возвращает true, если вход прошёл по коду (игрок только что создан или помечен).
+ */
+async function checkAccess(
+  user: TelegramUser,
+  isAdminTg: boolean,
+  existing: PlayerRow | null,
+  startParam: string | null,
+): Promise<boolean> {
+  const access = await decideAccess({
+    isAdminTg,
+    player: existing,
+    startParam,
+    membership: () => groupMembership(user),
+  });
+  if (access.kind === 'allow') return false;
+  if (access.kind === 'redeem') {
+    await redeemInvite(user, access.code);
+    return true;
+  }
+  throw new HttpError(403, access.code, ACCESS_DENIALS[access.code]);
+}
+
+/**
+ * Игрок по tg_id: найденного обновляем, нового создаём. known — уже прочитанная строка (null — игрока
+ * нет); не передана — читаем заново.
  * Имя из Telegram берём только при создании: дальше display_name принадлежит клубу
  * (админ задаёт его в сиде/админке, игрок меняет через set_my_name), и вход его не затирает.
  * username — всегда из Telegram (его нет — значит, нет); фото — только если Telegram его прислал:
  * photo_url приходит не при каждом способе запуска Mini App, и его отсутствие не значит «фото нет».
  */
-async function upsertPlayer(user: TelegramUser, isAdminTg: boolean): Promise<PlayerRow> {
-  const { data: found, error } = await db()
-    .from('players')
-    .select(PLAYER_COLUMNS)
-    .eq('tg_id', user.id)
-    .maybeSingle<PlayerRow>();
-  if (error) throw new Error(`players: ${describeError(error)}`);
+async function upsertPlayer(
+  user: TelegramUser,
+  isAdminTg: boolean,
+  known?: PlayerRow | null,
+): Promise<PlayerRow> {
+  const found = known === undefined ? await findPlayer(user.id) : known;
 
   if (found) {
     if (!found.is_active) {
-      throw new HttpError(403, 'inactive', 'Твой профиль в клубе отключён. Обратись к админу');
+      throw new HttpError(403, 'inactive', INACTIVE_TEXT);
     }
     const patch: Partial<PlayerRow> = { username: user.username ?? null };
     if (user.photo_url) patch.photo_url = user.photo_url;
@@ -247,8 +305,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (isDryRun())
       console.log(`tg-auth dry-run: вход tg ${user.id}${isAdminTg ? ' (админ)' : ''}`);
 
-    await checkAccess(user, isAdminTg);
-    const player = await upsertPlayer(user, isAdminTg);
+    const existing = await findPlayer(user.id);
+    const redeemed = await checkAccess(user, isAdminTg, existing, check.data.startParam);
+    // Вход по коду только что создал или пометил игрока — строку читаем заново.
+    const player = await upsertPlayer(user, isAdminTg, redeemed ? undefined : existing);
     const result = await issueLoginToken(player, user.id);
 
     return json({
@@ -267,7 +327,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     });
   } catch (error) {
     if (error instanceof HttpError) return errorResponse(error.status, error.code, error.message);
-    if (error instanceof TelegramApiError) {
+    // Проверка группы не прошла: Telegram ответил ошибкой (не 400) или не ответил вовсе (сеть,
+    // таймаут). Сообщения обоих классов — без токена бота.
+    if (error instanceof TelegramApiError || error instanceof TelegramNetworkError) {
       console.error(`tg-auth: ${error.message}`);
       return errorResponse(
         502,
