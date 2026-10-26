@@ -21,6 +21,10 @@
 // (пока висит вопрос после ривера — закрыта: вылет записывается до раздачи). У всех на часах —
 // строка позиций «Баттон — Петя · SB — Лёня · BB — Саша», своя — «Ты на BB».
 // В ленте записи мест и баттона — только у того, кто ведёт пульт.
+// Бомб-пот (миграция 030): «Бомб-пот» на пульте в обоих видах — шторка BombPotSheet (на какую раздачу,
+// вилка, «Бросить кубик»); пока бомб-пот открыт, у всех на часах — полоса бомб-пота (число — не раньше
+// at + 9 с: первым его показывает табло; без табло — розыгрыш на телефоне), на пульте вместо
+// «Следующей раздачи» — «Кто забрал бомб-пот?». Позиции на часах — без блайндов: взнос их заменяет.
 import { amendField } from '@domain/amend.ts';
 import { computeMoney, paymentsFromEvents } from '@domain/money.ts';
 import { tablePositions } from '@domain/seats.ts';
@@ -59,6 +63,9 @@ import {
   useToast,
 } from '../../shared/ui';
 import { AmendSheet } from './AmendSheet';
+import { BombPotBar, BombWinners } from './BombPot';
+import { BombPotSheet } from './BombPotSheet';
+import { bombPositionsText, feedWithBombReveal } from './bombPotView';
 import { ClockSheet } from './ClockSheet';
 import {
   averageStackBb,
@@ -81,11 +88,12 @@ import './pult.css';
 import { PlayerSheet } from './PlayerSheet';
 import type { PultView } from './pultView';
 import { RiverActions } from './RiverActions';
-import { handButton, myPositionText, positionsText } from './seating';
+import { handButton, HAND_RIVER_HOLD, myPositionText, positionsText } from './seating';
 import { SeatingSheet } from './SeatingSheet';
 import { SeatSheet } from './SeatSheet';
 import { ShowdownSheet } from './ShowdownSheet';
 import { TableView } from './TableView';
+import { useBombPot, type BombPotScreen } from './useBombPot';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 import { usePult, type Pult } from './usePult';
@@ -132,6 +140,7 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
   const [pauseOpen, setPauseOpen] = useState(false);
   const [clockOpen, setClockOpen] = useState(false);
   const [amending, setAmending] = useState<EveningEventRecord | null>(null);
+  const [bombSheet, setBombSheet] = useState(false);
   const showdown = visibleShowdown(state.showdown, model.nowMs);
   // Пульт: экран не гаснет, закрытие Mini App — с вопросом (как в админке с несохранёнными правками).
   const wake = useWakeLock(canControl);
@@ -139,6 +148,8 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
   const wakeHint = canControl ? wakeLockHint(wake) : null;
   const pult = usePult(model, actions);
   const tableMode = canControl && view === 'table';
+  // Бомб-пот на экране и табло на связи (кто первым покажет взнос) — у всех; шторка — у пульта.
+  const bombPot = useBombPot(model, canControl && bombSheet);
 
   // «Ребай» в тосте после вылета: шторка ребая по свежему журналу (тост живёт дольше рендера).
   const openRebuy = (playerId: string) => {
@@ -237,7 +248,7 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
       nameOf={nameOf}
       format={format}
       errorsById={errorsById}
-      feed={model.feed}
+      feed={feedWithBombReveal(model.feed, bombPot.boardOnline, bombPot.calm)}
       onSelect={canControl ? selectEvent : undefined}
       canEdit={canControl ? canEdit : undefined}
       seating={canControl}
@@ -280,6 +291,8 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
             onRiverSheet={openRiverSheet}
             onPause={() => setPauseOpen(true)}
             onClock={() => setClockOpen(true)}
+            bomb={bombPot.screen}
+            onBomb={() => setBombSheet(true)}
           />
           {showdownPanel}
           {statsBlock}
@@ -304,6 +317,8 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
           onSeating={() => openSeating()}
           onShowdown={openShowdown}
           onPause={() => setPauseOpen(true)}
+          bomb={bombPot.screen}
+          onBomb={() => setBombSheet(true)}
         />
       )}
 
@@ -342,6 +357,17 @@ export function LiveView({ model, actions, view, onViewChange, onTv }: LiveViewP
             rebuyFor={showdownSheet?.rebuy}
           />
           <PauseSheet open={pauseOpen} onClose={() => setPauseOpen(false)} actions={actions} />
+          <BombPotSheet
+            open={bombSheet}
+            onClose={() => setBombSheet(false)}
+            model={model}
+            actions={actions}
+            riverPending={Boolean(river.suggestion)}
+            boardOnline={bombPot.boardOnline}
+            onAnnounce={(target, intentKey) =>
+              pult.announceBomb(target, bombPot.boardOnline, intentKey)
+            }
+          />
           <ClockSheet
             open={clockOpen}
             onClose={() => setClockOpen(false)}
@@ -379,6 +405,8 @@ function DetailsView({
   onSeating,
   onShowdown,
   onPause,
+  bomb,
+  onBomb,
 }: {
   model: EveningModel;
   actions: EveningActions;
@@ -398,6 +426,10 @@ function DetailsView({
   onSeating: () => void;
   onShowdown: () => void;
   onPause: () => void;
+  /** Бомб-пот на экране (открыт, не спрятан временем): полоса на часах. */
+  bomb: BombPotScreen | null;
+  /** Шторка «Бомб-пот». */
+  onBomb: () => void;
 }) {
   const { evening, state, nameOf, playersById, canControl } = model;
   const format = evening.format;
@@ -414,8 +446,17 @@ function DetailsView({
   const seat = !canControl && me ? mySeat(format, state, model.applied, payments, me) : null;
   // Позиции раздачи (миграция 028) — у всех на часах; своя позиция — «Ты на BB».
   const positions = tablePositions(state);
-  const positionsLine = positionsText(positions, nameOf);
-  const myPosition = myPositionText(positions, me);
+  // Бомб-пот (030): блайндов в раздаче нет — «Баттон — Миша · блайндов нет», своё — в полосе бомб-пота.
+  const bombOpen = state.bombPot !== null;
+  const positionsLine = bombOpen
+    ? bombPositionsText(state, nameOf)
+    : positionsText(positions, nameOf);
+  const myPosition = bombOpen
+    ? me !== null && positions.dealer?.playerId === me
+      ? 'Ты на баттоне'
+      : null
+    : myPositionText(positions, me);
+  const bombRefusal = actions.check('bomb_pot');
 
   return (
     <>
@@ -513,6 +554,14 @@ function DetailsView({
               </span>
             </div>
           </div>
+          {bomb && (
+            <BombPotBar
+              model={model}
+              screen={bomb}
+              meId={canControl ? null : me}
+              className="ev-clock__bomb"
+            />
+          )}
           {positionsLine && (
             <div className="ev-clock__positions">
               {myPosition && <p className="m-body ev-clock__mine">{myPosition}</p>}
@@ -573,7 +622,7 @@ function DetailsView({
                   Запустить таймер
                 </Button>
               )}
-              {hand.show && (
+              {hand.show && !bombOpen && (
                 <Button
                   variant={
                     timer.status === 'running' && !lastAlive && !hand.hold ? 'primary' : 'secondary'
@@ -586,8 +635,19 @@ function DetailsView({
                 </Button>
               )}
             </div>
-            {hand.show && (hand.hold ?? pult.unseatedHint) && (
+            {hand.show && !bombOpen && (hand.hold ?? pult.unseatedHint) && (
               <p className="m-small">{hand.hold ?? pult.unseatedHint}</p>
+            )}
+            {/* Бомб-пот открыт: вместо «Следующей раздачи» — кто забрал банк и раздача одним касанием. */}
+            {bombOpen && (
+              <section className="ev-bomb" aria-label="Бомб-пот">
+                <BombWinners
+                  model={model}
+                  busy={actions.busy || Boolean(actions.check('hand'))}
+                  hold={riverPending ? HAND_RIVER_HOLD : null}
+                  onPick={pult.closeBomb}
+                />
+              </section>
             )}
             <div className="ev-pult__levels">
               <IconButton
@@ -621,6 +681,14 @@ function DetailsView({
               </Button>
               <Button icon="map-pin" onClick={onSeating}>
                 Рассадка
+              </Button>
+              <Button
+                icon="bomb"
+                aria-label={bombRefusal ? `Бомб-пот: ${bombRefusal}` : undefined}
+                disabled={actions.busy || bombRefusal !== null || riverPending}
+                onClick={onBomb}
+              >
+                Бомб-пот
               </Button>
               <Button
                 variant="ghost"

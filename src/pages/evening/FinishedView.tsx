@@ -12,6 +12,7 @@ import { amendField } from '@domain/amend.ts';
 import { computeMoney } from '@domain/money.ts';
 import { eveningPoints, eveningScoring } from '@domain/scoring.ts';
 import { isShowdownEvent } from '@domain/showdown.ts';
+import { isBombPotEvent } from '@domain/bombPot.ts';
 import { SEATING_EVENT_TYPES } from '@domain/types.ts';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -127,8 +128,8 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
     if (amendField(ev) !== null && !ev.voided) setAmending(ev);
     else void actions.voidWithConfirm(ev);
   };
-  // Журнал правили после поста итогов (платежи, олл-ин и рассадка на итог не влияют) — пост в
-  // группе устарел.
+  // Журнал правили после поста итогов (платежи, олл-ин, рассадка и бомб-пот на итог не влияют) —
+  // пост в группе устарел.
   const postedAt = evening.results_posted_at ? Date.parse(evening.results_posted_at) : null;
   const resultsOutdated =
     postedAt !== null &&
@@ -137,6 +138,7 @@ export function FinishedView({ model, actions }: FinishedViewProps) {
         e.type !== 'payment' &&
         !isShowdownEvent(e.type) &&
         !SEATING_EVENT_TYPES.includes(e.type) &&
+        !isBombPotEvent(e.type) &&
         (Date.parse(e.at) > postedAt || (e.voidedAt !== null && Date.parse(e.voidedAt) > postedAt)),
     );
 

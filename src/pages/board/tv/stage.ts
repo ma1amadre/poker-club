@@ -18,6 +18,11 @@ export interface GameEls {
   markers: HTMLElement | null;
   center: HTMLElement | null;
   ko: HTMLElement | null;
+  /** Тихая строка внизу колонки («Средний стек · игра идёт») — уходит на время сцены бомб-пота. */
+  quiet: HTMLElement | null;
+  /** Бомб-пот (030): панель розыгрыша в левой колонке и слой бейджа раздачи на столе. */
+  bombPanel: HTMLElement | null;
+  bombTable: HTMLElement | null;
   /** Подписи мест (номер и имя) по номеру места — гаснут и встают по одной при возврате к столу. */
   labels: Map<number, HTMLElement>;
   /** Имена по номеру места — их яркость (фокус стола). */
@@ -39,6 +44,9 @@ export function emptyGameEls(): GameEls {
     markers: null,
     center: null,
     ko: null,
+    quiet: null,
+    bombPanel: null,
+    bombTable: null,
     labels: new Map(),
     names: new Map(),
   };

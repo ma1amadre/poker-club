@@ -15,6 +15,7 @@
 // 1920×1080 со столом-схемой, перекидными цифрами и моментами по журналу. Телефон, ожидание, итог и
 // «Табло погасло» — прежние экраны ниже.
 import { eveningAllIns } from '@domain/allins.ts';
+import { visibleBombPot } from '@domain/bombPot.ts';
 import { computeMoney, payoutsFor } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
 import { DEFAULT_SCORING } from '@domain/scoring.ts';
@@ -66,6 +67,7 @@ import {
   seatNo,
   type NameOf,
 } from '../evening/lib';
+import { bombPotText, bombStakeText } from '../evening/bombPotView';
 import './board.css';
 import {
   bigBlinds,
@@ -206,7 +208,9 @@ export function Board({
   );
   const nameOf: NameOf = (id) => names.get(id) ?? 'Игрок';
   const { state, applied } = replayLog(format, data.events, nowMs);
-  const voice = useBoardVoice({ source, data, state, applied, nowMs });
+  const tv = useTvLayout();
+  // На ТВ фразы бомб-пота говорит сцена табло по своим тактам (TvBoard → onSay).
+  const voice = useBoardVoice({ source, data, state, applied, nowMs, scene: tv });
   useBoardPing(source, evening.id, voice.status === 'on');
 
   const training = isTrainingEvening(evening);
@@ -217,7 +221,6 @@ export function Board({
   // Олл-ин закрывает таймер и стол, пока банкир его не закроет (или табло не спрячет его само).
   // Улицы, внесённые разом, табло раскрывает по очереди (streetReveal.ts).
   const showdown = useStreetReveal(visibleShowdown(state.showdown, nowMs), nowMs);
-  const tv = useTvLayout();
 
   if (tv && !finished && (showdown || state.timer.status !== 'not_started')) {
     return (
@@ -233,6 +236,7 @@ export function Board({
         headText={`${training ? `Тренировка${NBSP}· ` : ''}${when}${place}`}
         stale={stale}
         updatedAt={updatedAt}
+        onSay={voice.say}
         tools={
           <>
             {voice.status !== 'unsupported' && (
@@ -409,7 +413,21 @@ function LiveBoard({
   const blinds = formatBlinds(state.currentLevel);
   const big = bigBlinds(state.currentLevel);
   // Порядок от баттона (028): вместо «За столом», пока баттон задан и позиции определены.
-  const order = boardOrder(state);
+  // Бомб-пот (030): табло показывает взнос сразу — оно первое; сцены на узком табло нет. Блайндов
+  // в раздаче нет (взнос их заменяет) — в строке порядка только баттон.
+  const bomb = visibleBombPot(state, nowMs);
+  const fullOrder = boardOrder(state);
+  const order =
+    fullOrder && state.bombPot
+      ? {
+          ...fullOrder,
+          seats: fullOrder.seats.map((s) => ({
+            ...s,
+            roles: s.roles.filter((r) => r === 'D'),
+            blind: null,
+          })),
+        }
+      : fullOrder;
   const orderText = order ? boardOrderText(order, nameOf) : '';
 
   const screenRef = useRef<HTMLDivElement>(null);
@@ -524,6 +542,11 @@ function LiveBoard({
           <span>{rebuy.text}</span>
         </p>
         {bottom && <p className="m-h3 bd-bottom">{bottom}</p>}
+        {bomb && bomb.bbs > 0 && (
+          <p className="m-h3 bd-hot" role="status">
+            {`Бомб-пот${NBSP}· ${bombStakeText(bomb)}${NBSP}· ${bombPotText(bomb)}`}
+          </p>
+        )}
       </section>
 
       <section className="bd-side" aria-label="Стол и деньги">

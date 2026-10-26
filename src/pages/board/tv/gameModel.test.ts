@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   blindsText,
   clockMode,
+  cornerLevel,
   durationParts,
   finalMinute,
   levelLine,
@@ -15,6 +16,7 @@ import {
   quietParts,
   rebuyView,
 } from './gameModel';
+import { applyHolds } from './tableModel';
 
 const t: LevelTrigger = { type: 'time', minutes: 40 };
 /** 8 уровней по 40 минут, ребаи до конца 5-го — как в макете. */
@@ -186,6 +188,20 @@ describe('колонка игры: строка над часами и режи�
     const s = replayLog(f, j.events, j.now()).state;
     expect(clockMode(s)).toBe('counting');
     expect(levelLine(f, s, j.now(), null).note).toBe('раздач 2 из 10');
+  });
+
+  // Живая проверка 26.10.2026: уровень сменился посреди сцены бомб-пота — заставка ждёт за сценой, часы
+  // в углу стоят на прежнем уровне, и подпись рядом — тоже прежняя (по показанному состоянию).
+  it('подпись часов в углу — по показанному состоянию: ждёт заставка уровня — прежний уровень', () => {
+    const j = game();
+    j.wait(4 * 40 + 1);
+    const live = state(j);
+    expect(cornerLevel(FMT, live)).toEqual({ level: 5, blinds: blindsText(FMT.levels[4]!) });
+    const held = applyHolds(live, FMT, { alive: [], levelIndex: 3 });
+    expect(sp(cornerLevel(FMT, held).blinds)).toBe('50/100');
+    expect(cornerLevel(FMT, held).level).toBe(4);
+    j.wait(4 * 40);
+    expect(cornerLevel(FMT, state(j)).level).toBe(8);
   });
 
   it('последний уровень сам не кончается — «последний, идёт», часы — тише', () => {

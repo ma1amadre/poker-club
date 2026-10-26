@@ -93,6 +93,8 @@ export interface TvGameProps {
   nameOf: NameOf;
   moment: GameMoment;
   onVyletFolded: (seat: number) => void;
+  /** Бомб-пот на экране (030): бейдж раздачи в центре стола, SB и BB погашены. */
+  bombOn: boolean;
   els: ElsRef;
 }
 
@@ -104,7 +106,7 @@ export function TvGame(p: TvGameProps) {
   const next = nextText(state);
   const ante = anteText(state);
   const rebuy = rebuyView(format, p.liveState, moment.lift);
-  const table = tvTable(state);
+  const table = tvTable(state, { bombOn: p.bombOn });
   const inGame = moment.inGame ?? state.aliveCount;
   const entries = state.joinOrder.length;
 
@@ -159,7 +161,7 @@ export function TvGame(p: TvGameProps) {
           <Prizes items={prizeParts(format, state)} />
         </div>
       </div>
-      <p className="tv-quietline tv-quiet">
+      <p className="tv-quietline tv-quiet" ref={bindEl(els, 'quiet')}>
         <PartsText parts={quietParts(state)} />
       </p>
 
@@ -176,6 +178,7 @@ export function TvGame(p: TvGameProps) {
           vylet={moment.vylet}
           onVyletFolded={p.onVyletFolded}
           ko={moment.ko}
+          bombOn={p.bombOn}
           els={els}
         />
       ) : (
@@ -185,6 +188,7 @@ export function TvGame(p: TvGameProps) {
           entries={entries}
           nameOf={p.nameOf}
           moment={moment}
+          bombOn={p.bombOn}
           els={els}
         />
       )}
@@ -243,6 +247,7 @@ function TvList({
   entries,
   nameOf,
   moment,
+  bombOn,
   els,
 }: {
   state: EveningState;
@@ -250,6 +255,7 @@ function TvList({
   entries: number;
   nameOf: NameOf;
   moment: GameMoment;
+  bombOn: boolean;
   els: ElsRef;
 }) {
   const alive = state.joinOrder.filter((id) => state.players[id]?.alive);
@@ -272,15 +278,20 @@ function TvList({
     <div className="tv-table">
       <div className="tv-layer" ref={bindEl(els, 'tableBase')}>
         <div className="tv-list" ref={bindEl(els, 'center')}>
-          <div>
-            <p className="tv-eb">В игре</p>
-            <div className="tv-list__count" style={{ marginTop: 14 }}>
-              <FlapText text={String(inGame)} style={IN_GAME} />
-              <p className="tv-center__of">
-                из <b>{entries}</b>
-              </p>
+          {/* Бомб-пот (030): место «В игре» занимает бейдж раздачи (слой .tv-bt ниже). */}
+          {bombOn ? (
+            <div className="tv-list__bomb" />
+          ) : (
+            <div>
+              <p className="tv-eb">В игре</p>
+              <div className="tv-list__count" style={{ marginTop: 14 }}>
+                <FlapText text={String(inGame)} style={IN_GAME} />
+                <p className="tv-center__of">
+                  из <b>{entries}</b>
+                </p>
+              </div>
             </div>
-          </div>
+          )}
           {alive.length > 0 && (
             <div>
               <p className="tv-eb">За столом</p>
@@ -296,6 +307,7 @@ function TvList({
         </div>
       </div>
       <div className="tv-layer" ref={bindEl(els, 'markers')} />
+      <div className="tv-bt tv-layer" ref={bindEl(els, 'bombTable')} aria-hidden="true" />
       <KoCard ko={moment.ko} els={els} x={1138} y={436} />
     </div>
   );

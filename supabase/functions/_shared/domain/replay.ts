@@ -18,6 +18,10 @@
 // - Места и баттон (миграция 028, seats.ts): 'seat' сажает игрока на номер места, 'button' ставит
 //   баттон на место игрока в игре, 'hand' двигает баттон по часовой к следующему игроку в игре. На
 //   деньги, таймер, места в итоге и нокауты рассадка не влияет.
+// - Бомб-пот (миграция 030, bombPot.ts): 'bomb_pot' — снимок раздачи с броском сервера (взнос по BB
+//   уровня в позиции записи), 'bomb_pot_result' — кто забрал банк; 'hand' закрывает бомб-пот и баттон
+//   оставляет на месте (кроме вылета игрока на баттоне), 'finish' тоже закрывает. На деньги, таймер,
+//   места в итоге и нокауты бомб-пот не влияет.
 import {
   AMENDABLE_EVENT_TYPES,
   MAX_ENTRY_RUB,
@@ -26,6 +30,7 @@ import {
   MAX_TIME_ADJUST_SECONDS,
   type AmendPayload,
   type BlindLevel,
+  type BombPotState,
   type EveningEvent,
   type EveningState,
   type EventPayload,
@@ -35,6 +40,17 @@ import {
   type TournamentFormat,
 } from './types.ts';
 import { readShowdown, readShowdownId } from './showdown.ts';
+import {
+  BOMB_POT_RESULT_SHAPE_ERROR,
+  BOMB_POT_SHAPE_ERROR,
+  bombPotRefusal,
+  bombPotResultRefusal,
+  buttonAfterBombPot,
+  newBombPot,
+  readBombPot,
+  readBombPotResult,
+  type BombPotRoll,
+} from './bombPot.ts';
 import {
   SEAT_ERROR,
   handSeating,
@@ -250,6 +266,8 @@ function initialState(format: TournamentFormat): EveningState {
     firstBustPlayerId: null,
     showdown: null,
     buttonSeat: null,
+    bombPot: null,
+    bombPots: [],
     errors: [],
   };
 }
@@ -441,6 +459,14 @@ function validate(
       if (!holder.alive) return 'Игрок на этом месте выбыл — баттон ставят на место игрока в игре';
       return null;
     }
+    case 'bomb_pot':
+      // {} — черновик клиента (бросок поставит сервер): правила те же, число на них не влияет.
+      if (readBombPot(payload) === null) return BOMB_POT_SHAPE_ERROR;
+      return bombPotRefusal(s);
+    case 'bomb_pot_result': {
+      const read = readBombPotResult(payload);
+      return read === null ? BOMB_POT_RESULT_SHAPE_ERROR : bombPotResultRefusal(s, read);
+    }
     default:
       return 'Неизвестный тип события';
   }
@@ -555,8 +581,14 @@ function apply(
         enterLevel(s, t.levelIndex + 1, 0);
       }
       // Следующая раздача — баттон к следующему игроку в игре по часовой (028). Правила уровня выше
-      // не меняются; баттон не задан — раздача только считается.
-      s.buttonSeat = nextButtonSeat(s);
+      // не меняются; баттон не задан — раздача только считается. После бомб-пота (030) баттон стоит,
+      // если игрок на нём в игре, — и раздача закрывает бомб-пот.
+      const bombPot = s.bombPot;
+      s.buttonSeat = bombPot ? buttonAfterBombPot(s) : nextButtonSeat(s);
+      if (bombPot) {
+        bombPot.closed = { eventId: ev.id, at: ev.at, by: 'hand' };
+        s.bombPot = null;
+      }
       return;
     }
     case 'finish':
@@ -565,8 +597,12 @@ function apply(
       if (t.status === 'running') t.status = 'paused';
       // Игра окончена — «продолжаем через» не о чем.
       t.pause = null;
-      // Итог вечера важнее последней раздачи: финиш закрывает олл-ин (отмена финиша вернёт его).
+      // Итог вечера важнее последней раздачи: финиш закрывает олл-ин и бомб-пот (отмена финиша вернёт).
       s.showdown = null;
+      if (s.bombPot) {
+        s.bombPot.closed = { eventId: ev.id, at: ev.at, by: 'finish' };
+        s.bombPot = null;
+      }
       return;
     case 'payment':
       // На состояние игры не влияет; платежи собирает money.paymentsFromEvents.
@@ -586,6 +622,14 @@ function apply(
         // пересчёт банков (нечётные фишки) берёт снимок первой версии, а не текущий баттон.
         seating: prev?.seating ?? handSeating(s),
       };
+      // Олл-ин внутри бомб-пота (030): руки и стол — в бомб-пот, они переживут закрытие олл-ина
+      // (подсказка «Кто забрал» после ответа на «Фишек хватило?»).
+      if (s.bombPot && s.showdown.openedEventId > s.bombPot.eventId) {
+        s.bombPot.allIn = {
+          hands: s.showdown.hands.map((h) => ({ ...h })),
+          board: [...s.showdown.board],
+        };
+      }
       return;
     }
     case 'showdown_close':
@@ -602,6 +646,22 @@ function apply(
     case 'button':
       s.buttonSeat = readButtonSeat(payload);
       return;
+    case 'bomb_pot': {
+      // Снимок раздачи: участники, взнос по BB уровня здесь, первое слово, места и баттон.
+      const bombPot = newBombPot(s, ev, readBombPot(payload) as BombPotRoll);
+      s.bombPot = bombPot;
+      s.bombPots.push(bombPot);
+      return;
+    }
+    case 'bomb_pot_result': {
+      const read = readBombPotResult(payload) as { winners: PlayerId[] };
+      (s.bombPot as BombPotState).result = {
+        eventId: ev.id,
+        at: ev.at,
+        winners: [...read.winners],
+      };
+      return;
+    }
   }
 }
 

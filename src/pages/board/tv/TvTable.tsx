@@ -2,6 +2,8 @@
 // остальные на ступень тише, вылетевший — приглушён, пустое место — только номер, едва видно), «в
 // игре N из M» в центре, метки D / SB / BB с суммами блайндов, которые едут вдоль борта по часовой
 // к следующей раздаче. Под ставку и стек заложены гнёзда (камера позже) — сейчас пустые.
+// Бомб-пот (миграция 030): пока он на экране, метки SB и BB гаснут слоем (блайндов нет — взнос их
+// заменяет), центр стола отдан бейджу раздачи — его строит режиссёр (bombDirector.ts) в слое .tv-bt.
 import { useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { formatNumber } from '../../../shared/lib/format';
 import { seatNo, type NameOf } from '../../evening/lib';
@@ -331,6 +333,7 @@ function Markers({
   alive,
   sb,
   bb,
+  blindsOff,
   els,
 }: {
   seats: MarkerSeats;
@@ -338,9 +341,24 @@ function Markers({
   alive: ReadonlySet<number>;
   sb: number;
   bb: number;
+  /** Бомб-пот: блайндов в раздаче нет — SB и BB гаснут слоем, D остаётся. */
+  blindsOff: boolean;
   els: ElsRef;
 }) {
   const { motion } = useMotion();
+  const blindsRef = useRef<HTMLDivElement>(null);
+  const shownOff = useRef<boolean | null>(null);
+  useLayoutEffect(() => {
+    const el = blindsRef.current;
+    const was = shownOff.current;
+    shownOff.current = blindsOff;
+    if (!el || was === blindsOff) return;
+    if (was === null) {
+      el.style.opacity = blindsOff ? '0' : '1';
+      return;
+    }
+    motion.fade(el, blindsOff ? 0 : 1, blindsOff ? 240 : 320, { delay: blindsOff ? 0 : 160 });
+  }, [blindsOff, motion]);
   const dRef = useRef<HTMLDivElement>(null);
   const sbRef = useRef<HTMLDivElement>(null);
   const bbRef = useRef<HTMLDivElement>(null);
@@ -377,23 +395,25 @@ function Markers({
       <div ref={dRef} className="tv-mk tv-mk--d" aria-hidden="true">
         D
       </div>
-      <div ref={sbRef} className="tv-mk tv-mk--b" aria-hidden="true">
-        <span>SB</span>
-        <FlapText
-          className="tv-mk__amt"
-          text={formatNumber(sb)}
-          style={AMOUNT}
-          flip={{ drum: 'up', maxVia: 1, stagger: 60, lowFirst: true }}
-        />
-      </div>
-      <div ref={bbRef} className="tv-mk tv-mk--b" aria-hidden="true">
-        <span>BB</span>
-        <FlapText
-          className="tv-mk__amt"
-          text={formatNumber(bb)}
-          style={AMOUNT}
-          flip={{ drum: 'up', maxVia: 1, stagger: 60, lowFirst: true }}
-        />
+      <div ref={blindsRef} className="tv-layer tv-mk-blinds">
+        <div ref={sbRef} className="tv-mk tv-mk--b" aria-hidden="true">
+          <span>SB</span>
+          <FlapText
+            className="tv-mk__amt"
+            text={formatNumber(sb)}
+            style={AMOUNT}
+            flip={{ drum: 'up', maxVia: 1, stagger: 60, lowFirst: true }}
+          />
+        </div>
+        <div ref={bbRef} className="tv-mk tv-mk--b" aria-hidden="true">
+          <span>BB</span>
+          <FlapText
+            className="tv-mk__amt"
+            text={formatNumber(bb)}
+            style={AMOUNT}
+            flip={{ drum: 'up', maxVia: 1, stagger: 60, lowFirst: true }}
+          />
+        </div>
       </div>
     </div>
   );
@@ -412,6 +432,8 @@ export interface TvTableProps {
   vylet: ReadonlyMap<number, VyletMark>;
   onVyletFolded: (seat: number) => void;
   ko: KoCardView | null;
+  /** Бомб-пот на экране (030): центр стола — бейджу, метки SB и BB погашены. */
+  bombOn: boolean;
   els: ElsRef;
 }
 
@@ -445,17 +467,20 @@ export function TvTable(p: TvTableProps) {
             els={els}
           />
         ))}
-        <div className="tv-center" ref={bindEl(els, 'center')}>
-          <p className="tv-eb">В игре</p>
-          <div className="tv-center__row">
-            <FlapText text={String(p.inGame)} style={IN_GAME} />
-            <p className="tv-center__of">
-              из <b>{p.entries}</b>
-            </p>
+        {!p.bombOn && (
+          <div className="tv-center" ref={bindEl(els, 'center')}>
+            <p className="tv-eb">В игре</p>
+            <div className="tv-center__row">
+              <FlapText text={String(p.inGame)} style={IN_GAME} />
+              <p className="tv-center__of">
+                из <b>{p.entries}</b>
+              </p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
-      <Markers seats={markers} alive={alive} sb={p.sb} bb={p.bb} els={els} />
+      <Markers seats={markers} alive={alive} sb={p.sb} bb={p.bb} blindsOff={p.bombOn} els={els} />
+      <div className="tv-bt tv-layer" ref={bindEl(els, 'bombTable')} aria-hidden="true" />
       <KoCard ko={p.ko} els={els} x={KO_CARD.x} y={KO_CARD.y} />
     </div>
   );

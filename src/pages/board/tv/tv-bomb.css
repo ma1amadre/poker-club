@@ -1,0 +1,378 @@
+/*
+ * Бомб-пот на табло ТВ (миграция 030; DESIGN.md, «Бомб-пот»; эталон — макет tv-bomb/v2 с поправками
+ * судей). Панель розыгрыша — в левой колонке (там же, где заставка смены уровня): часы на время сцены
+ * уезжают в угол, рядом «Уровень 6 · 50/100». Бейдж раздачи — в центре стола: табличка «БОМБ-ПОТ»,
+ * флоп рубашками, банк флапами и «по 300 × 6». Янтарь на время сцены — только исход. Движение —
+ * только transform и opacity (bombDirector.ts), содержимое строит режиссёр: здесь раскладка.
+ */
+
+/* ---------- Панель розыгрыша (левая колонка 96…650) ---------- */
+.tv-bp {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.tv-bp > *,
+.tv-bp__body > * {
+  position: absolute;
+}
+
+.tv-bp__rule {
+  left: 96px;
+  top: 168px;
+  width: 554px;
+  height: 3px;
+  background: var(--accent);
+  transform-origin: 0 50%;
+}
+
+/* Отмена: янтарь закреплён за исходом — линейка уходит в линию. */
+.tv-bp__rule--muted {
+  background: var(--line-strong);
+  transform: none;
+}
+
+.tv-bp__title {
+  left: 96px;
+  top: 190px;
+}
+
+/* «ОТМЕНЁН» под заголовком — тем же кеглем, приглушённо: читается «БОМБ-ПОТ ОТМЕНЁН». */
+.tv-bp__cancel {
+  left: 96px;
+  top: 300px;
+}
+
+.tv-bp__body {
+  pointer-events: none;
+}
+
+.tv-bp__odds {
+  left: 96px;
+  top: 320px;
+}
+
+/* Отменённые броски (переброс) — тише и зачёркнуты: не спорят с выпавшим. */
+.tv-bp__struck {
+  color: var(--tv-dim);
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+}
+
+/* Шкала исходов: пять одинаковых ячеек до броска — исходов пять, и они равны. Выпавшая заливается
+   шторкой слева (scaleX), потом шкала уходит целиком. */
+.tv-bp__scale {
+  left: 96px;
+  top: 352px;
+  display: flex;
+  gap: 11px;
+}
+
+.tv-bp__cell {
+  position: relative;
+  width: 102px;
+  height: 84px;
+  flex: none;
+}
+
+.tv-bp__face {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+}
+
+.tv-bp__face--base {
+  border: 1px solid var(--neutral-7);
+}
+
+.tv-bp__face--cur {
+  background: var(--neutral-6);
+  border: 1px solid var(--neutral-9);
+  opacity: 0;
+}
+
+.tv-bp__face--wt {
+  opacity: 0;
+}
+
+.tv-bp__fill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+}
+
+.tv-bp__k {
+  font-family: var(--m-font-mono);
+  font-size: 34px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--neutral-10);
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+}
+
+.tv-bp__unit {
+  font-size: 17px;
+  font-weight: 700;
+  margin-left: 5px;
+  letter-spacing: 0.02em;
+}
+
+.tv-bp__v {
+  font-family: var(--m-font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--tv-dim);
+  white-space: nowrap;
+}
+
+.tv-bp__face--cur .tv-bp__k {
+  color: var(--ink);
+}
+
+.tv-bp__face--cur .tv-bp__v {
+  color: var(--ink-muted);
+}
+
+.tv-bp__face--wt .tv-bp__k,
+.tv-bp__face--wt .tv-bp__v {
+  color: var(--on-accent);
+}
+
+/* Окно розыгрыша — плитка размером с цифру часов; «BB» печатью рядом. */
+.tv-bp__hero {
+  left: 96px;
+  top: 476px;
+}
+
+.tv-bp__bb {
+  left: 270px;
+  top: 596px;
+  font-family: var(--m-font-mono);
+  font-size: 84px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--ink-muted);
+  letter-spacing: -0.02em;
+}
+
+/* «ВЗНОС 300» — справа от окна, по краю колонки; на взносах переезжает под заголовок. */
+.tv-bp__stake {
+  right: 1270px;
+  top: 562px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.tv-bp__stake .tv-eb {
+  margin-bottom: 14px;
+}
+
+.tv-bp__stakerow {
+  display: flex;
+}
+
+/* «ФЛОП СРАЗУ · ПРЕФЛОПА НЕТ» — в слоте взноса (кросс-фейд), а не новой строкой. */
+.tv-bp__flop {
+  left: 96px;
+  top: 610px;
+  font-family: var(--m-font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tv-bp__flopsub {
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+/* ---------- Бейдж раздачи на столе ---------- */
+.tv-bt {
+  z-index: 6;
+  pointer-events: none;
+}
+
+.tv-bt > * {
+  position: absolute;
+}
+
+/* Табличка: два ряда друг над другом — тёмный (янтарная печать) и янтарный (у места забравшего). */
+.tv-bt__tag {
+  width: 293px;
+  height: 46px;
+  transform-origin: 50% 50%;
+}
+
+.tv-bt__tagrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+}
+
+/* Рубашка на сукне — на ступень светлее рубашки олл-ина: с дивана читается «флоп сдан». */
+.tv-bt__card .tv-card__back {
+  background: var(--neutral-6);
+  border-color: var(--neutral-9);
+}
+
+.tv-bt__card .tv-card__back::after {
+  inset: 8px;
+  border-color: var(--neutral-8);
+}
+
+.tv-bt__card .tv-card__back::before {
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  background: var(--neutral-9);
+}
+
+.tv-bt__pot {
+  display: flex;
+}
+
+/* «по 300 × 6» — по центру под банком, 26 px: банк номинальный, формула это и говорит. */
+.tv-bt__form {
+  left: 976px;
+  width: 624px;
+  text-align: center;
+  font-family: var(--m-font-mono);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.tv-bt__form--list {
+  width: auto;
+  text-align: left;
+}
+
+/* «Первое слово» — у места, в гнезде стека; янтарный брусок слева, как статусы олл-ина. */
+.tv-bt__first {
+  display: flex;
+  align-items: center;
+}
+
+.tv-bt__firsttext {
+  position: relative;
+  padding-left: 14px;
+  font-family: var(--m-font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tv-bt__firsttext::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -2px;
+  width: 4px;
+  height: 24px;
+  background: var(--accent);
+}
+
+/* Взнос игрока — мини-флап «300»: встаёт у места и уходит в банк. */
+.tv-bt__mf {
+  left: 0;
+  top: 0;
+  transform-origin: 50% 50%;
+}
+
+/* Развязка в центре стола — той же системой, что карточка нокаута, линейка янтарная. */
+.tv-bt__res {
+  height: 160px;
+}
+
+.tv-bt__res > * {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.tv-bt__bar {
+  top: 0;
+  height: 3px;
+  background: var(--accent);
+  transform-origin: 50% 50%;
+}
+
+/* Без рассадки — на месте бейджа в списке, по его левому краю: ниже стоит «За столом». */
+.tv-bt__res--list > * {
+  text-align: left;
+}
+
+.tv-bt__res--list .tv-bt__bar {
+  right: auto;
+  width: 460px;
+  transform-origin: 0 50%;
+}
+
+.tv-bt__verb {
+  top: 24px;
+  font-size: 20px;
+}
+
+.tv-bt__who {
+  top: 58px;
+  font-size: 72px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Свет на забравшем — черта под именем. */
+.tv-bt__wline {
+  height: 3px;
+  background: var(--accent);
+  transform-origin: 0 50%;
+}
+
+.tv-bt__dcap {
+  font-family: var(--m-font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Метки SB и BB — слоем: в бомб-поте блайндов нет (взнос их заменяет), слой гаснет целиком. */
+.tv-mk-blinds {
+  pointer-events: none;
+}
+
+/* Без рассадки: место «В игре N из M» в списке занимает бейдж бомб-пота. */
+.tv-list__bomb {
+  height: 190px;
+}

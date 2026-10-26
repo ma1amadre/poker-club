@@ -10,6 +10,9 @@
 // у заголовка мест — шторка мест и баттона. «Следующая раздача» (запись 'hand') двигает баттон и
 // считает раздачи уровня; видна при баттоне или уровне по раздачам, а пока висит вопрос после ривера —
 // закрыта с подсказкой (вылет записывается до раздачи, тогда баттон его пропустит).
+// Бомб-пот (миграция 030): кнопка-иконка «Бомб-пот» рядом с «Отметить олл-ин» — шторка «Бомб-пот»;
+// пока бомб-пот открыт, вместо «Следующей раздачи» — полоса бомб-пота и «Кто забрал бомб-пот?» (одно
+// касание — кто забрал и раздача), на плитках мест — только D: блайндов в этой раздаче нет.
 import type { PlayerId, PlayerState } from '@domain/types.ts';
 import { useNavigate } from 'react-router-dom';
 import { cn, formatBlinds, formatRub, formatTime, NBSP, paths } from '../../shared/lib';
@@ -25,9 +28,11 @@ import {
   undoActionText,
   type PositionRole,
 } from './lib';
+import { BombPotBar, BombWinners } from './BombPot';
 import { RiverActions } from './RiverActions';
-import { handButton, seatingStarted, unseatedPlayers } from './seating';
+import { handButton, HAND_RIVER_HOLD, seatingStarted, unseatedPlayers } from './seating';
 import { bustedRow, rebuyShortText, seatTiles, stripStatus } from './table';
+import type { BombPotScreen } from './useBombPot';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
 import type { Pult } from './usePult';
@@ -50,6 +55,10 @@ export interface TableViewProps {
   onRiverSheet: (rebuy: PlayerId[]) => void;
   onPause: () => void;
   onClock: () => void;
+  /** Бомб-пот на экране (открыт, не спрятан временем): полоса над «Кто забрал». */
+  bomb: BombPotScreen | null;
+  /** Шторка «Бомб-пот». */
+  onBomb: () => void;
 }
 
 export function TableView({
@@ -65,6 +74,8 @@ export function TableView({
   onRiverSheet,
   onPause,
   onClock,
+  bomb,
+  onBomb,
 }: TableViewProps) {
   const { state, evening, nameOf, nowMs } = model;
   const format = evening.format;
@@ -81,6 +92,9 @@ export function TableView({
   // вопрос висит, она закрыта (hold): вылет записывается до раздачи, тогда баттон его пропустит.
   const hand = handButton(state, Boolean(suggestion));
   const handMain = state.timer.status === 'running' && !finishMain && !suggestion;
+  // Бомб-пот открыт: вместо «Следующей раздачи» — «Кто забрал» (та же подсказка после ривера).
+  const bombOpen = state.bombPot !== null;
+  const bombRefusal = actions.check('bomb_pot');
 
   /** Вылетевший: ребай, пока можно докупиться, иначе — карточка игрока. */
   const openOut = (playerId: string) => {
@@ -110,8 +124,10 @@ export function TableView({
           {tiles.map((t) => {
             const name = nameOf(t.playerId);
             const p = state.players[t.playerId];
-            const tag = roleTag(t.roles, state.currentLevel);
-            const where = t.seat === null ? '' : `Место ${t.seat}${rolesWords(t.roles)}. `;
+            // В бомб-поте блайндов нет (взнос их заменяет): на плитке — только баттон.
+            const roles = bombOpen ? t.roles.filter((r) => r === 'D') : t.roles;
+            const tag = roleTag(roles, state.currentLevel);
+            const where = t.seat === null ? '' : `Место ${t.seat}${rolesWords(roles)}. `;
             return (
               <button
                 key={t.playerId}
@@ -238,20 +254,34 @@ export function TableView({
           </Button>
         )}
         <RiverActions model={model} actions={actions} river={river} onSheet={onRiverSheet} />
-        {hand.show && (
-          <Button
-            variant={handMain ? 'primary' : 'secondary'}
-            block
-            size="lg"
-            icon="arrow-right"
-            disabled={actions.busy || Boolean(hand.hold) || Boolean(actions.check('hand'))}
-            onClick={pult.nextHand}
-          >
-            {hand.label}
-          </Button>
+        {bombOpen ? (
+          <section className="ev-bomb" aria-label="Бомб-пот">
+            {bomb && <BombPotBar model={model} screen={bomb} />}
+            <BombWinners
+              model={model}
+              busy={actions.busy || Boolean(actions.check('hand'))}
+              hold={suggestion ? HAND_RIVER_HOLD : null}
+              onPick={pult.closeBomb}
+            />
+          </section>
+        ) : (
+          <>
+            {hand.show && (
+              <Button
+                variant={handMain ? 'primary' : 'secondary'}
+                block
+                size="lg"
+                icon="arrow-right"
+                disabled={actions.busy || Boolean(hand.hold) || Boolean(actions.check('hand'))}
+                onClick={pult.nextHand}
+              >
+                {hand.label}
+              </Button>
+            )}
+            {hand.hold && <p className="m-small ev-table__hint">{hand.hold}</p>}
+          </>
         )}
-        {hand.hold && <p className="m-small ev-table__hint">{hand.hold}</p>}
-        <div className="ev-table__row">
+        <div className="ev-table__row ev-table__row--bomb">
           <Button
             block
             icon="eye"
@@ -260,6 +290,14 @@ export function TableView({
           >
             {showdownOpen ? 'Продолжить олл-ин' : 'Отметить олл-ин'}
           </Button>
+          {/* Бомб-пот — шторка (два касания): на какую раздачу, вилка взноса, «Бросить кубик». */}
+          <IconButton
+            variant="secondary"
+            icon="bomb"
+            label={bombRefusal ? `Бомб-пот: ${bombRefusal}` : 'Бомб-пот'}
+            disabled={actions.busy || bombRefusal !== null || Boolean(suggestion)}
+            onClick={onBomb}
+          />
           {/* Что отменится — в вопросе перед отменой (voidWithConfirm), здесь — в подписи кнопки. */}
           <IconButton
             variant="secondary"

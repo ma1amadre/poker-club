@@ -3,7 +3,9 @@ import { DEFAULT_FORMAT } from './format.ts';
 import type { BlindLevel } from './types.ts';
 import {
   announcementVariants,
+  BOMB_STAKE_TEXTS,
   BREAK_TEXTS,
+  bombStakePhrase,
   breakPhrase,
   blindsWords,
   clipHash,
@@ -131,6 +133,27 @@ describe('фразы', () => {
     // Проверка звука — первой в списке: табло подгружает клипы по порядку FIXED_TEXTS.
     expect(FIXED_TEXTS[0]).toBe(PHRASES.voiceOn);
     for (const t of FIXED_TEXTS) expect(t).toBe(normalizeSpeech(t));
+  });
+
+  it('бомб-пот (030): «Бомб-пот!» и взнос кратностью 1–5 BB — в фиксированных', () => {
+    expect(PHRASES.bombPot).toBe('Бомб-пот!');
+    expect(BOMB_STAKE_TEXTS).toEqual([
+      'Взнос — один большой блайнд.',
+      'Взнос — два больших блайнда.',
+      'Взнос — три больших блайнда.',
+      'Взнос — четыре больших блайнда.',
+      'Взнос — пять больших блайндов.',
+    ]);
+    expect(bombStakePhrase(21)).toBe('Взнос — двадцать один большой блайнд.');
+    for (const t of [PHRASES.bombPot, ...BOMB_STAKE_TEXTS]) expect(FIXED_TEXTS).toContain(t);
+    expect(announcementVariants({ kind: 'bomb_pot' }, () => null)).toEqual([['Бомб-пот!']]);
+    expect(announcementVariants({ kind: 'bomb_stake', bbs: 3 }, () => null)).toEqual([
+      ['Взнос — три больших блайнда.'],
+    ]);
+    // Число не прочитать — сказать нечего (табло молчит, сцена идёт).
+    expect(announcementVariants({ kind: 'bomb_stake', bbs: 2.5 }, () => null)).toEqual([]);
+    // Сумм голос не называет: в фразах только кратность.
+    for (const t of BOMB_STAKE_TEXTS) expect(t).not.toMatch(/\d/u);
   });
 
   it('перерыв на N минут (022): минуты с согласованием, фразы пульта — в фиксированных', () => {

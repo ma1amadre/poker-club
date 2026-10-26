@@ -8,6 +8,9 @@
 // «Следующая раздача» (миграция 028) — запись 'hand' одним касанием: двигает баттон и считает раздачи
 // уровня; тост называет позиции новой раздачи с блайндами и даёт «Отменить». Видна ли она и закрыта ли
 // (вопрос после ривера) — handButton у видов пульта: вопрос считает useRiverBusts.
+import { BOMB_POT_DRAFT, bombPotCloseDrafts } from '@domain/bombPot.ts';
+import type { EventDraft } from '@domain/replay.ts';
+import type { PlayerId } from '@domain/types.ts';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -26,6 +29,7 @@ import {
   rebuyText,
   rebuyWindow,
 } from './lib';
+import { bombAnnounceToast, bombCloseToast, type BombTarget } from './bombPotView';
 import { handToast, stateAfter, unseatedHint } from './seating';
 import type { EveningActions } from './useEveningActions';
 import type { EveningModel } from './useEveningModel';
@@ -53,6 +57,21 @@ export interface Pult {
   unseatedHint: string | null;
   /** Записать раздачу: баттон к следующему игроку в игре, тост с позициями и «Отменить». */
   nextHand: () => void;
+  /**
+   * Бомб-пот (миграция 030): на эту раздачу — запись {} (кубик бросит сервер), на следующую — раздача
+   * и бомб-пот одним действием. boardOnline — кто первым покажет взнос (для тоста); intentKey —
+   * добавка к ключу повтора (bombIntentKey, шторка держит её между попытками). true — записано.
+   */
+  announceBomb: (
+    target: BombTarget,
+    boardOnline: boolean | null,
+    intentKey: string,
+  ) => Promise<boolean>;
+  /**
+   * «Кто забрал бомб-пот» вместо «Следующей раздачи»: забравшие и раздача одним действием; пусто
+   * («Не отмечать») — только раздача. Тост — кто забрал и где баттон (после бомб-пота он стоит).
+   */
+  closeBomb: (winners: PlayerId[]) => void;
 }
 
 export function usePult(model: EveningModel, actions: EveningActions): Pult {
@@ -185,6 +204,48 @@ export function usePult(model: EveningModel, actions: EveningActions): Pult {
     );
   };
 
+  // Ключ повтора бомб-пота — с раздачей (bombIntentKey): payload всегда {}, и ключ неудачной записи
+  // иначе повторился бы в следующей раздаче (сервер вернул бы прежний бомб-пот вместо нового броска).
+  // Для «Следующей» шторка держит добавку первого нажатия: раздача этого действия, пришедшая в журнал,
+  // не должна менять ключ повтора.
+  const announceBomb = async (
+    target: BombTarget,
+    boardOnline: boolean | null,
+    intentKey: string,
+  ) => {
+    const text = bombAnnounceToast(boardOnline);
+    const options = {
+      success: text.title,
+      detail: text.detail ?? undefined,
+      undo: true,
+      intentKey,
+    };
+    if (target === 'next') {
+      const drafts: EventDraft[] = [{ type: 'hand', payload: {} }, BOMB_POT_DRAFT];
+      return (await actions.sendAll(drafts, options)) !== null;
+    }
+    return (await actions.send('bomb_pot', {}, options)) !== null;
+  };
+
+  const closeBomb = (winners: PlayerId[]) => {
+    const fresh = actions.freshState();
+    const bombPot = fresh.bombPot;
+    if (!bombPot) return;
+    const drafts = bombPotCloseDrafts(bombPot, winners);
+    // Кто забрал, уже отмечено (раздачу после отметки отменили отдельно) — пишется только раздача, тост
+    // называет отмеченных.
+    const text = bombCloseToast(
+      fresh,
+      stateAfter(format, events, drafts, serverNow()),
+      bombPot.result?.winners ?? winners,
+      nameOf,
+    );
+    const options = { success: text.title, detail: text.detail ?? undefined, undo: true };
+    // «Не отмечать» — одна раздача, как «Следующая раздача»; с забравшими — одним действием.
+    if (drafts.length === 1) void actions.send('hand', {}, options);
+    else void actions.sendAll(drafts, options);
+  };
+
   return {
     lastAlive,
     rebuysStillOpen,
@@ -196,5 +257,7 @@ export function usePult(model: EveningModel, actions: EveningActions): Pult {
     undoLast,
     unseatedHint: unseatedHint(state, nameOf),
     nextHand,
+    announceBomb,
+    closeBomb,
   };
 }

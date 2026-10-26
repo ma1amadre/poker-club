@@ -19,7 +19,7 @@
 //   выбор не нужен; на двоих и при одном проигравшем выбивает лучшая рука, как и раньше.
 import { riverRanking } from './allins.ts';
 import type { EventDraft } from './replay.ts';
-import type { CardCode, EveningEvent, PlayerId, ShowdownHand } from './types.ts';
+import type { CardCode, EveningEvent, EveningState, PlayerId, ShowdownHand } from './types.ts';
 
 /** Руки и стол раздачи (ShowdownState или её часть). */
 export interface RiverHand {
@@ -217,4 +217,20 @@ export function riverBustDrafts(
     type: 'bust' as const,
     payload: { playerId, by: [...(killersOf[playerId] ?? [])] },
   }));
+}
+
+/**
+ * Победитель олл-ина, доигранного до ривера внутри открытого бомб-пота (миграция 030): кого пульт
+ * подсвечивает главной кнопкой в ряду «Кто забрал бомб-пот». Олл-ин — открытый после объявления
+ * бомб-пота (BombPotState.allIn — последняя версия, и после закрытия раздачи олл-ина: ответ на
+ * «Фишек хватило?» закрывает её раньше, чем ряд «Кто забрал» открывается), на столе 5 карт; лучшая
+ * рука — среди участников бомб-пота, кто сейчас в игре. Пусто — подсказки нет (олл-ина не было, до
+ * ривера). Решает всё равно банкир: при побочных банках «победитель» неоднозначен.
+ */
+export function bombPotAllInWinners(state: EveningState): PlayerId[] {
+  const bombPot = state.bombPot;
+  const allIn = bombPot?.allIn;
+  if (!bombPot || !allIn) return [];
+  const winners = riverOutcome(allIn)?.winners ?? [];
+  return winners.filter((id) => bombPot.players.includes(id) && state.players[id]?.alive);
 }

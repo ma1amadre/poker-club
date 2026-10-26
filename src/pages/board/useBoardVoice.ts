@@ -17,6 +17,8 @@
 //   пришёл (фраза не озвучена, нет сети) — молчим, как с любой неозвученной фразой.
 // - Чего не хватает (gaps): имена, фразы уровней и фиксированные фразы, которых сервер не нашёл, —
 //   для подвала табло (voiceGapNotes): имя пропадёт из фразы, остальное табло пропустит.
+// - Сцена табло говорит сама (say): бомб-пот (миграция 030) — «Бомб-пот!» в начале сцены и взнос,
+//   когда флапы встали. На ТВ (scene) детектор эти фразы не повторяет; клипа нет — фраза пропадает.
 import {
   announcementVariants,
   clipHash,
@@ -72,6 +74,8 @@ export interface BoardVoice {
   gaps: VoiceGaps;
   /** Нажатие кнопки: включить (и разбудить звук) или выключить. */
   press: () => void;
+  /** Сказать сейчас по такту сцены (бомб-пот на ТВ); выключен голос или клипа нет — молчит. */
+  say: (announcement: Announcement) => void;
 }
 
 interface Args {
@@ -81,9 +85,18 @@ interface Args {
   state: EveningState;
   applied: readonly EveningEvent[];
   nowMs: number;
+  /** Табло ТВ со сценами: фразы бомб-пота говорит сцена (say), детектор их не повторяет. */
+  scene?: boolean;
 }
 
-export function useBoardVoice({ source, data, state, applied, nowMs }: Args): BoardVoice {
+export function useBoardVoice({
+  source,
+  data,
+  state,
+  applied,
+  nowMs,
+  scene = false,
+}: Args): BoardVoice {
   const [supported] = useState(voiceSupported);
   const [enabled, setEnabled] = useState(() => supported && readPref());
   // Играет ли AudioContext (жест получен) — VoicePlayer сообщает о смене состояния.
@@ -214,7 +227,7 @@ export function useBoardVoice({ source, data, state, applied, nowMs }: Args): Bo
       prevFrame.current = { eveningId: data.evening.id, frame };
       return;
     }
-    const { say, frame: next } = voiceStep(data.format, prev.frame, frame);
+    const { say, frame: next } = voiceStep(data.format, prev.frame, frame, { scene });
     prevFrame.current = { eveningId: data.evening.id, frame: next };
     const player = playerRef.current;
     if (!enabled || !player?.running) return;
@@ -238,7 +251,27 @@ export function useBoardVoice({ source, data, state, applied, nowMs }: Args): Bo
     for (const announcement of say) speak(announcement);
     // state/applied — новый объект на каждый рендер; лишний прогон сравнит одинаковые кадры и
     // промолчит.
-  }, [nowMs, data, state, applied, enabled, names]);
+  }, [nowMs, data, state, applied, enabled, names, scene]);
+
+  // Фраза по такту сцены: те же клипы и та же очередь, что у детектора.
+  const enabledRef = useRef(enabled);
+  const namesRef = useRef(names);
+  useEffect(() => {
+    enabledRef.current = enabled;
+    namesRef.current = names;
+  });
+  const say = useCallback((announcement: Announcement) => {
+    const player = playerRef.current;
+    if (!enabledRef.current || !player?.running) return;
+    const variants = announcementVariants(announcement, (id) => namesRef.current.get(id) ?? null);
+    for (const clips of variants) {
+      const hashes = clips.map((text) => hashOf.current.get(normalizeSpeech(text)));
+      if (hashes.every((h): h is string => h !== undefined && player.has(h))) {
+        player.enqueue(hashes);
+        return;
+      }
+    }
+  }, []);
 
   // Выключили — замолчать сразу.
   useEffect(() => {
@@ -268,5 +301,5 @@ export function useBoardVoice({ source, data, state, applied, nowMs }: Args): Bo
       : running
         ? 'on'
         : 'needs_tap';
-  return { status, gaps: enabled ? gaps : NO_VOICE_GAPS, press };
+  return { status, gaps: enabled ? gaps : NO_VOICE_GAPS, press, say };
 }

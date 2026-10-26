@@ -1,0 +1,183 @@
+/*
+ * Бомб-пот на экране вечера (миграция 030; DESIGN.md, «Бомб-пот»): полоса у всех, ряд «Кто забрал
+ * бомб-пот» на пульте, шторка «Бомб-пот». «Терминал»: рамка 1px accent — как пауза на полосе часов,
+ * радиусов и теней нет; данные — моно, имена на кнопках — Inter прописными (кнопки кита).
+ */
+
+.ev-bomb {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.ev-bomb__bar {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.ev-bomb__bar > p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ev-bomb__eb {
+  color: var(--accent);
+}
+
+/* «Кубик брошен — смотри на табло» — Inter; взнос «3 BB — по 300» — моно крупнее, accent. */
+.ev-bomb__main {
+  font-family: var(--m-font-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+.ev-bomb__main--stake {
+  font-family: var(--m-font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--accent);
+}
+
+.ev-bomb__detail {
+  color: var(--ink);
+}
+
+.ev-bomb__reroll {
+  color: var(--ink-muted);
+}
+
+.ev-bomb__mine {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Розыгрыш на телефоне (табло не на связи): окно с цифрой и шкала 1…5 — исходов пять, они равны. */
+.ev-bomb__roll {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.ev-bomb__face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 64px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-strong);
+  font-family: var(--m-font-mono);
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.ev-bomb__bb {
+  font-family: var(--m-font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+.ev-bomb__scale {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.ev-bomb__cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line-strong);
+  font-family: var(--m-font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+
+.ev-bomb__cell--on {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* «Кто забрал»: имена кнопками в две колонки (на 320 px — тоже две), под ними «Делёж» и «Не отмечать». */
+.ev-bomb__who {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.ev-bomb__who > p {
+  margin: 0;
+}
+
+/* «Подробно»: полоса — на карточке часов, в пульте только «Кто забрал» — без черты сверху. */
+.ev-bomb__who:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.ev-bomb__names,
+.ev-bomb__row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.ev-bomb__hint {
+  color: var(--ink-muted);
+}
+
+/* Кнопка «Бомб-пот» иконкой в ряду «Отметить олл-ин · Отменить последнее» («Стол»). */
+.ev-table__row.ev-table__row--bomb {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+/* ---------- Шторка «Бомб-пот» ---------- */
+
+.ev-bomb-sheet {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.ev-bomb-sheet__facts {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.ev-bomb-sheet__facts > p,
+.ev-bomb-sheet__note {
+  margin: 0;
+}
+
+.ev-bomb-sheet__range {
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ev-bomb-sheet__note {
+  color: var(--ink-muted);
+}
+
+/* Полоса на карточке часов («Подробно» и экран игрока) — той же рамкой, что пульт. */
+.ev-clock__bomb {
+  padding: var(--space-3);
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+}

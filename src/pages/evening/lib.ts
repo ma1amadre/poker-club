@@ -21,6 +21,7 @@ import {
   type EventDraft,
   type ReplayLog,
 } from '@domain/replay.ts';
+import { isBombPotRevealed, readBombPot, readBombPotResult } from '@domain/bombPot.ts';
 import { readButtonSeat, readSeat, type SeatedPlayer, type TablePositions } from '@domain/seats.ts';
 import { readShowdown, readShowdownId, streetOf } from '@domain/showdown.ts';
 import { spectatesEvening } from '@domain/spectators.ts';
@@ -28,6 +29,7 @@ import {
   MAX_ENTRY_RUB,
   SEATING_EVENT_TYPES,
   type BlindLevel,
+  type BombPotState,
   type EveningEvent,
   type EveningState,
   type EventType,
@@ -71,7 +73,8 @@ function amountOf(ev: EveningEvent): number {
   return typeof a === 'number' ? a : 0;
 }
 
-export type EventKind = 'entry' | 'bust' | 'clock' | 'money' | 'finish' | 'showdown' | 'seat';
+export type EventKind =
+  'entry' | 'bust' | 'clock' | 'money' | 'finish' | 'showdown' | 'seat' | 'bomb';
 
 export interface EventLine {
   kind: EventKind;
@@ -98,6 +101,28 @@ export interface FeedContext {
    * (Саша)». Место держит последний, кого журнал посадил на него принятой записью «место».
    */
   buttonHolders: ReadonlyMap<number, PlayerId>;
+  /**
+   * id записи «Бомб-пот» → её бомб-пот по replay (миграция 030): взнос, банк, участники. Принятые
+   * записи; отменённые и непринятые лента подписывает по броску из payload.
+   */
+  bombPots: ReadonlyMap<number, BombPotState>;
+  /**
+   * Серверное «сейчас» ленты: взнос бомб-пота лента называет не раньше at + 9 с — первым его
+   * показывает табло (решение 10). null — время не известно: взнос не скрывается (журнал прошлого).
+   */
+  nowMs: number | null;
+  /**
+   * Табло вечера на связи (решение 10; экран вечера знает это по board_presence — useBombPot): true —
+   * до показа взноса «кубик брошен — смотри на табло»; false — взнос разыгрывают экраны вечера, и
+   * лента о табло не говорит («кубик брошен»); null — не известно (как с табло).
+   */
+  boardOnline: boolean | null;
+  /**
+   * Показан ли уже взнос бомб-пота на этом экране — тот же миг, что у полосы бомб-пота
+   * (feedWithBombReveal: без табло — когда кончился розыгрыш на телефоне). null — правило табло:
+   * at + 9 с (BOMB_REVEAL_MS).
+   */
+  bombShown: ((bombPot: { at: string; bbs: number }) => boolean) | null;
 }
 
 /**
@@ -128,7 +153,8 @@ function buttonHoldersOf(
 
 export function feedContext(
   events: readonly EveningEvent[],
-  log: Pick<ReplayLog, 'applied' | 'amended'>,
+  log: Pick<ReplayLog, 'applied' | 'amended'> & { state?: Pick<EveningState, 'bombPots'> },
+  nowMs: number | null = null,
 ): FeedContext {
   const effective = new Map<number, EveningEvent>();
   for (const e of log.applied) if (log.amended.has(e.id)) effective.set(e.id, e);
@@ -147,7 +173,17 @@ export function feedContext(
       inForce.set(target.id, { ...target, payload: amendedPayload(target, patch) });
     }
   }
-  return { effective, byId, previous, buttonHolders };
+  const bombPots = new Map((log.state?.bombPots ?? []).map((b) => [b.eventId, b]));
+  return {
+    effective,
+    byId,
+    previous,
+    buttonHolders,
+    bombPots,
+    nowMs,
+    boardOnline: null,
+    bombShown: null,
+  };
 }
 
 /** «выбивает Саша», «выбивают Саша и Дима — нокаут каждому», «кто выбил — не указано». */
@@ -318,9 +354,77 @@ export function describeEvent(
         detail: null,
       };
     }
+    case 'bomb_pot': {
+      // Бомб-пот (030): взнос лента называет после того, как его показало табло (at + 9 с, решение
+      // 10), а без табло — когда его показала полоса экрана (розыгрыш на телефоне, ctx.bombShown);
+      // без времени (тост, черновик) — тоже не называет. Переброс — пометкой с отменённым.
+      const roll = readBombPot(ev.payload);
+      const reroll = roll ? bombRerollText(roll.previousBbs) : null;
+      const hidden =
+        !ctx ||
+        (ctx.nowMs !== null &&
+          !(ctx.bombShown
+            ? ctx.bombShown({ at: ev.at, bbs: roll?.bbs ?? 0 })
+            : isBombPotRevealed(ev, ctx.nowMs)));
+      if (!roll || roll.bbs === 0 || hidden) {
+        const waiting =
+          roll && roll.bbs > 0
+            ? ctx?.boardOnline === false
+              ? 'кубик брошен'
+              : 'кубик брошен — смотри на табло'
+            : null;
+        return {
+          kind: 'bomb',
+          title: 'Бомб-пот',
+          detail: [waiting, reroll].filter(Boolean).join(' · ') || null,
+        };
+      }
+      const bp = ctx.bombPots.get(ev.id);
+      return {
+        kind: 'bomb',
+        title: `Бомб-пот: ${roll.bbs}${NBSP}BB`,
+        detail:
+          [
+            bp
+              ? `по${NBSP}${formatNumber(bp.stake)} · банк ${formatNumber(bp.pot)} · в${NBSP}игре ${bp.players.length}`
+              : null,
+            reroll,
+          ]
+            .filter(Boolean)
+            .join(' · ') || null,
+      };
+    }
+    case 'bomb_pot_result': {
+      // Кто забрал банк (030): без суммы — итогового банка приложение не знает.
+      const read = readBombPotResult(ev.payload);
+      const names = (read?.winners ?? []).map(nameOf);
+      const bp = read ? ctx?.bombPots.get(read.eventId) : undefined;
+      return {
+        kind: 'bomb',
+        title:
+          names.length === 0
+            ? 'Бомб-пот: кто забрал банк'
+            : names.length === 1
+              ? `Бомб-пот забирает ${names[0]}`
+              : `Бомб-пот делят ${joinNames(names)}`,
+        detail: bp ? `${bp.bbs}${NBSP}BB — по${NBSP}${formatNumber(bp.stake)}` : null,
+      };
+    }
     default:
       return { kind: 'clock', title: 'Событие', detail: null };
   }
+}
+
+/**
+ * Переброс бомб-пота (решение 7): «переброс — отменён бросок 4 BB» / «… отменены броски 4 BB и
+ * 2 BB»; первый бросок раздачи — null.
+ */
+export function bombRerollText(previousBbs: readonly number[]): string | null {
+  if (previousBbs.length === 0) return null;
+  const list = joinNames(previousBbs.map((b) => `${b}${NBSP}BB`));
+  return previousBbs.length === 1
+    ? `переброс — отменён бросок ${list}`
+    : `переброс — отменены броски ${list}`;
 }
 
 // --- Что изменит отмена записи и переход уровня -----------------------------------------------
@@ -335,6 +439,9 @@ export interface VoidImpact<T extends EveningEvent> {
   /** Вечер завершён по журналу сейчас и после отмены. */
   finishedBefore: boolean;
   finishedAfter: boolean;
+  /** Место баттона сейчас и после отмены (028): отмена сыгранного бомб-пота сдвигает его (030). */
+  buttonBefore: number | null;
+  buttonAfter: number | null;
 }
 
 /**
@@ -370,6 +477,8 @@ export function voidImpact<T extends EveningEvent>(
     }),
     finishedBefore: before.state.finished,
     finishedAfter: after.state.finished,
+    buttonBefore: before.state.buttonSeat,
+    buttonAfter: after.state.buttonSeat,
   };
 }
 
@@ -412,6 +521,62 @@ export function seatingVoidedWith<T extends EveningEvent>(
 }
 
 /**
+ * Отметки «Кто забрал бомб-пот», которые отмена eventIds берёт с собой (миграция 030), от старых к
+ * новым, без отменяемых:
+ * - отметки отменяемых бомб-потов: без своего бомб-пота журнал их не примет, а висеть «не принято»
+ *   им незачем;
+ * - отметка бомб-пота, который закрыла отменяемая раздача (bombPots — EveningState.bombPots): без
+ *   раздачи бомб-пот снова открыт, и ряд «Кто забрал» должен спросить заново — со старой отметкой
+ *   журнал новую не примет («уже отмечено»).
+ */
+export function bombResultsVoidedWith<T extends EveningEvent>(
+  events: readonly T[],
+  eventIds: readonly number[],
+  bombPots: readonly Pick<BombPotState, 'closed' | 'result'>[] = [],
+): T[] {
+  const ids = new Set(eventIds);
+  const bombs = new Set(
+    events.filter((e) => ids.has(e.id) && e.type === 'bomb_pot').map((e) => e.id),
+  );
+  const reopened = new Set(
+    bombPots.flatMap((b) =>
+      b.closed?.by === 'hand' && ids.has(b.closed.eventId) && b.result ? [b.result.eventId] : [],
+    ),
+  );
+  if (bombs.size === 0 && reopened.size === 0) return [];
+  return events
+    .filter((e) => {
+      if (e.voided || ids.has(e.id) || e.type !== 'bomb_pot_result') return false;
+      if (reopened.has(e.id)) return true;
+      const read = readBombPotResult(e.payload);
+      return read !== null && bombs.has(read.eventId);
+    })
+    .sort((a, b) => a.id - b.id);
+}
+
+/**
+ * Что скажет вопрос перед отменой записи «Бомб-пот» (миграция 030). bombPot — она по replay (нет —
+ * журнал её не принял); buttonNow и buttonAfter — место баттона сейчас и после отмены (voidImpact).
+ * Открытый бомб-пот: табло покажет «ОТМЕНЁН», новое объявление в этой раздаче — переброс. Сыгранный
+ * (закрыт раздачей): табло отмену не покажет, а раздача, которая его закрыла, станет обычной —
+ * баттон после неё сдвинется, и все раздачи дальше пересчитаются (фишку баттона на столе придётся
+ * переставить); переброса не будет — это уже другая раздача.
+ */
+export function bombPotVoidText(
+  bombPot: Pick<BombPotState, 'closed'> | undefined,
+  buttonNow: number | null,
+  buttonAfter: number | null,
+): string {
+  if (!bombPot?.closed) return voidConsequenceText('bomb_pot', false);
+  const kept = 'Отменённый бросок останется в ленте, табло отмену не покажет: бомб-пот уже сыгран.';
+  if (bombPot.closed.by === 'finish' || buttonNow === buttonAfter) {
+    return `${kept} Баттон и блайнды не изменятся.`;
+  }
+  const where = (seat: number | null) => (seat === null ? 'не задан' : `место ${seat}`);
+  return `${kept} Раздача, которая его закрыла, станет обычной: баттон пересчитается для всех раздач после неё — сейчас ${where(buttonNow)}, после отмены — ${where(buttonAfter)}. Фишку баттона на столе придётся переставить.`;
+}
+
+/**
  * Что пересчитается после отмены записи — фраза вопроса «Отменить запись?» после подписи записи.
  * finishedAfter — вечер останется завершённым и после отмены (для «Игра окончена»).
  */
@@ -440,6 +605,11 @@ export function voidConsequenceText(type: EventType, finishedAfter: boolean): st
       return 'Баттон вернётся туда, где был до этой записи.';
     case 'hand':
       return 'Счёт раздач, уровень и баттон пересчитаются.';
+    // Бомб-пот (миграция 030): на деньги, очки и места не влияет.
+    case 'bomb_pot':
+      return 'Табло покажет, что бомб-пот отменён, отменённый бросок останется в ленте. Объявишь снова в этой раздаче — кубик бросится заново, табло и лента пометят переброс.';
+    case 'bomb_pot_result':
+      return 'Бомб-пот останется без отметки, кто забрал банк.';
     default:
       return 'Таймер и уровень пересчитаются.';
   }
@@ -588,7 +758,9 @@ export interface UndoAction<T> {
  * тосте: вылеты, ребаи и закрытие. Иначе отменилось бы только закрытие, а вылет остался. Признаки:
  * прямо перед закрытием в журнале — записи одного действия (одно серверное время и один автор;
  * только вылеты, ребаи и оплата, хотя бы один вылет), вылеты — после открытия этой раздачи,
- * закрытие — того же автора и не позже FOLLOW_UP_MAX_MS после них.
+ * закрытие — того же автора и не позже FOLLOW_UP_MAX_MS после них. Раздача, записанная вместе с
+ * «Кто забрал бомб-пот» (миграция 030, одно время и один автор), — тоже всё действие: отметка и
+ * раздача.
  */
 export function lastUndoAction<T extends EveningEvent & { createdBy?: string | null }>(
   events: readonly T[],
@@ -596,6 +768,20 @@ export function lastUndoAction<T extends EveningEvent & { createdBy?: string | n
   const last = lastUndoable(events);
   if (!last) return null;
   const single: UndoAction<T> = { main: last, extra: [] };
+  // «Кто забрал бомб-пот» (030): отметка и раздача одним действием (одно серверное время и один автор)
+  // — отменяются вместе, как «Отменить» в тосте; иначе бомб-пот открылся бы снова со старой отметкой.
+  if (last.type === 'hand') {
+    const live = events.filter((e) => !e.voided).sort((a, b) => a.id - b.id);
+    const prev = live[live.findIndex((e) => e.id === last.id) - 1];
+    if (
+      prev?.type === 'bomb_pot_result' &&
+      prev.at === last.at &&
+      (prev.createdBy ?? null) === (last.createdBy ?? null)
+    ) {
+      return { main: prev, extra: [last] };
+    }
+    return single;
+  }
   const showdownId = last.type === 'showdown_close' ? readShowdownId(last.payload) : null;
   if (showdownId === null) return single;
   const live = events.filter((e) => !e.voided).sort((a, b) => a.id - b.id);
@@ -1371,6 +1557,8 @@ const REJECTED_TITLE: Partial<Record<EventType, string>> = {
   finish: 'Завершение не принято',
   showdown: 'Олл-ин не принят',
   showdown_close: 'Закрытие олл-ина не принято',
+  bomb_pot: 'Бомб-пот не принят',
+  bomb_pot_result: 'Отметка бомб-пота не принята',
 };
 
 /** Заголовок тоста о непринятой записи: «Ребай не принят: Ребаи закрыты». */

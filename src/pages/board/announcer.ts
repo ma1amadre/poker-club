@@ -30,6 +30,10 @@
 //   перевести уровень через границу, а запоздавшая пауза откатывает его обратно — после
 //   «Продолжаем» граница пересекается снова, но второй раз не объявляется. Память сбрасывается к
 //   текущему состоянию только настоящим откатом: новый level_prev, timer_start или отмена (void).
+// - бомб-пот (миграция 030): на ТВ «Бомб-пот!» и «Взнос — N больших блайндов» говорит сцена по своим
+//   тактам (TvBoard → onSay), детектор молчит (scene); на табло без сцены (телефон, узкий экран) —
+//   обе фразы сразу за свежей записью bomb_pot. Отмену голос не объявляет.
+import { readBombPot } from '@domain/bombPot.ts';
 import { pauseLeftMs, readPause } from '@domain/replay.ts';
 import type { EveningEvent, EveningState, TournamentFormat } from '@domain/types.ts';
 import type { Announcement } from '@domain/voice.ts';
@@ -125,8 +129,14 @@ export function detectAnnouncements(
   format: TournamentFormat,
   prev: VoiceFrame,
   next: VoiceFrame,
+  options: VoiceStepOptions = {},
 ): Announcement[] {
-  return voiceStep(format, prev, next).say;
+  return voiceStep(format, prev, next, options).say;
+}
+
+export interface VoiceStepOptions {
+  /** Табло ТВ со сценой бомб-пота: фразы бомб-пота говорит сцена, детектор их не повторяет. */
+  scene?: boolean;
 }
 
 /**
@@ -137,6 +147,7 @@ export function voiceStep(
   format: TournamentFormat,
   prev: VoiceFrame,
   next: VoiceFrame,
+  options: VoiceStepOptions = {},
 ): { say: Announcement[]; frame: VoiceFrame } {
   const out: Announcement[] = [];
   const removed = [...prev.eventIds].some((id) => !next.eventIds.has(id));
@@ -185,6 +196,14 @@ export function voiceStep(
       case 'finish':
         out.push({ kind: 'winner', winner: next.state.places[0] ?? null });
         return;
+      case 'bomb_pot': {
+        // Без сцены — обе фразы сразу; принят ли бомб-пот, решает replay (applied).
+        if (options.scene) return;
+        const roll = readBombPot(event.payload);
+        out.push({ kind: 'bomb_pot' });
+        if (roll && roll.bbs > 0) out.push({ kind: 'bomb_stake', bbs: roll.bbs });
+        return;
+      }
       default:
         return;
     }

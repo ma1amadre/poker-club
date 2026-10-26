@@ -55,6 +55,13 @@ export interface Journal {
   seat(id: PlayerId, seat: number): number;
   /** Баттон на место seat (028). */
   button(seat: number): number;
+  /**
+   * Бомб-пот (030) с броском сервера bbs и отменёнными бросками раздачи previousBbs (переброс); без
+   * bbs — черновик клиента {}.
+   */
+  bombPot(bbs?: number, previousBbs?: number[]): number;
+  /** Кто забрал банк бомб-пота eventId (030). */
+  bombPotResult(eventId: number, winners: PlayerId[]): number;
   voidEvent(eventId: number): void;
 }
 
@@ -104,6 +111,12 @@ export function journal(startIso = '2026-10-08T16:00:00.000Z'): Journal {
     adjust: (seconds) => j.add('time_adjust', { seconds }),
     seat: (p, seat) => j.add('seat', { playerId: p, seat }),
     button: (seat) => j.add('button', { seat }),
+    bombPot: (bbs, previousBbs) =>
+      j.add(
+        'bomb_pot',
+        bbs === undefined ? {} : previousBbs === undefined ? { bbs } : { bbs, previousBbs },
+      ),
+    bombPotResult: (eventId, winners) => j.add('bomb_pot_result', { eventId, winners }),
     voidEvent(eventId) {
       const ev = events.find((e) => e.id === eventId);
       if (!ev) throw new Error(`нет события ${eventId}`);

@@ -196,7 +196,24 @@ export class Flap {
     return t;
   }
 
-  private leaf(c: string, dur: number, bounce: boolean): void {
+  /**
+   * Один лист сейчас: знак c за dur мс. Розыгрыш бомб-пота задаёт длительность каждого листа сам
+   * (интервалы растут); heavy — тяжёлая посадка исхода: отскок 12° вместо 8°, вторая фаза в 1,5 раза
+   * длиннее, у каждого участка своя кривая (замечание судей к макету v2). Спокойно — проявлением.
+   */
+  turn(c: string, dur: number, o: { bounce?: boolean; heavy?: boolean } = {}): void {
+    const m = this.motion;
+    this.target = c;
+    this.busyTo = m.now + dur + 40;
+    if (m.calm) {
+      this.set(c);
+      m.A(this.full, [{ opacity: 0.25 }, { opacity: 1 }], 180);
+      return;
+    }
+    this.leaf(c, dur, o.bounce ?? false, o.heavy ?? false);
+  }
+
+  private leaf(c: string, dur: number, bounce: boolean, heavy = false): void {
     const m = this.motion;
     const from = this.ch;
     this.ch = c;
@@ -233,19 +250,26 @@ export class Flap {
       easing: 'cubic-bezier(0.55, 0, 1, 0.6)',
     });
     if (topShade) m.A(topShade, [{ opacity: 0 }, { opacity: 0.32 }], d1);
-    const kf = bounce
+    const kf: Record<string, string | number>[] = heavy
       ? [
-          { transform: rx(90), offset: 0 },
-          { transform: rx(0), offset: 0.74 },
-          { transform: rx(8), offset: 0.86 },
+          { transform: rx(90), offset: 0, easing: 'cubic-bezier(0.55, 0, 1, 0.45)' },
+          { transform: rx(0), offset: 0.74, easing: 'cubic-bezier(0, 0, 0.3, 1)' },
+          { transform: rx(12), offset: 0.86, easing: 'cubic-bezier(0.5, 0, 0.75, 0)' },
           { transform: rx(0), offset: 1 },
         ]
-      : [{ transform: rx(90) }, { transform: rx(0) }];
-    const d2b = bounce ? Math.round(d2 * 1.35) : d2;
+      : bounce
+        ? [
+            { transform: rx(90), offset: 0 },
+            { transform: rx(0), offset: 0.74 },
+            { transform: rx(8), offset: 0.86 },
+            { transform: rx(0), offset: 1 },
+          ]
+        : [{ transform: rx(90) }, { transform: rx(0) }];
+    const d2b = heavy ? Math.round(d2 * 1.5) : bounce ? Math.round(d2 * 1.35) : d2;
     m.after(d1, () => {
       top.remove();
       bot.style.opacity = '1';
-      m.A(bot, kf, d2b, { easing: bounce ? 'linear' : 'cubic-bezier(0.5, 0, 1, 0.7)' });
+      m.A(bot, kf, d2b, { easing: bounce || heavy ? 'linear' : 'cubic-bezier(0.5, 0, 1, 0.7)' });
       if (botShade) m.A(botShade, [{ opacity: 0.28 }, { opacity: 0 }], d2);
     });
     m.after(d1 + d2b, () => {

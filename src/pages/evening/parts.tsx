@@ -274,6 +274,8 @@ const EVENT_ICON: Record<EventType, IconName> = {
   time_adjust: 'clock',
   seat: 'map-pin',
   button: 'arrow-right',
+  bomb_pot: 'bomb',
+  bomb_pot_result: 'coins',
 };
 
 export function EventIcon({ type }: { type: EventType }) {

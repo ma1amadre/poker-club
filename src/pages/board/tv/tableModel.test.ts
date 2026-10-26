@@ -156,3 +156,18 @@ describe('удержание: экран держит прежнее, пока �
     expect(applyHolds(s, FMT, { alive: ['misha'], levelIndex: null })).toBe(s);
   });
 });
+
+describe('стол на табло: бомб-пот (миграция 030)', () => {
+  it('в бомб-поте все в игре — имена полной яркостью; метки те же (SB и BB гасит слой)', () => {
+    const j = table();
+    j.wait(5).bust('dima', ['sasha']);
+    const plain = tvTable(state(j));
+    const bomb = tvTable(state(j), { bombOn: true });
+    expect(bomb.markers).toEqual(plain.markers);
+    for (const s of bomb.seats) {
+      if (s.status === 'live') expect(s.focus).toBe(FOCUS_BLIND);
+      else expect(s.focus).toBe(plain.seats[s.seat - 1]?.focus);
+    }
+    expect(plain.seats.some((s) => s.status === 'live' && s.focus === FOCUS_LIVE)).toBe(true);
+  });
+});

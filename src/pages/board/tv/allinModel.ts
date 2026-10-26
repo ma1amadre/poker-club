@@ -689,6 +689,8 @@ export function pctTile(
 }
 
 /** «Олл-ин · 3 руки». */
-export function allinTitle(hands: number): string {
-  return `Олл-ин · ${hands} ${plural(hands, ['рука', 'руки', 'рук'])}`;
+export function allinTitle(hands: number, bombPot = false): string {
+  // Олл-ин внутри бомб-пота (030) — с пометкой: банк этой раздачи начался со взносов всех.
+  const title = `Олл-ин · ${hands} ${plural(hands, ['рука', 'руки', 'рук'])}`;
+  return bombPot ? `Бомб-пот · ${title}` : title;
 }

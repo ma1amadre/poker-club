@@ -9,7 +9,8 @@ import { clockParts, drumVia } from './flapLogic';
 import { devMark, EASE } from './motion';
 import { useMotion } from './motionContext';
 
-export type ClockTone = 'run' | 'muted';
+/** run — идут (минуты accent), muted — тише, plain — белые: на сцене бомб-пота янтарь отдан исходу. */
+export type ClockTone = 'run' | 'muted' | 'plain';
 
 const HERO: FlapStyle = { w: 156, h: 224, fs: 216, wt: 800, s: 3, dy: 2 };
 const SS_REST = 'scale(0.6)';
@@ -49,7 +50,13 @@ export function ClockFlaps({ text, final: finalNow, tone, drum, frozen }: ClockF
   if (!frozen && heldFinal !== finalNow) setHeldFinal(finalNow);
   const final = frozen ? heldFinal : finalNow;
 
-  const mmInk = final ? 'var(--neutral-9)' : tone === 'run' ? 'var(--accent)' : 'var(--ink-muted)';
+  const mmInk = final
+    ? 'var(--neutral-9)'
+    : tone === 'run'
+      ? 'var(--accent)'
+      : tone === 'plain'
+        ? 'var(--ink)'
+        : 'var(--ink-muted)';
   const ssInk = final ? 'var(--critical)' : 'var(--ink-muted)';
 
   // Цифры: первый кадр — сразу; минуты — переворот; секунды — без движения, флапами только в

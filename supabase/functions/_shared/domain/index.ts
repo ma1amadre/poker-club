@@ -5,6 +5,7 @@ export * from './replay.ts';
 export * from './amend.ts';
 export * from './showdown.ts';
 export * from './seats.ts';
+export * from './bombPot.ts';
 export * from './allins.ts';
 export * from './riverBusts.ts';
 export * from './sidePots.ts';

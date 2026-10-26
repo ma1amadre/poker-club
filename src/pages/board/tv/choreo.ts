@@ -63,6 +63,7 @@ export function playLevel(
   motion.move(els.below, 'translateY(0px)', `translateY(${grow}px)`, 440, { delay: 60 });
   motion.fade(els.fund, 0.3, 320, { delay: 60 });
   motion.fade(els.tableBase, 0.4, 320, { delay: 120 });
+  motion.fade(els.bombTable, 0.4, 320, { delay: 120 });
   // Такт 1 (560): номер уровня.
   motion.after(560, () => h.setGm((g) => ({ ...g, headLevel: toNo })));
   // Такт 2 (1100): часы на полную длину уровня — барабаном.
@@ -83,6 +84,7 @@ export function playLevel(
     motion.fade(els.lvlhead, 0, 200);
     motion.fade(els.fund, 1, 320, { delay: 100 });
     motion.fade(els.tableBase, 1, 400, { delay: 100 });
+    motion.fade(els.bombTable, 1, 400, { delay: 100 });
     h.setGm((g) => ({ ...g, lift: false }));
   });
   motion.after(5060, () => {
@@ -121,6 +123,8 @@ export function playKo(
   const bar = ko?.querySelector<HTMLElement>('.tv-ko__bar') ?? null;
   const body = ko?.querySelector<HTMLElement>('.tv-ko__body') ?? null;
   motion.fade(els.center, 0, 160);
+  // Бейдж бомб-пота в центре стола уступает карточке так же, как «в игре».
+  motion.fade(els.bombTable, 0, 160);
   motion.fade(els.markers, 0.25, 240);
   motion.line(bar, 320, { delay: 100 });
   [...(body?.children ?? [])].forEach((c, i) =>
@@ -153,6 +157,7 @@ export function playKo(
   }
   motion.after(3700, () => {
     motion.fade(els.center, 1, 240);
+    motion.fade(els.bombTable, 1, 240);
     motion.fade(els.markers, 1, 300);
   });
   // «В игре» — на одного меньше: перелистывается, когда центр стола уже виден целиком.

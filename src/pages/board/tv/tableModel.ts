@@ -49,7 +49,11 @@ export const FOCUS_BLIND = 1;
 export const FOCUS_LIVE = 0.8;
 export const FOCUS_OUT = 0.3;
 
-export function tvTable(state: EveningState): TvTable {
+/**
+ * Стол из состояния. bombOn — на экране бомб-пот (030): в раздаче все в игре, имена — полной
+ * яркостью (метки SB и BB гасит слой, позиции те же).
+ */
+export function tvTable(state: EveningState, opts: { bombOn?: boolean } = {}): TvTable {
   const positions = tablePositions(state);
   const holders = new Map<number, PlayerId>();
   for (const id of state.joinOrder) {
@@ -80,7 +84,7 @@ export function tvTable(state: EveningState): TvTable {
           ? 0
           : status === 'out'
             ? FOCUS_OUT
-            : blindSeats.has(seat)
+            : opts.bombOn || blindSeats.has(seat)
               ? FOCUS_BLIND
               : FOCUS_LIVE,
       bet: null,

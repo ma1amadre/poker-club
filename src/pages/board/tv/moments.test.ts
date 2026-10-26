@@ -220,3 +220,174 @@ describe('моменты табло: развязка олл-ина', () => {
     expect([...stayedAfterRiver(['d'], new Set(['d']), () => false)]).toEqual([]);
   });
 });
+
+describe('моменты табло: бомб-пот (миграция 030)', () => {
+  function seated(): Journal {
+    const j = journal().join('a', 'b', 'c', 'd');
+    j.seat('a', 1);
+    j.seat('b', 3);
+    j.seat('c', 5);
+    j.seat('d', 8);
+    j.button(3);
+    j.start();
+    j.wait(1);
+    return j;
+  }
+
+  it('свежая запись bomb_pot — сцена; старше 10 с (табло было без связи) — без сцены, сразу бейдж', () => {
+    const j = seated();
+    let f = step(j, null).frame;
+    const id = j.bombPot(3);
+    const r = step(j, f, { nowMs: j.now() + 2000 });
+    expect(r.moments).toMatchObject([{ kind: 'bomb', eventId: id, at: j.now() }]);
+    expect(r.frame.bomb?.eventId).toBe(id);
+
+    const k = seated();
+    f = step(k, null).frame;
+    k.bombPot(2);
+    expect(step(k, f, { nowMs: k.now() + 11_000 }).moments).toEqual([]);
+  });
+
+  it('первый кадр посреди бомб-пота — точка отсчёта: сцены нет', () => {
+    const j = seated();
+    j.bombPot(4);
+    expect(step(j, null).moments).toEqual([]);
+  });
+
+  it('«Кто забрал» и раздача одним действием — развязка с забравшим; «Не отмечать» — без забравших', () => {
+    const j = seated();
+    let f = step(j, null).frame;
+    const id = j.bombPot(3);
+    f = step(j, f).frame;
+    j.wait(3);
+    j.bombPotResult(id, ['d']);
+    j.hand();
+    const r = step(j, f);
+    expect(r.moments).toMatchObject([{ kind: 'bomb_end', eventId: id, winners: ['d'] }]);
+    expect(r.frame.bomb).toBeNull();
+
+    const k = seated();
+    f = step(k, null).frame;
+    const id2 = k.bombPot(1);
+    f = step(k, f).frame;
+    k.hand();
+    expect(step(k, f).moments).toMatchObject([{ kind: 'bomb_end', eventId: id2, winners: [] }]);
+  });
+
+  it('отмена — «ОТМЕНЁН»; переброс в той же раздаче — новая сцена', () => {
+    const j = seated();
+    let f = step(j, null).frame;
+    const id = j.bombPot(4);
+    f = step(j, f).frame;
+    j.voidEvent(id);
+    let r = step(j, f);
+    expect(r.moments).toMatchObject([{ kind: 'bomb_cancel', eventId: id }]);
+    f = r.frame;
+    const id2 = j.bombPot(2, [4]);
+    r = step(j, f);
+    expect(r.moments).toMatchObject([{ kind: 'bomb', eventId: id2 }]);
+  });
+
+  it('финиш закрывает бомб-пот — без развязки: табло уходит в итог', () => {
+    const j = seated();
+    let f = step(j, null).frame;
+    j.bombPot(3);
+    f = step(j, f).frame;
+    j.bust('a', ['b']);
+    j.bust('c', ['b']);
+    j.bust('d', ['b']);
+    j.finish();
+    expect(step(j, f).moments.some((m) => m.kind === 'bomb_end' || m.kind === 'bomb_cancel')).toBe(
+      false,
+    );
+  });
+
+  it('следующая раздача с новым бомб-потом — сперва развязка прежнего, потом новая сцена', () => {
+    const j = seated();
+    let f = step(j, null).frame;
+    const id = j.bombPot(3);
+    f = step(j, f).frame;
+    j.hand();
+    const id2 = j.bombPot(5);
+    expect(
+      step(j, f).moments.map((m) =>
+        m.kind === 'bomb' || m.kind === 'bomb_end' ? `${m.kind}:${m.eventId}` : m.kind,
+      ),
+    ).toEqual([`bomb_end:${id}`, `bomb:${id2}`]);
+  });
+
+  it('очередь: отмена сцены, которая ещё ждёт, снимает её молча; повтор не задваивается', () => {
+    const j = seated();
+    const f = step(j, null).frame;
+    const id = j.bombPot(3);
+    const bomb = step(j, f).moments;
+    const q = enqueue(enqueue([], bomb), bomb);
+    expect(q).toHaveLength(1);
+    const bp = bomb[0];
+    if (!bp || bp.kind !== 'bomb') throw new Error('нет сцены');
+    const cancel: Moment = { kind: 'bomb_cancel', eventId: id, bombPot: bp.bombPot, at: j.now() };
+    expect(enqueue(q, [cancel])).toEqual([]);
+  });
+
+  it('очередь: сцена объявления — впереди ждущих нокаутов, заставка уровня снимается; после развязки прошлого', () => {
+    const j = seated();
+    const f = step(j, null).frame;
+    const id = j.bombPot(3);
+    const [bomb] = step(j, f).moments;
+    if (!bomb || bomb.kind !== 'bomb') throw new Error('нет сцены');
+    const ko = (eventId: number): Moment => ({ kind: 'ko', eventId, victim: 'a', by: [], at: 0 });
+    const level: Moment = { kind: 'level', from: 0, to: 1, at: 0 };
+    const kinds = (q: readonly Moment[]) =>
+      q.map((m) => (m.kind === 'ko' ? `ko:${m.eventId}` : m.kind));
+    // Нокауты и уровень ждут — сцена встаёт первой, уровень снят (часы в углу перелистнутся сами).
+    expect(kinds(enqueue([ko(1), ko(2), level], [bomb]))).toEqual(['bomb', 'ko:1', 'ko:2']);
+    // Тот же кадр: нокаут, уровень и новый бомб-пот — сцена первой, нокаут после неё.
+    expect(kinds(enqueue([], [ko(1), level, bomb]))).toEqual(['bomb', 'ko:1']);
+    // Развязка прошлого бомб-пота — раньше нового: сцена встаёт сразу за ней, впереди нокаута.
+    const end: Moment = {
+      kind: 'bomb_end',
+      eventId: id - 1,
+      bombPot: bomb.bombPot,
+      winners: [],
+      at: 0,
+    };
+    expect(kinds(enqueue([ko(1), end, ko(2)], [bomb]))).toEqual([
+      'ko:1',
+      'bomb_end',
+      'bomb',
+      'ko:2',
+    ]);
+    // Уровень, пришедший после сцены, ждёт за ней.
+    expect(kinds(enqueue(enqueue([], [bomb]), [level]))).toEqual(['bomb', 'level']);
+  });
+
+  it('сцена в силе, пока бомб-пот открыт и запись не залежалась в очереди', () => {
+    const j = seated();
+    const f = step(j, null).frame;
+    j.bombPot(3);
+    const [m] = step(j, f).moments;
+    if (!m) throw new Error('нет сцены');
+    const s = replayLog(F, j.events, j.now()).state;
+    expect(stillValid(m, s, j.now() + 5000)).toBe(true);
+    expect(stillValid(m, s, j.now() + 31_000)).toBe(false);
+    j.hand();
+    expect(stillValid(m, replayLog(F, j.events, j.now()).state, j.now())).toBe(false);
+  });
+});
+
+describe('моменты табло: бомб-пот, спрятанный временем', () => {
+  it('раздачу закрыли через 20+ мин — табло бейдж уже спрятало, развязкой он не воскресает', () => {
+    const j = journal().join('a', 'b');
+    j.start();
+    const f = step(j, null).frame;
+    const id = j.bombPot(2);
+    const f2 = step(j, f).frame;
+    j.wait(25);
+    j.bombPotResult(id, ['a']);
+    j.hand();
+    const [m] = step(j, f2).moments;
+    if (!m) throw new Error('нет развязки');
+    expect(m.kind).toBe('bomb_end');
+    expect(stillValid(m, replayLog(F, j.events, j.now()).state, j.now())).toBe(false);
+  });
+});

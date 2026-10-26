@@ -55,7 +55,9 @@ export type EventType =
   | 'amend'
   | 'time_adjust'
   | 'seat'
-  | 'button';
+  | 'button'
+  | 'bomb_pot'
+  | 'bomb_pot_result';
 
 export const EVENT_TYPES: readonly EventType[] = [
   'join',
@@ -75,6 +77,8 @@ export const EVENT_TYPES: readonly EventType[] = [
   'time_adjust',
   'seat',
   'button',
+  'bomb_pot',
+  'bomb_pot_result',
 ];
 
 /**
@@ -103,6 +107,36 @@ export type SeatPayload = { playerId: PlayerId; seat: number };
 
 /** payload 'button' (028): баттон на место seat (целое 1..TABLE_SEATS), где сидит игрок в игре. */
 export type ButtonPayload = { seat: number };
+
+/**
+ * Бомб-пот (миграция 030, решения пользователя 23.10.2026): банкир объявляет его на текущую раздачу,
+ * все в игре ставят одинаковый взнос — целое число BB уровня от BOMB_POT_MIN_BBS до BOMB_POT_MAX_BBS,
+ * его выбрасывает сервер (кубик в add_event). Взнос заменяет блайнды и анте раздачи, префлопа нет,
+ * один борд. Раздачу закрывает 'hand' (баттон после неё стоит, кроме случая, когда игрок на баттоне
+ * вылетел) или 'finish'. Кто забрал банк — 'bomb_pot_result' вместе с 'hand' одним действием. На
+ * деньги, очки, места в итоге, ачивки и сезоны бомб-пот не влияет: это фишки.
+ */
+export const BOMB_POT_EVENT_TYPES: readonly EventType[] = ['bomb_pot', 'bomb_pot_result'];
+
+/** Взнос бомб-пота в BB: целое от BOMB_POT_MIN_BBS до BOMB_POT_MAX_BBS, все исходы поровну. */
+export const BOMB_POT_MIN_BBS = 1;
+export const BOMB_POT_MAX_BBS = 5;
+
+/**
+ * payload 'bomb_pot' в журнале (030): bbs — бросок сервера (1..5); previousBbs — броски этой же
+ * раздачи, отменённые до него (переброс, решение 7: после отмены и повторного объявления — новый
+ * бросок), от раннего к позднему; нет поля — первый бросок раздачи. Клиент шлёт {} — оба поля ставит
+ * add_event, присланные клиентом отклоняются (22023), поэтому выбрать или подделать взнос нельзя.
+ * {} в журнале — черновик клиента (canApply, canApplySequence, состояние после черновика): replay
+ * принимает его как «кубик ещё не брошен» (bbs 0); сервер такой записи не пишет.
+ */
+export type BombPotPayload = { bbs: number; previousBbs?: number[] } | Record<string, never>;
+
+/**
+ * payload 'bomb_pot_result' (030): кто забрал банк открытого бомб-пота eventId — один игрок или
+ * несколько при дележе, участники бомб-пота и сейчас в игре. «Не отмечать» — просто 'hand'.
+ */
+export type BombPotResultPayload = { eventId: number; winners: PlayerId[] };
 
 /** Карта в нотации 'As', 'Td', '9h': ранг 2–9TJQKA, масть s ♠, h ♥, d ♦, c ♣. */
 export type CardCode = string;
@@ -207,6 +241,8 @@ export type EventPayload =
   | TimeAdjustPayload // time_adjust (022)
   | SeatPayload // seat (028)
   | ButtonPayload // button (028)
+  | BombPotPayload // bomb_pot (030): в журнале {bbs, previousBbs?}, от клиента {}
+  | BombPotResultPayload // bomb_pot_result (030)
   | Record<string, never>; // timer_start, timer_resume, level_*, hand, finish
 
 export interface EveningEvent {
@@ -234,6 +270,44 @@ export interface PlayerState {
   // Место на сукне 1..TABLE_SEATS (028) или null — без места. Ребай и вылет место не снимают: вылетевший
   // сидит на нём приглушённым, пока место не отдадут другому.
   seat: number | null;
+}
+
+/**
+ * Бомб-пот вечера (миграция 030): снимок на момент объявления и чем раздача кончилась. Взнос и
+ * участники не меняются от того, что было после объявления (вылет, ребай, поздний вход, смена уровня):
+ * их фиксирует запись. Банк — номинальный: приложение не знает ставок на улицах и коротких стеков.
+ */
+export interface BombPotState {
+  eventId: number; // принятая запись 'bomb_pot'
+  at: string; // её `at` — серверное время броска; от него BOMB_REVEAL_MS (число на телефонах)
+  /** Бросок сервера 1..BOMB_POT_MAX_BBS; 0 — только в состоянии после черновика: кубик бросит сервер. */
+  bbs: number;
+  /** Отменённые броски этой раздачи до этого (переброс), от раннего к позднему; [] — первый бросок. */
+  previousBbs: number[];
+  reroll: boolean; // previousBbs не пуст: табло и лента пишут «переброс»
+  levelIndex: number; // уровень (с 0) в позиции записи
+  bb: number; // BB этого уровня
+  stake: number; // bbs·bb — фишек с каждого участника
+  /**
+   * Участники — все в игре на момент объявления: по часовой от первого слова, кто без места — в конце
+   * в порядке входа (за столом и платят, но порядка у них нет).
+   */
+  players: PlayerId[];
+  pot: number; // stake·players.length — номинальный банк «взнос × участники»
+  /** Первое слово после флопа: первый в игре слева от баттона (3+ — SB, хедз-ап — BB); позиций нет — null. */
+  firstToAct: PlayerId | null;
+  seating: HandSeating; // места и баттон при объявлении (фишки от мест на табло)
+  /**
+   * Олл-ин этой раздачи (открыт после объявления): руки и стол его последней принятой версии — и после
+   * закрытия раздачи олл-ина: ответ на «Фишек хватило?» закрывает её раньше, чем банкир отмечает, кто
+   * забрал бомб-пот, а подсказка ряда «Кто забрал» (bombPotAllInWinners) нужна и тогда. null — олл-ина
+   * в этом бомб-поте не было.
+   */
+  allIn: { hands: ShowdownHand[]; board: CardCode[] } | null;
+  /** Кто забрал банк ('bomb_pot_result') или null — не отмечено. */
+  result: { eventId: number; at: string; winners: PlayerId[] } | null;
+  /** Чем закрыт: 'hand' — следующая раздача, 'finish' — игра окончена; null — раздача идёт. */
+  closed: { eventId: number; at: string; by: 'hand' | 'finish' } | null;
 }
 
 /** Пауза таймера (миграция 022): какая запись её поставила, когда и на сколько. */
@@ -274,5 +348,10 @@ export interface EveningState {
   // Номер места баттона (028) или null — баттон не задан. Это номер, а не игрок: пересел или вылетел
   // игрок на баттоне — метка остаётся на месте до следующей раздачи ('hand').
   buttonSeat: number | null;
+  // Бомб-пот текущей раздачи (030) или null: закрывают 'hand' и 'finish' (отмена финиша вернёт его).
+  bombPot: BombPotState | null;
+  // Все принятые бомб-поты вечера по порядку, с результатом и закрытием; открытый — последний и он же
+  // bombPot (тот же объект).
+  bombPots: BombPotState[];
   errors: { eventId: number; message: string }[];
 }

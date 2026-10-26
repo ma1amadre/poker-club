@@ -73,9 +73,10 @@ export function useEveningModel(id: string | undefined): EveningModelResult {
     [replayed],
   );
 
+  // Время ленты — для взноса бомб-пота: его называют не раньше, чем его покажет табло (030).
   const feed = useMemo(
-    () => feedContext(events ?? [], replayed ?? { applied: [], amended: new Map() }),
-    [events, replayed],
+    () => feedContext(events ?? [], replayed ?? { applied: [], amended: new Map() }, nowMs),
+    [events, replayed, nowMs],
   );
 
   const retry = () => {

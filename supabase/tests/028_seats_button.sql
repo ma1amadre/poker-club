@@ -252,11 +252,13 @@ select pg_temp.rejects(format($q$select * from public.add_events(%L, %L::jsonb, 
   ), :k4),
   '22023', 'Место — целое число от 1 до 10', 'кривое место во второй записи откатывает всё действие');
 select pg_temp.check(pg_temp.journal_size(:e6) = :size_batch, 'после отката журнал не вырос');
+-- С 030 раздача пишется одним действием (бомб-пот: «Кто забрал банк» = результат и раздача), поэтому
+-- лишний тип здесь — смена уровня.
 select pg_temp.rejects(format($q$select * from public.add_events(%L, %L::jsonb)$q$, :e6,
   jsonb_build_array(
     jsonb_build_object('type', 'seat', 'payload', jsonb_build_object('playerId', :pL, 'seat', 4)),
-    jsonb_build_object('type', 'hand', 'payload', '{}'::jsonb))::text),
-  '22023', 'только входы, ребаи, вылеты и платежи, места и баттон', 'раздача в действии — отказ');
+    jsonb_build_object('type', 'level_next', 'payload', '{}'::jsonb))::text),
+  '22023', 'только входы, ребаи, вылеты и платежи, места и баттон', 'уровень в действии — отказ');
 select pg_temp.check(pg_temp.journal_size(:e6) = :size_batch, 'отказ формы ничего не записал');
 
 -- Отмена рассадки одним действием — void_events (020) без изменений.

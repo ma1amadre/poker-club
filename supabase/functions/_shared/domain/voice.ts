@@ -10,7 +10,13 @@
 // кириллицей. Ударение ставит сам; вручную — «+» перед ударной гласной («Эрдн+и»).
 // Без зависимостей и без Date.now(): модуль исполняют браузер (Vite), Node 24 (манифест, .ts без
 // сборки — поэтому никакого TS-only синтаксиса) и vitest. Хеш — WebCrypto (crypto.subtle).
-import { PAUSE_MINUTES_OPTIONS, type BlindLevel, type PlayerId } from './types.ts';
+import {
+  BOMB_POT_MAX_BBS,
+  BOMB_POT_MIN_BBS,
+  PAUSE_MINUTES_OPTIONS,
+  type BlindLevel,
+  type PlayerId,
+} from './types.ts';
 
 /** Голос клипов: модель Silero v5_5_ru, диктор xenia (CC BY-NC-SA 4.0). Часть хеша клипа. */
 export const VOICE_ID = 'silero-v5_5-xenia';
@@ -237,6 +243,8 @@ export const PHRASES = {
   knockout: 'Нокаут!',
   /** Финал, когда имя победителя голос назвать не может. */
   gameOver: 'Игра окончена!',
+  /** Объявлен бомб-пот (миграция 030): табло говорит её в начале сцены, до броска. */
+  bombPot: 'Бомб-пот!',
 } as const;
 
 /**
@@ -275,6 +283,16 @@ export function minutesWords(n: number): string {
 /** Пауза на N минут (миграция 022): «Перерыв десять минут.» */
 export function breakPhrase(minutes: number): string {
   return `Перерыв ${minutesWords(minutes)}.`;
+}
+
+/**
+ * Взнос бомб-пота (миграция 030), когда флапы встали на выпавшем: «Взнос — один большой блайнд.»,
+ * «… два больших блайнда.», «… пять больших блайндов.». Только кратность: суммы на 8 уровнях и 2–10
+ * игроках — сотни клипов, а на экране они крупно и так (решение 12).
+ */
+export function bombStakePhrase(bbs: number): string {
+  const words = numberWords(bbs);
+  return `Взнос — ${words} ${pluralForm(bbs, ['большой блайнд', 'больших блайнда', 'больших блайндов'])}.`;
 }
 
 /** Старт таймера: «Поехали! Блайнды пять — десять.» */
@@ -338,7 +356,10 @@ export type Announcement =
   | { kind: 'break_minute' }
   | { kind: 'resume' }
   | { kind: 'knockout'; victim: PlayerId; by: PlayerId[] }
-  | { kind: 'winner'; winner: PlayerId | null };
+  | { kind: 'winner'; winner: PlayerId | null }
+  // Бомб-пот (030): «Бомб-пот!» — в начале сцены, взнос — по сигналу сцены, когда флапы встали.
+  | { kind: 'bomb_pot' }
+  | { kind: 'bomb_stake'; bbs: number };
 
 /** Имя игрока для голоса или null (см. speakableName). */
 export type SpokenNameOf = (id: PlayerId) => string | null;
@@ -424,6 +445,14 @@ export function announcementVariants(a: Announcement, nameOf: SpokenNameOf): str
       pushVariant(out, [PHRASES.gameOver]);
       return out;
     }
+    case 'bomb_pot':
+      return [[PHRASES.bombPot]];
+    case 'bomb_stake': {
+      // Взнос вне 1..5 не озвучен заранее (его и не бывает): запасного варианта нет — табло молчит.
+      const text = safe(() => bombStakePhrase(a.bbs));
+      if (text) out.push([text]);
+      return out;
+    }
   }
 }
 
@@ -432,11 +461,18 @@ export function announcementVariants(a: Announcement, nameOf: SpokenNameOf): str
 /** Фразы перерывов, которые предлагает пульт: «Перерыв пять минут.» … (миграция 022). */
 export const BREAK_TEXTS: readonly string[] = PAUSE_MINUTES_OPTIONS.map(breakPhrase);
 
+/** Взносы бомб-пота 1..5 BB (миграция 030): «Взнос — три больших блайнда.» */
+export const BOMB_STAKE_TEXTS: readonly string[] = Array.from(
+  { length: BOMB_POT_MAX_BBS - BOMB_POT_MIN_BBS + 1 },
+  (_, i) => bombStakePhrase(BOMB_POT_MIN_BBS + i),
+);
+
 /** Фразы без имён и уровней: всегда в манифесте и в предзагрузке табло. */
 export const FIXED_TEXTS: readonly string[] = [
   ...Object.values(PHRASES),
   ...Object.values(SEGMENTS),
   ...BREAK_TEXTS,
+  ...BOMB_STAKE_TEXTS,
 ];
 
 /** Уровни из формата (jsonb — доверять типам нельзя): только с читаемыми целыми числами. */

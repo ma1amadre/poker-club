@@ -739,3 +739,42 @@ describe('голос табло: что объявить', () => {
     ]);
   });
 });
+
+describe('голос табло: бомб-пот (миграция 030)', () => {
+  function game(): Journal {
+    const j = journal().join('a', 'b', 'c');
+    j.start();
+    j.wait(1);
+    return j;
+  }
+
+  it('без сцены (телефон, узкий экран) — «Бомб-пот!» и взнос сразу за свежей записью', () => {
+    const j = game();
+    const prev = frameAt(j);
+    j.bombPot(3);
+    expect(detectAnnouncements(FMT, prev, frameAt(j))).toEqual([
+      { kind: 'bomb_pot' },
+      { kind: 'bomb_stake', bbs: 3 },
+    ]);
+  });
+
+  it('на ТВ фразы говорит сцена по своим тактам — детектор молчит', () => {
+    const j = game();
+    const prev = frameAt(j);
+    j.bombPot(3);
+    expect(detectAnnouncements(FMT, prev, frameAt(j), { scene: true })).toEqual([]);
+  });
+
+  it('отмену и «Кто забрал» голос не объявляет', () => {
+    const j = game();
+    const id = j.bombPot(2);
+    let prev = frameAt(j);
+    j.voidEvent(id);
+    expect(detectAnnouncements(FMT, prev, frameAt(j))).toEqual([]);
+    const id2 = j.bombPot(4, [2]);
+    prev = frameAt(j);
+    j.bombPotResult(id2, ['a']);
+    j.hand();
+    expect(detectAnnouncements(FMT, prev, frameAt(j))).toEqual([]);
+  });
+});

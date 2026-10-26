@@ -202,6 +202,22 @@ export function blindsText(level: { sb: number; bb: number }): string {
   return formatBlinds({ sb: level.sb, bb: level.bb });
 }
 
+/**
+ * Подпись часов в углу (олл-ин, сцена бомб-пота): «Уровень 6 · 50/100». state — показанное состояние
+ * (applyHolds): пока смена уровня ждёт заставку, часы стоят на прежнем уровне — и подпись тоже. Живая
+ * проверка 26.10.2026: уровень сменился посреди сцены бомб-пота, заставка встала за сценой, часы в углу
+ * застыли на «00:01», а подпись по живому состоянию уже писала следующий уровень.
+ */
+export function cornerLevel(
+  format: TournamentFormat,
+  state: EveningState,
+): { level: number; blinds: string } {
+  return {
+    level: Math.min(state.timer.levelIndex + 1, format.levels.length),
+    blinds: blindsText(state.currentLevel),
+  };
+}
+
 /** «дальше 75/150» / «последний уровень». */
 export function nextText(state: EveningState): { label: string; value: string | null } {
   return state.nextLevel

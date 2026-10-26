@@ -31,6 +31,8 @@ import { formatRub, formatTime, retryIntent, serverNow } from '../../shared/lib'
 import { haptic } from '../../shared/telegram';
 import { useConfirm, useToast } from '../../shared/ui';
 import {
+  bombPotVoidText,
+  bombResultsVoidedWith,
   describeEvent,
   landedQuestion,
   linkedPayment,
@@ -78,6 +80,12 @@ export interface SendOptions {
    * с другого устройства) — не уходит, в тосте done.
    */
   then?: { type: EventType; payload: EventPayload; done: string; failed: string };
+  /**
+   * Добавка к ключу повтора, когда «тип + payload» одинаковы у разных действий: бомб-пот (030) —
+   * всегда {} — получает id последней раздачи, иначе ключ неудачной записи (живёт 5 мин) повторился
+   * бы в следующей раздаче, и сервер вернул бы прежний бомб-пот вместо нового броска.
+   */
+  intentKey?: string;
 }
 
 export interface VoidCopy {
@@ -127,6 +135,11 @@ export interface EveningActions {
   busy: boolean;
   confirm: ReturnType<typeof useConfirm>['confirm'];
   confirmElement: ReactElement;
+}
+
+/** Намерение с добавкой (SendOptions.intentKey): разные действия с одинаковым payload — разные ключи. */
+function withIntentKey(intent: string, key: string | undefined): string {
+  return key ? `${intent}#${key}` : intent;
 }
 
 /** Что изменится, если отменить события: что оживёт, что станет «не принято», кончится ли вечер. */
@@ -224,10 +237,24 @@ export function useEveningActions(model: EveningModel): EveningActions {
       // Места и баттон, которые держатся на отменяемом (отменён вход — место пустеет), — вместе с
       // ним: иначе они висели бы «не принято», а до старта и после завершения их не отменить.
       const own = [...group, ...paid].map((e) => e.id);
-      const seating = seatingVoidedWith(format, current.events, own, serverNow());
+      // Отмена бомб-пота берёт с собой «Кто забрал» (030): без бомб-пота журнал её не примет; отмена
+      // раздачи, которая закрыла бомб-пот, — тоже: бомб-пот снова открыт, и «Кто забрал» спросит заново.
+      const seating = [
+        ...seatingVoidedWith(format, current.events, own, serverNow()),
+        ...bombResultsVoidedWith(current.events, own, current.state.bombPots),
+      ];
       const ids = [...own, ...seating.map((e) => e.id)];
       const impact = voidEffect(current, ids);
-      const consequence = ` ${voidConsequenceText(event.type, impact.finishedAfter)}`;
+      // Бомб-пот (030): открытый — «ОТМЕНЁН» на табло и переброс; сыгранный — баттон после него.
+      const consequence = ` ${
+        event.type === 'bomb_pot'
+          ? bombPotVoidText(
+              current.state.bombPots.find((b) => b.eventId === event.id),
+              impact.buttonBefore,
+              impact.buttonAfter,
+            )
+          : voidConsequenceText(event.type, impact.finishedAfter)
+      }`;
       const impactText = voidImpactText(impact, (e) => quoteEvent(current, e));
       const others = group.slice(1);
       const othersText =
@@ -290,7 +317,8 @@ export function useEveningActions(model: EveningModel): EveningActions {
       const ids = records.map((e) => e.id);
       if (
         hasSideEffects(voidEffect(current, ids)) ||
-        seatingVoidedWith(current.evening.format, current.events, ids, serverNow()).length > 0
+        seatingVoidedWith(current.evening.format, current.events, ids, serverNow()).length > 0 ||
+        bombResultsVoidedWith(current.events, ids, current.state.bombPots).length > 0
       ) {
         await voidGroupWithConfirm(main, rest);
         return;
@@ -450,7 +478,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
       // тайм-аута советовал нажать ещё раз, и вторая запись задвоила бы платёж или уровень. Банкир
       // выбирает: «Не записывать» — дошедшая запись и есть результат, «Записать ещё одну» — новое
       // действие (следующая раздача, вылет после ребая) с новым ключом.
-      const intent = retryIntent(evening.id, type, payload);
+      const intent = withIntentKey(retryIntent(evening.id, type, payload), options.intentKey);
       const landed = await confirmIfLanded(intent);
       if (landed) return landed;
       // Пока висел вопрос, журнал мог измениться — проверка заново (без вопроса — та же).
@@ -517,7 +545,7 @@ export function useEveningActions(model: EveningModel): EveningActions {
 
       // Ключ повтора — на всё действие: сервер выводит из него ключи остальных записей (020), и
       // повтор после тайм-аута вернёт действие целиком. Дошедшее без ответа — тот же вопрос, что у send.
-      const intent = retryIntent(evening.id, 'batch', drafts);
+      const intent = withIntentKey(retryIntent(evening.id, 'batch', drafts), options.intentKey);
       const landed = await confirmIfLanded(intent);
       if (landed) return [landed];
       const problemAfter = problemNow();

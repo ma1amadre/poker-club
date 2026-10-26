@@ -45,6 +45,8 @@ export interface AllinStageProps {
    * развязка постояла RESOLVE_SHOW_MS — onResolved, табло уходит к столу.
    */
   resolving?: boolean;
+  /** Олл-ин внутри бомб-пота (030): в подписи — «Бомб-пот · олл-ин · 3 руки». */
+  bombPot?: boolean;
   onResolved?: () => void;
 }
 
@@ -77,6 +79,7 @@ export function AllinStage({
   instant,
   resolving = false,
   onResolved,
+  bombPot = false,
 }: AllinStageProps) {
   const { motion } = useMotion();
   const { hands, board } = showdown;
@@ -157,7 +160,7 @@ export function AllinStage({
       aria-label={`Олл-ин: ${STREET_WORD[shown.street].toLowerCase()}`}
     >
       <p className="tv-ai__eb tv-eb" style={{ top: streetTop - 40 }}>
-        {allinTitle(hands.length)}
+        {allinTitle(hands.length, bombPot)}
       </p>
       <div className="tv-ai__street" style={{ top: streetTop }}>
         <FlapText

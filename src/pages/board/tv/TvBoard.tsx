@@ -5,17 +5,34 @@
 // на одного меньше), олл-ин (вход шторкой и возврат к столу); такты — choreo.ts. Пока момент не дошёл
 // до своего такта, экран держит прежнее (applyHolds): табло опрашивает сервер раз в 3 с, и запись
 // приходит раньше, чем её пора показать.
+// Бомб-пот (миграция 030) — тоже моменты: сцена объявления от записи bomb_pot (розыгрыш взноса,
+// взносы, банк, флоп рубашками), развязка от «Кто забрал» и раздачи, «ОТМЕНЁН» от отмены; DOM и такты
+// — bombDirector.ts. Пока бомб-пот на экране, метки SB и BB погашены, центр стола — бейджу; сцена,
+// которая ещё ждёт, держит прежний стол, развязка — бейдж до своего такта. Голос сцены («Бомб-пот!» и
+// «Взнос — три больших блайнда») — по её тактам (onSay), а не по детектору.
 //
 // Голос, полноэкранный режим, «Нет связи», ожидание и итог вечера — как были (BoardPage): этот
 // компонент только рисует идущий вечер на ТВ.
+import { BOMB_REVEAL_MS, visibleBombPot } from '@domain/bombPot.ts';
 import { bustedInHand, riverOutcome } from '@domain/riverBusts.ts';
-import type { EveningEvent, EveningState, ShowdownState, TournamentFormat } from '@domain/types.ts';
+import type {
+  BombPotState,
+  EveningEvent,
+  EveningState,
+  ShowdownState,
+  TournamentFormat,
+} from '@domain/types.ts';
+import type { Announcement } from '@domain/voice.ts';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { formatTime } from '../../../shared/lib/format';
 import { serverNow } from '../../../shared/lib/serverClock';
 import { joinNames } from '../../../shared/lib/text';
+import { firstToActNow } from '../../evening/bombPotView';
 import { breakView, clockView, type NameOf } from '../../evening/lib';
 import { AllinStage } from './AllinStage';
+import { BombDirector, type BombHooks, type BombInput } from './bombDirector';
+import { scenePace } from './bombScene';
 import {
   playBack,
   playEnter,
@@ -26,7 +43,7 @@ import {
   type Stagehand,
 } from './choreo';
 import { ClockFlaps } from './ClockFlaps';
-import { blindsText, clockMode, finalMinute } from './gameModel';
+import { clockMode, cornerLevel, finalMinute } from './gameModel';
 import { devMark } from './motion';
 import { useLatest, useMotion } from './motionContext';
 import { MotionProvider } from './MotionProvider';
@@ -35,6 +52,7 @@ import {
   detectMoments,
   dropStale,
   enqueue,
+  isBombMoment,
   koPlace,
   stayedAfterRiver,
   stillValid,
@@ -48,6 +66,7 @@ import { TvGame } from './TvGame';
 import { useStageScale } from './useStage';
 import './tv.css';
 import './tv-allin.css';
+import './tv-bomb.css';
 
 export interface TvBoardProps {
   format: TournamentFormat;
@@ -67,6 +86,8 @@ export interface TvBoardProps {
   tools: ReactNode;
   /** Строки подвала (голос, сон экрана, атрибуция). */
   foot: ReactNode;
+  /** Голос по тактам сцены (бомб-пот: «Бомб-пот!», «Взнос — три больших блайнда»). */
+  onSay?: (announcement: Announcement) => void;
 }
 
 export function TvBoard(props: TvBoardProps) {
@@ -87,11 +108,20 @@ interface Active {
   m: Moment;
   /** Такт уже отпустил удержание: вылетевший — вне игры, уровень — новый. */
   released: boolean;
+  /**
+   * Бомб-пот: показывает ли экран бейдж (метки SB и BB погашены). Сцена включает его своим тактом,
+   * развязка и отмена — выключают.
+   */
+  bombOn: boolean;
+  /** Бомб-пот отменили, пока шла его сцена: доиграть «ОТМЕНЁН». */
+  cancelled?: boolean;
 }
 
 function TvStage(p: TvBoardProps) {
-  const { motion } = useMotion();
+  const { motion, riffle } = useMotion();
   const scale = useStageScale();
+  const [director] = useState(() => new BombDirector(motion, riffle));
+  const [clockPlain, setClockPlain] = useState(false);
   const { format, state } = p;
   const els = useRef<GameEls>(emptyGameEls());
   const aiRef = useRef<HTMLDivElement>(null);
@@ -124,7 +154,14 @@ function TvStage(p: TvBoardProps) {
   });
   if (!sameFrame(frame, det.frame)) {
     setFrame(det.frame);
-    if (det.moments.length > 0) setQueue(enqueue(queue, det.moments));
+    // Отмена бомб-пота, сцена которого идёт сейчас, — не в очередь: сцена доигрывает «ОТМЕНЁН».
+    const playing = active?.m.kind === 'bomb' ? active.m.eventId : null;
+    const cancelNow = det.moments.some((m) => m.kind === 'bomb_cancel' && m.eventId === playing);
+    const add = cancelNow
+      ? det.moments.filter((m) => !(m.kind === 'bomb_cancel' && m.eventId === playing))
+      : det.moments;
+    if (cancelNow) setActive((a) => (a ? { ...a, cancelled: true } : a));
+    if (add.length > 0) setQueue(enqueue(queue, add));
   }
 
   // Олл-ин появился — вход (когда момент на столе доиграл); пропал — возврат к столу. Заставка
@@ -153,7 +190,7 @@ function TvStage(p: TvBoardProps) {
     if (queuedLevel && queuedLevel.kind === 'level') levelIndex = queuedLevel.from;
     if (active && !active.released) {
       if (active.m.kind === 'ko') alive.push(active.m.victim);
-      else levelIndex = active.m.from;
+      else if (active.m.kind === 'level') levelIndex = active.m.from;
     }
     return { alive, levelIndex };
   }, [queue, active]);
@@ -161,6 +198,35 @@ function TvStage(p: TvBoardProps) {
   // Часы стоят на прежнем, пока смена уровня ждёт заставку (блайнды ещё прежние) и пока заставка не
   // дошла до такта часов; снята из очереди (олл-ин, несвежая) — часы сразу идут.
   const frozen = clockFrozen || queue.some((m) => m.kind === 'level');
+
+  // Бомб-пот на экране: идёт его момент — как решил такт; развязка или отмена ждут в очереди —
+  // прежний бейдж; ждёт сцена — пока нет; иначе — открытый бомб-пот (не спрятанный временем).
+  const bombNow = visibleBombPot(state, p.nowMs);
+  let bombOn = bombNow !== null;
+  let bombPot: BombPotState | null = bombNow;
+  if (active && isBombMoment(active.m)) {
+    bombOn = active.bombOn;
+    bombPot = active.m.bombPot;
+  } else {
+    const ending = queue.find((m) => m.kind === 'bomb_end' || m.kind === 'bomb_cancel');
+    if (ending && isBombMoment(ending)) {
+      bombOn = true;
+      bombPot = ending.bombPot;
+    } else if (queue.some((m) => m.kind === 'bomb')) {
+      bombOn = false;
+      bombPot = null;
+    }
+  }
+  const tableNow = tvTable(shown, { bombOn });
+  /** Что сцене нужно о столе: места сейчас, метка D, первое слово (вылетел — следующий). */
+  const bombInputOf = (bp: BombPotState): BombInput => ({
+    bombPot: bp,
+    nameOf: p.nameOf,
+    table: tableNow.seated,
+    dSeat: tableNow.markers.D,
+    seatOf: (id) => state.players[id]?.seat ?? null,
+    firstToAct: firstToActNow(bp, state),
+  });
 
   // Вкладка была спрятана: часы табло стояли, а опрос шёл — по возвращении несвежее не разыгрывается.
   // Отметка resumed — до первого кадра часов табло после возврата (такт старта момента идёт раньше).
@@ -187,6 +253,27 @@ function TvStage(p: TvBoardProps) {
     showdown: p.showdown,
     nameOf: p.nameOf,
     format,
+    bombInputOf,
+    onSay: p.onSay,
+  });
+
+  /** Такты бомб-пота: показ бейджа, голос, белые минуты, конец момента. */
+  const bombHooks = (done: () => void, table: boolean): BombHooks => ({
+    els: els.current,
+    aiLevel: aiLvlRef.current,
+    say: (a) => live.current.onSay?.(a),
+    setClockPlain,
+    setShown: (on) => {
+      flushSync(() => setActive((a) => (a ? { ...a, bombOn: on } : a)));
+      // «В игре» вернулось в центр стола новым элементом — проявляется, а не вспыхивает.
+      const center = els.current.center;
+      if (!on && table && center) {
+        motion.cancelOn(center);
+        center.style.opacity = '0';
+        motion.fade(center, 1, 240);
+      }
+    },
+    done,
   });
   const starting = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -203,11 +290,35 @@ function TvStage(p: TvBoardProps) {
         return;
       }
       setQueue(rest);
-      if (!stillValid(m, cur.state)) return;
+      if (!stillValid(m, cur.state, serverNow())) return;
       if (m.kind === 'level') setClockFrozen(true);
-      setActive({ m, released: false });
+      setActive({ m, released: false, bombOn: m.kind === 'bomb_end' || m.kind === 'bomb_cancel' });
       devMark(m.kind);
       const finish = () => setActive(null);
+      if (isBombMoment(m)) {
+        const input = cur.bombInputOf(m.bombPot);
+        const hooks = bombHooks(() => {
+          setClockPlain(false);
+          finish();
+        }, input.table);
+        if (m.kind === 'bomb') {
+          // Сцена ждала в очереди — короче, чтобы взнос встал раньше, чем на телефонах (решение 10).
+          const budget = Date.parse(m.bombPot.at) + BOMB_REVEAL_MS - serverNow();
+          director.play(input, hooks, scenePace(m.bombPot.bbs, budget, motion.calm));
+        } else if (m.kind === 'bomb_cancel') director.cancel(hooks);
+        else {
+          const btn = m.bombPot.seating.buttonSeat;
+          director.end(
+            {
+              ...input,
+              winners: m.winners,
+              buttonStays: btn !== null && cur.state.buttonSeat === btn,
+            },
+            hooks,
+          );
+        }
+        return;
+      }
       const release = () => setActive((a) => (a ? { ...a, released: true } : a));
       const hand: Stagehand = { motion, els: els.current, setGm, setClockFrozen, setClockDrum };
       if (m.kind === 'level') {
@@ -244,6 +355,35 @@ function TvStage(p: TvBoardProps) {
     },
     [motion],
   );
+
+  // Бомб-пот отменили посреди его сцены — сцена доигрывает «ОТМЕНЁН» и уходит.
+  const cancelPlayed = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (!active?.cancelled || active.m.kind !== 'bomb') return;
+    if (cancelPlayed.current === active.m.eventId) return;
+    cancelPlayed.current = active.m.eventId;
+    director.cancel(
+      bombHooks(() => {
+        setClockPlain(false);
+        setActive(null);
+      }, live.current.bombInputOf(active.m.bombPot).table),
+    );
+  });
+
+  // Бейдж раздачи в покое: табло открыли посреди бомб-пота, запись несвежая, сцена доиграла, стол
+  // перестроился. Пока идёт момент бомб-пота, бейджем ведают его такты.
+  useLayoutEffect(() => {
+    if (active && isBombMoment(active.m)) return;
+    if (bombOn && bombPot) {
+      const input = bombInputOf(bombPot);
+      const key = `${bombPot.eventId}:${input.table ? 't' : 'l'}:${input.dSeat ?? '-'}:${input.firstToAct ?? '-'}`;
+      if (director.mode !== 'steady' || director.steadyKey !== key) {
+        director.steady(els.current, input, key);
+      }
+    } else if (director.mode === 'steady') {
+      director.clear(els.current, true);
+    }
+  });
 
   // --- Вход в олл-ин и возврат к столу -----------------------------------------------------------
   const playedMode = useRef<Mode | null>(null);
@@ -312,13 +452,13 @@ function TvStage(p: TvBoardProps) {
       return { ...g, vylet };
     });
 
-  const seating = tvTable(shown);
-  const unseated = seating.seated ? seating.unseated : [];
+  const unseated = tableNow.seated ? tableNow.unseated : [];
 
   const cv = clockView(state);
   const paused = state.timer.status === 'paused';
   const due = paused && Boolean(breakView(state, p.nowMs)?.due);
-  const level = Math.min(state.timer.levelIndex + 1, format.levels.length);
+  // Подпись часов в углу — по показанному состоянию, как и сами часы (стоят, пока ждёт заставка уровня).
+  const corner = cornerLevel(format, shown);
 
   return (
     <main className="tv" data-mode={mode} aria-label="Табло вечера">
@@ -336,6 +476,7 @@ function TvStage(p: TvBoardProps) {
             nameOf={p.nameOf}
             moment={gm}
             onVyletFolded={onVyletFolded}
+            bombOn={bombOn}
             els={els}
           />
           <div className="tv-tools">{p.tools}</div>
@@ -347,6 +488,9 @@ function TvStage(p: TvBoardProps) {
             {p.foot}
           </div>
         </div>
+
+        {/* Бомб-пот: панель розыгрыша в левой колонке (содержимое строит bombDirector). */}
+        <div className="tv-bp" ref={bindEl(els, 'bombPanel')} aria-hidden="true" />
 
         <div className="tv-ai" ref={aiRef} style={{ visibility: 'hidden' }}>
           <div ref={aiInRef} className="tv-layer">
@@ -361,6 +505,7 @@ function TvStage(p: TvBoardProps) {
                 instant={sd.showdownId === firstShowdownId}
                 resolving={mode === 'resolve'}
                 onResolved={onResolved}
+                bombPot={Boolean(state.bombPot && state.bombPot.eventId < sd.openedEventId)}
               />
             )}
           </div>
@@ -379,14 +524,14 @@ function TvStage(p: TvBoardProps) {
             <ClockFlaps
               text={cv.text}
               final={finalMinute(state)}
-              tone={clockMode(state) === 'countdown' ? 'run' : 'muted'}
+              tone={clockPlain ? 'plain' : clockMode(state) === 'countdown' ? 'run' : 'muted'}
               frozen={frozen}
               drum={clockDrum}
             />
           )}
         </div>
         <p className="tv-ai-lvl tv-eb" ref={aiLvlRef}>
-          Уровень {level} · <b>{blindsText(state.currentLevel)}</b>
+          Уровень {corner.level} · <b>{corner.blinds}</b>
         </p>
 
         {/* «Нет связи» — поверх всего, и в олл-ине тоже. */}
@@ -405,6 +550,7 @@ const NO_ONE: ReadonlySet<string> = new Set();
 function sameFrame(a: MomentFrame | null, b: MomentFrame): boolean {
   if (!a) return false;
   if (a.levelIndex !== b.levelIndex || a.heardLevel !== b.heardLevel) return false;
+  if ((a.bomb?.eventId ?? null) !== (b.bomb?.eventId ?? null)) return false;
   if (a.eventIds.size !== b.eventIds.size) return false;
   for (const id of b.eventIds) if (!a.eventIds.has(id)) return false;
   return true;
