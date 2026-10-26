@@ -11,6 +11,9 @@
 // Места и баттон (миграция 028): когда баттон задан, под часами и столом — строка порядка от баттона
 // по часовой «D 03 ПЕТЯ · SB 04 ЛЁНЯ 25 · BB 06 САША 50 · 07 ВАНЯ» (boardOrder) вместо «За столом».
 // Во время олл-ина её нет: панель раздачи занимает экран целиком.
+// ТВ (от 1024 px в горизонтали), идущий вечер и олл-ин — доработка v3 (tv/TvBoard.tsx): кадр
+// 1920×1080 со столом-схемой, перекидными цифрами и моментами по журналу. Телефон, ожидание, итог и
+// «Табло погасло» — прежние экраны ниже.
 import { eveningAllIns } from '@domain/allins.ts';
 import { computeMoney, payoutsFor } from '@domain/money.ts';
 import { replayLog } from '@domain/replay.ts';
@@ -89,6 +92,8 @@ import { revealedSize, revealStart, revealStep, type RevealTarget } from './stre
 import { useBoardPing } from './useBoardPing';
 import { useFullscreen } from './useScreenControls';
 import { useBoardVoice, type BoardVoice } from './useBoardVoice';
+import { TvBoard } from './tv/TvBoard';
+import { useTvLayout } from './tv/useStage';
 
 /** Масштаб шкалы ТВ, который подбирает useFitToScreen (board.css: --bd-px). */
 const BOARD_FIT_VAR = '--bd-fit';
@@ -212,6 +217,62 @@ export function Board({
   // Олл-ин закрывает таймер и стол, пока банкир его не закроет (или табло не спрячет его само).
   // Улицы, внесённые разом, табло раскрывает по очереди (streetReveal.ts).
   const showdown = useStreetReveal(visibleShowdown(state.showdown, nowMs), nowMs);
+  const tv = useTvLayout();
+
+  if (tv && !finished && (showdown || state.timer.status !== 'not_started')) {
+    return (
+      <TvBoard
+        format={format}
+        events={data.events}
+        state={state}
+        applied={applied}
+        nowMs={nowMs}
+        nameOf={nameOf}
+        showdown={showdown}
+        pausedMs={pausedForMs(state, applied, nowMs)}
+        headText={`${training ? `Тренировка${NBSP}· ` : ''}${when}${place}`}
+        stale={stale}
+        updatedAt={updatedAt}
+        tools={
+          <>
+            {voice.status !== 'unsupported' && (
+              <button
+                type="button"
+                className="tv-tool"
+                onClick={voice.press}
+                data-voice-toggle=""
+                aria-label={voice.status === 'on' ? 'Выключить голос' : 'Включить голос'}
+              >
+                {voice.status === 'on' ? 'Голос: вкл' : 'Голос: выкл'}
+              </button>
+            )}
+            {fullscreen.supported && (
+              <button type="button" className="tv-tool" onClick={fullscreen.toggle}>
+                {fullscreen.active ? 'Выйти из полноэкранного' : 'Во весь экран'}
+              </button>
+            )}
+          </>
+        }
+        foot={
+          <>
+            {wake === 'unsupported' && (
+              <p className="tv-foot__note">
+                Этот браузер не умеет держать экран включённым — отключи сон экрана в настройках
+                устройства.
+              </p>
+            )}
+            {voice.status === 'on' &&
+              voiceGapNotes(voice.gaps).map((note) => (
+                <p key={note} className="tv-foot__note">
+                  {note}
+                </p>
+              ))}
+            {voice.status !== 'unsupported' && <p>{VOICE_CREDIT}</p>}
+          </>
+        }
+      />
+    );
+  }
 
   return (
     <main className={showdown && !finished ? 'bd bd--showdown' : 'bd'}>
